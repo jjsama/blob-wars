@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from '../node_modules/three/build/three.module.js';
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -27,18 +27,18 @@ camera.lookAt(blob.position);
 
 // Animation loop
 function animate() {
-  requestAnimationFrame(animate);
+    requestAnimationFrame(animate);
 
-  // Simple blob wobble (for fun)
-  blob.position.y = 1 + Math.sin(Date.now() * 0.005) * 0.2;
+    // Simple blob wobble (for fun)
+    blob.position.y = 1 + Math.sin(Date.now() * 0.005) * 0.2;
 
-  renderer.render(scene, camera);
+    renderer.render(scene, camera);
 }
 animate();
 
 // Resize handler
 window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
 });
