@@ -6,31 +6,63 @@ const server = Bun.serve({
 
         // Serve index.html for root path
         if (url.pathname === "/") {
+            console.log("Serving index.html");
             return new Response(Bun.file("index.html"), {
-                headers: { "Content-Type": "text/html" }
+                headers: {
+                    "Content-Type": "text/html",
+                    // Add CORS headers if needed
+                    "Access-Control-Allow-Origin": "*"
+                }
             });
         }
 
         // Handle JavaScript files
         if (url.pathname.endsWith('.js')) {
-            const filePath = url.pathname.slice(1); // Remove leading slash
-            console.log(`Serving JavaScript file: ${filePath}`);
-            return new Response(Bun.file(filePath), {
-                headers: { "Content-Type": "application/javascript" }
-            });
+            console.log(`Serving JS file: ${url.pathname}`);
+            const filePath = url.pathname.slice(1);
+            try {
+                const file = Bun.file(filePath);
+                return new Response(file, {
+                    headers: {
+                        "Content-Type": "application/javascript",
+                        "Access-Control-Allow-Origin": "*"
+                    }
+                });
+            } catch (e) {
+                console.error(`Error serving JS file ${filePath}:`, e);
+                return new Response("File not found", { status: 404 });
+            }
         }
 
-        // Serve other files from their paths
+        // Handle WASM files
+        if (url.pathname.endsWith('.wasm')) {
+            console.log(`Serving WASM file: ${url.pathname}`);
+            const filePath = url.pathname.slice(1);
+            try {
+                const file = Bun.file(filePath);
+                return new Response(file, {
+                    headers: {
+                        "Content-Type": "application/wasm",
+                        "Access-Control-Allow-Origin": "*"
+                    }
+                });
+            } catch (e) {
+                console.error(`Error serving WASM file ${filePath}:`, e);
+                return new Response("File not found", { status: 404 });
+            }
+        }
+
+        // Serve other files
         try {
-            const file = Bun.file(url.pathname.slice(1));
+            const filePath = url.pathname.slice(1);
+            console.log(`Attempting to serve: ${filePath}`);
+            const file = Bun.file(filePath);
             return new Response(file);
         } catch (e) {
-            if (!url.pathname.includes('favicon.ico')) {
-                console.error(`Error serving ${url.pathname}:`, e);
-            }
+            console.error(`Error serving ${url.pathname}:`, e);
             return new Response("Not Found", { status: 404 });
         }
     },
 });
 
-console.log(`Listening on http://localhost:${server.port}`); 
+console.log(`Server running at http://localhost:${server.port}`); 
