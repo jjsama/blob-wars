@@ -196,16 +196,16 @@ export class Game {
         // Get the direction from the camera (where the crosshair is pointing)
         const direction = new THREE.Vector3();
         this.scene.camera.getWorldDirection(direction);
-
-        // Use the direction directly without zeroing the y component
-        // This allows for aiming up and down
         direction.normalize();
 
         const playerPos = this.player.getPosition();
+
+        // Start the projectile from a position further in front of the player
+        // This will make it appear to come from the weapon, not the player's face
         const position = new THREE.Vector3(
-            playerPos.x + direction.x * 1.5,
-            playerPos.y + 1.5, // Start at player's head height
-            playerPos.z + direction.z * 1.5
+            playerPos.x + direction.x * 2.5,  // Increased from 1.5 to 2.5
+            playerPos.y + 1.5,                // Head height
+            playerPos.z + direction.z * 2.5   // Increased from 1.5 to 2.5
         );
 
         const projectile = new Projectile(
@@ -328,6 +328,19 @@ export class Game {
         // Update player
         if (this.player) {
             this.player.update(deltaTime);
+
+            // Update player rotation to face the direction of the camera
+            if (this.player.mesh) {
+                const cameraDirection = new THREE.Vector3();
+                this.scene.camera.getWorldDirection(cameraDirection);
+                cameraDirection.y = 0; // Keep player upright
+                cameraDirection.normalize();
+
+                if (cameraDirection.length() > 0.1) {
+                    const targetRotation = Math.atan2(cameraDirection.x, cameraDirection.z);
+                    this.player.setRotation(targetRotation);
+                }
+            }
         }
 
         // Update projectiles

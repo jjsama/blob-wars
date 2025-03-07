@@ -28,10 +28,13 @@ if (typeof window.AmmoLib === 'undefined') {
         const game = new Game();
         log('Game instance created, initializing...');
 
+        // Make game globally accessible for the Player's getAimDirection method
+        window.game = game;
+
         // Use setTimeout to allow UI to update before continuing
-        setTimeout(() => {
+        setTimeout(async () => {
             try {
-                game.init();
+                await game.init();
                 log('Game initialized successfully');
             } catch (err) {
                 error('Failed to initialize game', err);

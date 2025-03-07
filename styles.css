@@ -3,8 +3,8 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 20px;
-  height: 20px;
+  width: 24px;  /* Slightly larger */
+  height: 24px;
   pointer-events: none; /* Makes sure the crosshair doesn't interfere with clicks */
   z-index: 1000; /* Ensures the crosshair is on top of other elements */
 }
@@ -15,9 +15,9 @@
   left: 50%;
   width: 2px;
   height: 100%;
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(255, 255, 255, 0.9);  /* More opaque */
   transform: translateX(-50%);
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); /* Add shadow for visibility */
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);  /* Stronger shadow */
 }
 
 .crosshair-horizontal {
@@ -26,9 +26,9 @@
   left: 0;
   width: 100%;
   height: 2px;
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(255, 255, 255, 0.9);  /* More opaque */
   transform: translateY(-50%);
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); /* Add shadow for visibility */
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);  /* Stronger shadow */
 }
 
 /* Add a center dot for more precise aiming */
@@ -38,8 +38,9 @@
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 4px;
-  height: 4px;
-  background-color: rgba(255, 0, 0, 0.8);
+  width: 5px;  /* Slightly larger */
+  height: 5px;
+  background-color: rgba(255, 0, 0, 0.9);  /* More opaque */
   border-radius: 50%;
+  box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);  /* Add glow */
 } 

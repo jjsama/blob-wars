@@ -1,4 +1,3 @@
-
 export class InputHandler {
     constructor() {
         this.keyStates = {};
@@ -10,6 +9,7 @@ export class InputHandler {
             mouseDown: [],
             mouseUp: []
         };
+        this.mouseButtons = new Map();
     }
 
     init() {
@@ -30,10 +30,12 @@ export class InputHandler {
         });
 
         window.addEventListener('mousedown', (event) => {
+            this.mouseButtons.set(event.button, true);
             this.callbacks.mouseDown.forEach(callback => callback(event));
         });
 
         window.addEventListener('mouseup', (event) => {
+            this.mouseButtons.set(event.button, false);
             this.callbacks.mouseUp.forEach(callback => callback(event));
         });
     }

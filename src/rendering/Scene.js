@@ -1,13 +1,21 @@
 import * as THREE from 'three';
+
 export class GameScene {
     constructor() {
         this.scene = null;
         this.camera = null;
         this.renderer = null;
-        this.cameraOffset = new THREE.Vector3(0, 2, 8); // Higher and closer
-        this.cameraLookOffset = new THREE.Vector3(0, 1, -5); // Look at the upper body
+
+        // Camera settings - adjust these values to position the camera better
+        this.cameraOffset = new THREE.Vector3(0, 2.5, 6); // Slightly lower and closer
         this.cameraTarget = new THREE.Vector3();
-        this.controls = null;
+
+        // Mouse control variables
+        this.mouseX = 0;
+        this.mouseY = 0;
+        this.targetRotationX = 0;
+        this.targetRotationY = 0;
+        this.sensitivity = 0.002; // Mouse sensitivity
     }
 
     init() {
@@ -46,18 +54,34 @@ export class GameScene {
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         document.body.appendChild(this.renderer.domElement);
 
+        // Set up mouse controls
+        this.setupMouseControls();
+
         // Add resize handler
         window.addEventListener('resize', () => {
             this.camera.aspect = window.innerWidth / window.innerHeight;
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
+    }
 
-        // Allow full vertical rotation (up to limits to prevent flipping)
-        if (this.controls) {
-            this.controls.minPolarAngle = Math.PI * 0.1; // Limit looking straight down
-            this.controls.maxPolarAngle = Math.PI * 0.9; // Limit looking straight up
-        }
+    setupMouseControls() {
+        // Lock pointer for FPS-style controls
+        this.renderer.domElement.addEventListener('click', () => {
+            this.renderer.domElement.requestPointerLock();
+        });
+
+        // Mouse movement handler
+        document.addEventListener('mousemove', (event) => {
+            if (document.pointerLockElement === this.renderer.domElement) {
+                // Update rotation based on mouse movement
+                this.targetRotationX -= event.movementX * this.sensitivity;
+                this.targetRotationY -= event.movementY * this.sensitivity;
+
+                // Limit vertical rotation to prevent flipping
+                this.targetRotationY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.targetRotationY));
+            }
+        });
     }
 
     updateCamera(target) {
@@ -66,12 +90,31 @@ export class GameScene {
             return;
         }
 
-        // Calculate camera position based on target position
-        this.cameraTarget.copy(target).add(this.cameraLookOffset);
+        // Create a rotation quaternion based on mouse input
+        const rotationQuaternion = new THREE.Quaternion();
+        rotationQuaternion.setFromEuler(
+            new THREE.Euler(this.targetRotationY, this.targetRotationX, 0, 'YXZ')
+        );
 
-        // Smoothly move camera to follow the target
-        this.camera.position.copy(target).add(this.cameraOffset);
+        // Apply rotation to the offset
+        const rotatedOffset = this.cameraOffset.clone().applyQuaternion(rotationQuaternion);
+
+        // Set camera position and look direction
+        this.camera.position.copy(target).add(rotatedOffset);
+
+        // Calculate look target (further ahead of player)
+        const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(rotationQuaternion);
+
+        // Position the look target further ahead (15 units instead of 10)
+        this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(15));
+
+        // Add a slight vertical offset to the look target to aim a bit higher
+        this.cameraTarget.y += 1.0;
+
         this.camera.lookAt(this.cameraTarget);
+
+        // Return the look direction for use in shooting
+        return lookDirection;
     }
 
     render() {

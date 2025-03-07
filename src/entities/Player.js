@@ -352,4 +352,27 @@ export class Player {
         }
         return direction;
     }
+
+    setRotation(yRotation) {
+        if (this.mesh) {
+            // For the model, we only want to set the Y rotation
+            if (this.modelLoaded) {
+                // Add a small delay to make the rotation smoother
+                const currentRotation = this.mesh.rotation.y;
+                const rotationDiff = yRotation - currentRotation;
+
+                // Normalize the difference to be between -PI and PI
+                let normalizedDiff = rotationDiff;
+                while (normalizedDiff > Math.PI) normalizedDiff -= Math.PI * 2;
+                while (normalizedDiff < -Math.PI) normalizedDiff += Math.PI * 2;
+
+                // Apply a smooth rotation (interpolate)
+                this.mesh.rotation.y += normalizedDiff * 0.1; // 10% of the way there
+            } else {
+                // For the temp mesh, we can set the full rotation
+                const currentRotation = new THREE.Euler().setFromQuaternion(this.mesh.quaternion);
+                this.mesh.rotation.set(currentRotation.x, yRotation, currentRotation.z);
+            }
+        }
+    }
 }
