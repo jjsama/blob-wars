@@ -23,6 +23,9 @@ export class Game {
         this.canJump = true;
         this.lastJumpTime = 0;
         this.bhopWindow = 300;
+
+        // Initialize crosshair
+        this.initCrosshair();
     }
 
     async init() {
@@ -179,18 +182,29 @@ export class Game {
         return rayCallback.hasHit();
     }
 
+    initCrosshair() {
+        // Make sure the crosshair is visible
+        const crosshair = document.getElementById('crosshair');
+        if (crosshair) {
+            crosshair.style.display = 'block';
+        }
+    }
+
     shootProjectile() {
         if (!this.player) return;
 
+        // Get the direction from the camera (where the crosshair is pointing)
         const direction = new THREE.Vector3();
         this.scene.camera.getWorldDirection(direction);
-        direction.y = 0;
+
+        // Use the direction directly without zeroing the y component
+        // This allows for aiming up and down
         direction.normalize();
 
         const playerPos = this.player.getPosition();
         const position = new THREE.Vector3(
             playerPos.x + direction.x * 1.5,
-            playerPos.y + 1.5,
+            playerPos.y + 1.5, // Start at player's head height
             playerPos.z + direction.z * 1.5
         );
 

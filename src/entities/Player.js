@@ -333,4 +333,23 @@ export class Player {
         if (!this.mesh) return new THREE.Vector3();
         return this.mesh.position;
     }
+
+    shoot() {
+        // Get the direction the player is facing
+        const direction = this.getAimDirection();
+
+        // Create a projectile in that direction
+        // ... existing projectile creation code ...
+    }
+
+    getAimDirection() {
+        // Get the camera direction for aiming
+        const direction = new THREE.Vector3();
+        // We need to access the camera from the scene
+        // This assumes the scene has a reference to the camera
+        if (window.game && window.game.scene && window.game.scene.camera) {
+            window.game.scene.camera.getWorldDirection(direction);
+        }
+        return direction;
+    }
 }

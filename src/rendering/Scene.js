@@ -7,6 +7,7 @@ export class GameScene {
         this.cameraOffset = new THREE.Vector3(0, 2, 8); // Higher and closer
         this.cameraLookOffset = new THREE.Vector3(0, 1, -5); // Look at the upper body
         this.cameraTarget = new THREE.Vector3();
+        this.controls = null;
     }
 
     init() {
@@ -51,6 +52,12 @@ export class GameScene {
             this.camera.updateProjectionMatrix();
             this.renderer.setSize(window.innerWidth, window.innerHeight);
         });
+
+        // Allow full vertical rotation (up to limits to prevent flipping)
+        if (this.controls) {
+            this.controls.minPolarAngle = Math.PI * 0.1; // Limit looking straight down
+            this.controls.maxPolarAngle = Math.PI * 0.9; // Limit looking straight up
+        }
     }
 
     updateCamera(target) {

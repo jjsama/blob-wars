@@ -1,0 +1,45 @@
+#crosshair {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  pointer-events: none; /* Makes sure the crosshair doesn't interfere with clicks */
+  z-index: 1000; /* Ensures the crosshair is on top of other elements */
+}
+
+.crosshair-vertical {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 100%;
+  background-color: rgba(255, 255, 255, 0.8);
+  transform: translateX(-50%);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); /* Add shadow for visibility */
+}
+
+.crosshair-horizontal {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-color: rgba(255, 255, 255, 0.8);
+  transform: translateY(-50%);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.8); /* Add shadow for visibility */
+}
+
+/* Add a center dot for more precise aiming */
+#crosshair::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 4px;
+  height: 4px;
+  background-color: rgba(255, 0, 0, 0.8);
+  border-radius: 50%;
+} 
