@@ -38,9 +38,9 @@ export class PhysicsWorld {
                 dispatcher, broadphase, solver, collisionConfiguration
             );
 
-            // Set gravity
+            // Set gravity - increase gravity for faster falling
             log('Setting gravity');
-            this.physicsWorld.setGravity(new Ammo.btVector3(0, -9.8, 0));
+            this.physicsWorld.setGravity(new Ammo.btVector3(0, -20, 0));
 
             // Create temporary transform
             this.tmpTransform = new Ammo.btTransform();

@@ -19,7 +19,7 @@ export class Game {
         this.previousTime = 0;
         this.moveForce = 20;
         this.maxVelocity = 25;
-        this.jumpForce = 25;
+        this.jumpForce = 10;
         this.canJump = true;
         this.lastJumpTime = 0;
         this.bhopWindow = 300;
@@ -122,37 +122,38 @@ export class Game {
             // Set jump animation
             this.player.setAnimation('jump');
 
+            // Apply jump force
             const jumpImpulse = new Ammo.btVector3(0, this.jumpForce, 0);
             this.player.applyForce(jumpImpulse);
             this.lastJumpTime = now;
             this.canJump = false;
 
-            // Apply a small forward boost if moving for bhop
+            // Apply a smaller forward boost if moving for bhop
             if (this.player.body) {
                 const velocity = this.player.body.getLinearVelocity();
                 const horizVelocity = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
                 if (horizVelocity > 5) {
                     const boostImpulse = new Ammo.btVector3(
-                        velocity.x() * 0.2,
+                        velocity.x() * 0.1,
                         0,
-                        velocity.z() * 0.2
+                        velocity.z() * 0.1
                     );
                     this.player.applyForce(boostImpulse);
                 }
             }
         } else if (timeSinceLastJump < this.bhopWindow) {
-            // Bhop - slightly reduced jump force for subsequent hops
-            const jumpImpulse = new Ammo.btVector3(0, this.jumpForce * 0.9, 0);
+            // Bhop - significantly reduced jump force for subsequent hops
+            const jumpImpulse = new Ammo.btVector3(0, this.jumpForce * 0.7, 0);
             this.player.applyForce(jumpImpulse);
             this.lastJumpTime = now;
 
-            // Apply a small forward boost
+            // Apply a smaller forward boost
             if (this.player.body) {
                 const velocity = this.player.body.getLinearVelocity();
                 const boostImpulse = new Ammo.btVector3(
-                    velocity.x() * 0.15,
+                    velocity.x() * 0.1,
                     0,
-                    velocity.z() * 0.15
+                    velocity.z() * 0.1
                 );
                 this.player.applyForce(boostImpulse);
             }
@@ -222,15 +223,34 @@ export class Game {
         }
 
         // Skip if no movement keys are pressed
-        if (!this.input.isKeyPressed('w') && !this.input.isKeyPressed('a') &&
-            !this.input.isKeyPressed('s') && !this.input.isKeyPressed('d') &&
-            !this.input.isKeyPressed('ArrowUp') && !this.input.isKeyPressed('ArrowDown') &&
-            !this.input.isKeyPressed('ArrowLeft') && !this.input.isKeyPressed('ArrowRight')) {
+        if (!isMoving) {
+            // Apply a stopping force when no keys are pressed to reduce sliding
+            if (this.player.body) {
+                const velocity = this.player.body.getLinearVelocity();
+                // Only stop horizontal movement, not vertical (jumping/falling)
+                if (Math.abs(velocity.x()) > 0.1 || Math.abs(velocity.z()) > 0.1) {
+                    const stopForce = new Ammo.btVector3(
+                        -velocity.x() * 0.8,
+                        0,
+                        -velocity.z() * 0.8
+                    );
+                    this.player.applyForce(stopForce);
+                }
+            }
             return;
         }
 
+        // First, zero out current velocity for more responsive movement
+        if (this.player.body) {
+            const velocity = this.player.body.getLinearVelocity();
+            // Keep vertical velocity (for jumping/falling) but zero out horizontal
+            this.player.body.setLinearVelocity(
+                new Ammo.btVector3(0, velocity.y(), 0)
+            );
+        }
+
         let force = new Ammo.btVector3(0, 0, 0);
-        let impulseStrength = this.moveForce;
+        let impulseStrength = this.moveForce * 1.2; // Increased for more immediate movement
 
         const cameraDirection = new THREE.Vector3();
         this.scene.camera.getWorldDirection(cameraDirection);
@@ -263,7 +283,7 @@ export class Game {
         if (force.x() !== 0 || force.z() !== 0) {
             this.player.applyForce(force);
 
-            // Cap maximum velocity
+            // Cap maximum velocity immediately
             const velocity = this.player.body.getLinearVelocity();
             const speed = Math.sqrt(
                 velocity.x() * velocity.x() +

@@ -218,9 +218,9 @@ export class Player {
             );
 
             this.body = new Ammo.btRigidBody(rbInfo);
-            this.body.setFriction(0.5);
-            this.body.setRestitution(0.2);
-            this.body.setDamping(0.1, 0.1);
+            this.body.setFriction(0.8);
+            this.body.setRestitution(0.1);
+            this.body.setDamping(0.2, 0.2);
 
             // Prevent player from tipping over
             this.body.setAngularFactor(new Ammo.btVector3(0, 1, 0));
