@@ -14,13 +14,67 @@
         canvas {
             display: block;
         }
+
+        #debug {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            font-family: monospace;
+            z-index: 100;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
     </style>
 </head>
 
 <body>
-    <!-- Make sure this path is correct -->
-    <script src="/public/ammo.wasm.js"></script>
-    <script type="module" src="/src/main.js"></script>
+    <div id="debug">Loading game...</div>
+
+    <!-- Load Ammo.js directly -->
+    <script>
+        document.getElementById('debug').innerHTML += '<br>Loading Ammo.js...';
+
+        // Load Ammo.js from CDN
+        const script = document.createElement('script');
+        script.src = 'https://raw.githack.com/kripken/ammo.js/master/builds/ammo.js';
+
+        script.onload = function () {
+            document.getElementById('debug').innerHTML += '<br>Ammo.js loaded, initializing...';
+
+            // Initialize Ammo.js
+            Ammo().then(function (AmmoInstance) {
+                // Store Ammo instance globally
+                window.AmmoLib = AmmoInstance;
+                document.getElementById('debug').innerHTML += '<br>Ammo.js initialized successfully';
+
+                // Now load the game
+                const gameScript = document.createElement('script');
+                gameScript.type = 'module';
+                gameScript.src = './src/main.js';
+                document.body.appendChild(gameScript);
+                document.getElementById('debug').innerHTML += '<br>Game script loaded';
+            });
+        };
+
+        script.onerror = function () {
+            document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js</span>';
+        };
+
+        document.body.appendChild(script);
+    </script>
+
+    <!-- Add this to your index.html before the game script loads -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.174.0/build/three.module.js",
+        "three/examples/jsm/loaders/GLTFLoader.js": "https://unpkg.com/three@0.174.0/examples/jsm/loaders/GLTFLoader.js"
+      }
+    }
+    </script>
 </body>
 
 </html>

@@ -1,13 +1,15 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js';
+import * as THREE from 'three';
 import { PhysicsWorld } from './physics/PhysicsWorld.js';
 import { GameScene } from './rendering/Scene.js';
 import { InputHandler } from './controls/InputHandler.js';
 import { Player } from './entities/Player.js';
 import { Ground } from './entities/Ground.js';
 import { Projectile } from './entities/Projectile.js';
+import { log, error } from './debug.js';
 
 export class Game {
     constructor() {
+        log('Game constructor called');
         this.physics = new PhysicsWorld();
         this.scene = new GameScene();
         this.input = new InputHandler();
@@ -24,41 +26,70 @@ export class Game {
     }
 
     async init() {
-        console.log('Game init started');
+        try {
+            log('Initializing game systems');
 
-        // Initialize systems
-        this.scene.init();
-        console.log('Scene initialized');
+            // Initialize systems
+            log('Initializing scene');
+            this.scene.init();
+            log('Scene initialized');
 
-        this.physics.init();
-        console.log('Physics initialized');
+            log('Initializing physics');
+            this.physics.init();
+            log('Physics initialized');
 
-        this.input.init();
-        console.log('Input initialized');
+            log('Initializing input');
+            this.input.init();
+            log('Input initialized');
 
-        // Create game objects
-        console.log('Creating ground');
-        this.ground = new Ground(this.scene.scene, this.physics.physicsWorld);
-        this.ground.create();
-        console.log('Ground created');
+            // Create game objects
+            log('Creating ground');
+            this.ground = new Ground(this.scene.scene, this.physics.physicsWorld);
+            this.ground.create();
+            log('Ground created');
 
-        // Add environment elements
-        console.log('Adding environment elements');
-        this.addEnvironmentElements();
-        console.log('Environment elements added');
+            // Add environment elements
+            log('Adding environment elements');
+            this.addEnvironmentElements();
+            log('Environment elements added');
 
-        console.log('Creating player');
-        this.player = new Player(this.scene.scene, this.physics.physicsWorld, { x: 0, y: 5, z: 0 });
-        this.physics.registerRigidBody(this.player.mesh, this.player.body);
-        console.log('Player created');
+            log('Creating player');
+            this.player = new Player(this.scene.scene, this.physics.physicsWorld, { x: 0, y: 5, z: 0 });
+            this.physics.registerRigidBody(this.player.mesh, this.player.body);
+            log('Player created');
 
-        // Set up input handlers
-        this.setupInputHandlers();
-        console.log('Input handlers set up');
+            // Add a timeout to check if the player model loaded
+            setTimeout(() => {
+                if (this.player && !this.player.modelLoaded) {
+                    log('Player model did not load in time, using fallback');
+                    // Create a simple fallback mesh
+                    const geometry = new THREE.BoxGeometry(1, 2, 1);
+                    const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+                    const fallbackMesh = new THREE.Mesh(geometry, material);
+                    fallbackMesh.position.copy(this.player.getPosition());
+                    this.scene.scene.add(fallbackMesh);
 
-        // Start game loop
-        console.log('Starting animation loop');
-        this.animate();
+                    // Update the player's mesh reference
+                    if (this.player.mesh) {
+                        this.scene.scene.remove(this.player.mesh);
+                    }
+                    this.player.mesh = fallbackMesh;
+                }
+            }, 5000); // Check after 5 seconds
+
+            // Set up input handlers
+            log('Setting up input handlers');
+            this.setupInputHandlers();
+            log('Input handlers set up');
+
+            // Start game loop
+            log('Starting animation loop');
+            this.animate();
+            log('Game initialization complete');
+        } catch (err) {
+            error('Error in Game.init', err);
+            throw err;
+        }
     }
 
     setupInputHandlers() {
@@ -88,6 +119,9 @@ export class Game {
         const timeSinceLastJump = now - this.lastJumpTime;
 
         if (this.isPlayerOnGround()) {
+            // Set jump animation
+            this.player.setAnimation('jump');
+
             const jumpImpulse = new Ammo.btVector3(0, this.jumpForce, 0);
             this.player.applyForce(jumpImpulse);
             this.lastJumpTime = now;
@@ -172,6 +206,21 @@ export class Game {
     updateMovement() {
         if (!this.player || !this.player.body) return;
 
+        // Check if any movement keys are pressed
+        const isMoving = this.input.isKeyPressed('w') || this.input.isKeyPressed('a') ||
+            this.input.isKeyPressed('s') || this.input.isKeyPressed('d') ||
+            this.input.isKeyPressed('ArrowUp') || this.input.isKeyPressed('ArrowDown') ||
+            this.input.isKeyPressed('ArrowLeft') || this.input.isKeyPressed('ArrowRight');
+
+        // Set animation based on movement state
+        if (!isMoving) {
+            this.player.setAnimation('idle');
+        } else if (this.input.isKeyPressed('shift')) {
+            this.player.setAnimation('run');
+        } else {
+            this.player.setAnimation('walk');
+        }
+
         // Skip if no movement keys are pressed
         if (!this.input.isKeyPressed('w') && !this.input.isKeyPressed('a') &&
             !this.input.isKeyPressed('s') && !this.input.isKeyPressed('d') &&
@@ -244,7 +293,7 @@ export class Game {
 
         // Update player
         if (this.player) {
-            this.player.update();
+            this.player.update(deltaTime);
         }
 
         // Update projectiles

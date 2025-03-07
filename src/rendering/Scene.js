@@ -1,12 +1,11 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js';
-
+import * as THREE from 'three';
 export class GameScene {
     constructor() {
         this.scene = null;
         this.camera = null;
         this.renderer = null;
-        this.cameraOffset = new THREE.Vector3(0, 8, 12);
-        this.cameraLookOffset = new THREE.Vector3(0, 0, -5);
+        this.cameraOffset = new THREE.Vector3(0, 2, 8); // Higher and closer
+        this.cameraLookOffset = new THREE.Vector3(0, 1, -5); // Look at the upper body
         this.cameraTarget = new THREE.Vector3();
     }
 
@@ -38,10 +37,7 @@ export class GameScene {
         // Create camera with initial position
         this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.camera.position.set(0, 10, 20); // Set an initial position
-        this.camera.lookAt(0, 0, 0);
-        
-        console.log('Camera initialized at position:', this.camera.position);
-        
+
         // Create renderer
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
@@ -63,16 +59,12 @@ export class GameScene {
             return;
         }
 
-        console.log('Updating camera, target position:', target);
-        
         // Calculate camera position based on target position
         this.cameraTarget.copy(target).add(this.cameraLookOffset);
-        
+
         // Smoothly move camera to follow the target
         this.camera.position.copy(target).add(this.cameraOffset);
         this.camera.lookAt(this.cameraTarget);
-        
-        console.log('Camera position:', this.camera.position);
     }
 
     render() {

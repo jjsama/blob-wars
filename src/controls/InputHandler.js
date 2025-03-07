@@ -1,3 +1,4 @@
+
 export class InputHandler {
     constructor() {
         this.keyStates = {};

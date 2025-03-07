@@ -1,72 +1,118 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js';
+import { log, error } from '../debug.js';
 
 export class PhysicsWorld {
     constructor() {
         this.physicsWorld = null;
         this.rigidBodies = [];
-        this.tmpTrans = null;
+        this.tmpTransform = null;
     }
 
     init() {
-        const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-        const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
-        const broadphase = new Ammo.btDbvtBroadphase();
-        const solver = new Ammo.btSequentialImpulseConstraintSolver();
-        this.physicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration);
-        this.physicsWorld.setGravity(new Ammo.btVector3(0, -20, 0));
-        this.tmpTrans = new Ammo.btTransform();
+        try {
+            log('Initializing physics world');
+
+            // Check if Ammo is available
+            if (typeof Ammo === 'undefined') {
+                throw new Error('Ammo.js is not loaded');
+            }
+
+            // Create collision configuration
+            log('Creating collision configuration');
+            const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+
+            // Create dispatcher
+            log('Creating dispatcher');
+            const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+
+            // Create broadphase
+            log('Creating broadphase');
+            const broadphase = new Ammo.btDbvtBroadphase();
+
+            // Create solver
+            log('Creating solver');
+            const solver = new Ammo.btSequentialImpulseConstraintSolver();
+
+            // Create physics world
+            log('Creating dynamics world');
+            this.physicsWorld = new Ammo.btDiscreteDynamicsWorld(
+                dispatcher, broadphase, solver, collisionConfiguration
+            );
+
+            // Set gravity
+            log('Setting gravity');
+            this.physicsWorld.setGravity(new Ammo.btVector3(0, -9.8, 0));
+
+            // Create temporary transform
+            this.tmpTransform = new Ammo.btTransform();
+
+            log('Physics world initialized successfully');
+        } catch (err) {
+            error('Failed to initialize physics world', err);
+            throw err;
+        }
     }
 
     update(deltaTime) {
-        if (!this.physicsWorld) {
-            console.warn('Physics world not initialized');
-            return;
-        }
-        
+        if (!this.physicsWorld) return;
+
+        // Step simulation
         this.physicsWorld.stepSimulation(deltaTime, 10);
-        
-        // Update all rigid bodies
-        for (let i = 0; i < this.rigidBodies.length; i++) {
-            const objThree = this.rigidBodies[i].mesh;
-            const objAmmo = this.rigidBodies[i].body;
-            
-            if (!objThree || !objAmmo) continue;
-            
-            const ms = objAmmo.getMotionState();
-            if (ms) {
-                ms.getWorldTransform(this.tmpTrans);
-                const p = this.tmpTrans.getOrigin();
-                const q = this.tmpTrans.getRotation();
-                objThree.position.set(p.x(), p.y(), p.z());
-                objThree.quaternion.set(q.x(), q.y(), q.z(), q.w());
-            }
-        }
-    }
-
-    addRigidBody(body) {
-        if (!this.physicsWorld) return;
-        this.physicsWorld.addRigidBody(body);
-    }
-
-    removeRigidBody(body) {
-        if (!this.physicsWorld) return;
-        this.physicsWorld.removeRigidBody(body);
-    }
-
-    registerRigidBody(mesh, body) {
-        this.rigidBodies.push({ mesh, body });
-    }
-
-    unregisterRigidBody(mesh) {
-        const index = this.rigidBodies.findIndex(item => item.mesh === mesh);
-        if (index !== -1) {
-            this.rigidBodies.splice(index, 1);
-        }
     }
 
     rayTest(from, to) {
-        const rayCallback = new Ammo.ClosestRayResultCallback(from, to);
-        this.physicsWorld.rayTest(from, to, rayCallback);
-        return rayCallback;
+        try {
+            // Create raycast callback
+            const rayCallback = new Ammo.ClosestRayResultCallback(from, to);
+
+            // Perform raycast
+            this.physicsWorld.rayTest(from, to, rayCallback);
+
+            return rayCallback;
+        } catch (err) {
+            error('Failed to perform rayTest', err);
+
+            // Return a dummy callback object with hasHit method to prevent errors
+            return {
+                hasHit: () => false,
+                get_m_collisionObject: () => null,
+                get_m_hitPointWorld: () => ({ x: () => 0, y: () => 0, z: () => 0 })
+            };
+        }
+    }
+
+    registerRigidBody(mesh, body) {
+        if (mesh && body) {
+            this.rigidBodies.push({ mesh, body });
+        }
+    }
+
+    createRigidBody(shape, mass, position, rotation = { x: 0, y: 0, z: 0 }) {
+        try {
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(new Ammo.btVector3(position.x, position.y, position.z));
+
+            const quaternion = new Ammo.btQuaternion(rotation.x, rotation.y, rotation.z, 1);
+            transform.setRotation(quaternion);
+
+            const motionState = new Ammo.btDefaultMotionState(transform);
+            const localInertia = new Ammo.btVector3(0, 0, 0);
+
+            if (mass > 0) {
+                shape.calculateLocalInertia(mass, localInertia);
+            }
+
+            const rbInfo = new Ammo.btRigidBodyConstructionInfo(
+                mass, motionState, shape, localInertia
+            );
+
+            const body = new Ammo.btRigidBody(rbInfo);
+            this.physicsWorld.addRigidBody(body);
+
+            return body;
+        } catch (err) {
+            error('Failed to create rigid body', err);
+            throw err;
+        }
     }
 } 
