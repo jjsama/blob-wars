@@ -200,14 +200,15 @@ export class Game {
 
         const playerPos = this.player.getPosition();
 
-        // Start the projectile from a position further in front of the player
-        // This will make it appear to come from the weapon, not the player's face
+        // Start the projectile from a position in front of the player
+        // Use the full direction vector (including y component) to position the projectile start
         const position = new THREE.Vector3(
-            playerPos.x + direction.x * 2.5,  // Increased from 1.5 to 2.5
-            playerPos.y + 1.5,                // Head height
-            playerPos.z + direction.z * 2.5   // Increased from 1.5 to 2.5
+            playerPos.x + direction.x * 2.5,
+            playerPos.y + 1.5 + direction.y * 1.0, // Add vertical offset based on aim direction
+            playerPos.z + direction.z * 2.5
         );
 
+        // Create the projectile with the full 3D direction
         const projectile = new Projectile(
             this.scene.scene,
             this.physics.physicsWorld,
