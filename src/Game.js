@@ -183,11 +183,74 @@ export class Game {
     }
 
     initCrosshair() {
-        // Make sure the crosshair is visible
-        const crosshair = document.getElementById('crosshair');
-        if (crosshair) {
-            crosshair.style.display = 'block';
+        // Check if crosshair already exists
+        let crosshair = document.getElementById('crosshair');
+
+        // If it doesn't exist, create it programmatically
+        if (!crosshair) {
+            crosshair = document.createElement('div');
+            crosshair.id = 'crosshair';
+
+            const verticalLine = document.createElement('div');
+            verticalLine.className = 'crosshair-vertical';
+
+            const horizontalLine = document.createElement('div');
+            horizontalLine.className = 'crosshair-horizontal';
+
+            crosshair.appendChild(verticalLine);
+            crosshair.appendChild(horizontalLine);
+
+            // Apply inline styles to ensure visibility
+            crosshair.style.position = 'fixed';
+            crosshair.style.top = '50%';
+            crosshair.style.left = '50%';
+            crosshair.style.transform = 'translate(-50%, -50%)';
+            crosshair.style.width = '24px';
+            crosshair.style.height = '24px';
+            crosshair.style.pointerEvents = 'none';
+            crosshair.style.zIndex = '1000';
+
+            verticalLine.style.position = 'absolute';
+            verticalLine.style.top = '0';
+            verticalLine.style.left = '50%';
+            verticalLine.style.width = '2px';
+            verticalLine.style.height = '100%';
+            verticalLine.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+            verticalLine.style.transform = 'translateX(-50%)';
+            verticalLine.style.boxShadow = '0 0 3px rgba(0, 0, 0, 0.9)';
+
+            horizontalLine.style.position = 'absolute';
+            horizontalLine.style.top = '50%';
+            horizontalLine.style.left = '0';
+            horizontalLine.style.width = '100%';
+            horizontalLine.style.height = '2px';
+            horizontalLine.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+            horizontalLine.style.transform = 'translateY(-50%)';
+            horizontalLine.style.boxShadow = '0 0 3px rgba(0, 0, 0, 0.9)';
+
+            // Add the center dot
+            const style = document.createElement('style');
+            style.textContent = `
+                #crosshair::after {
+                    content: '';
+                    position: absolute;
+                    top: 50%;
+                    left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 5px;
+                    height: 5px;
+                    background-color: rgba(255, 0, 0, 0.9);
+                    border-radius: 50%;
+                    box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);
+                }
+            `;
+            document.head.appendChild(style);
+
+            document.body.appendChild(crosshair);
         }
+
+        // Make sure the crosshair is visible
+        crosshair.style.display = 'block';
     }
 
     shootProjectile() {
