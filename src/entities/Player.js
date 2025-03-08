@@ -20,6 +20,8 @@ export class Player {
         this.mixer = null;
         this.currentAction = null;
         this.tempMesh = null;
+        this.health = 100;
+        this.isDead = false;
 
         // Create a temporary mesh first - this ensures we always have a visible player
         this.createTempMesh();
@@ -374,5 +376,88 @@ export class Player {
                 this.mesh.rotation.set(currentRotation.x, yRotation, currentRotation.z);
             }
         }
+    }
+
+    takeDamage(amount) {
+        this.health = Math.max(0, this.health - amount);
+
+        // Update health UI
+        this.updateHealthUI();
+
+        if (this.health <= 0 && !this.isDead) {
+            this.die();
+        }
+    }
+
+    updateHealthUI() {
+        const healthBar = document.getElementById('health-bar');
+        const healthText = document.getElementById('health-text');
+
+        if (healthBar && healthText) {
+            // Update health bar width
+            healthBar.style.width = `${this.health}%`;
+
+            // Update health text
+            healthText.textContent = `${this.health} HP`;
+
+            // Change color based on health
+            if (this.health > 70) {
+                healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
+            } else if (this.health > 30) {
+                healthBar.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+            } else {
+                healthBar.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+            }
+        }
+    }
+
+    die() {
+        this.isDead = true;
+
+        // Show death message
+        const deathMessage = document.createElement('div');
+        deathMessage.style.position = 'fixed';
+        deathMessage.style.top = '50%';
+        deathMessage.style.left = '50%';
+        deathMessage.style.transform = 'translate(-50%, -50%)';
+        deathMessage.style.color = 'red';
+        deathMessage.style.fontSize = '48px';
+        deathMessage.style.fontFamily = 'Arial, sans-serif';
+        deathMessage.style.fontWeight = 'bold';
+        deathMessage.style.textShadow = '2px 2px 4px black';
+        deathMessage.textContent = 'YOU DIED';
+
+        document.body.appendChild(deathMessage);
+
+        // Respawn after 3 seconds
+        setTimeout(() => {
+            this.respawn();
+            document.body.removeChild(deathMessage);
+        }, 3000);
+    }
+
+    respawn() {
+        // Reset health
+        this.health = 100;
+        this.isDead = false;
+        this.updateHealthUI();
+
+        // Reset position
+        const transform = new Ammo.btTransform();
+        transform.setIdentity();
+        transform.setOrigin(new Ammo.btVector3(0, 5, 0));
+
+        const ms = this.body.getMotionState();
+        ms.setWorldTransform(transform);
+
+        this.body.setWorldTransform(transform);
+
+        // Reset velocity
+        const zero = new Ammo.btVector3(0, 0, 0);
+        this.body.setLinearVelocity(zero);
+        this.body.setAngularVelocity(zero);
+
+        // Activate the body
+        this.body.activate(true);
     }
 }

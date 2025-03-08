@@ -5,6 +5,7 @@ import { InputHandler } from './controls/InputHandler.js';
 import { Player } from './entities/Player.js';
 import { Ground } from './entities/Ground.js';
 import { Projectile } from './entities/Projectile.js';
+import { Enemy } from './entities/Enemy.js';
 import { log, error } from './debug.js';
 
 export class Game {
@@ -16,6 +17,8 @@ export class Game {
         this.player = null;
         this.ground = null;
         this.projectiles = [];
+        this.enemyProjectiles = [];
+        this.enemies = [];
         this.previousTime = 0;
         this.moveForce = 20;
         this.maxVelocity = 25;
@@ -24,8 +27,54 @@ export class Game {
         this.lastJumpTime = 0;
         this.bhopWindow = 300;
 
+        // Store projectile class for enemies to use
+        this.projectileClass = Projectile;
+
+        // Make game instance globally available for enemies
+        window.game = this;
+
         // Initialize crosshair
         this.initCrosshair();
+
+        // Initialize UI
+        this.initUI();
+    }
+
+    initUI() {
+        // Create health display
+        const healthContainer = document.createElement('div');
+        healthContainer.id = 'health-container';
+        healthContainer.style.position = 'fixed';
+        healthContainer.style.bottom = '20px';
+        healthContainer.style.left = '20px';
+        healthContainer.style.width = '200px';
+        healthContainer.style.height = '30px';
+        healthContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+        healthContainer.style.border = '2px solid white';
+        healthContainer.style.borderRadius = '5px';
+
+        const healthBar = document.createElement('div');
+        healthBar.id = 'health-bar';
+        healthBar.style.width = '100%';
+        healthBar.style.height = '100%';
+        healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
+        healthBar.style.transition = 'width 0.3s, background-color 0.3s';
+
+        const healthText = document.createElement('div');
+        healthText.id = 'health-text';
+        healthText.style.position = 'absolute';
+        healthText.style.top = '50%';
+        healthText.style.left = '50%';
+        healthText.style.transform = 'translate(-50%, -50%)';
+        healthText.style.color = 'white';
+        healthText.style.fontFamily = 'Arial, sans-serif';
+        healthText.style.fontWeight = 'bold';
+        healthText.style.textShadow = '1px 1px 2px black';
+        healthText.textContent = '100 HP';
+
+        healthContainer.appendChild(healthBar);
+        healthContainer.appendChild(healthText);
+        document.body.appendChild(healthContainer);
     }
 
     async init() {
@@ -84,6 +133,9 @@ export class Game {
             log('Setting up input handlers');
             this.setupInputHandlers();
             log('Input handlers set up');
+
+            // Spawn enemies
+            this.spawnEnemies(5); // Spawn 5 enemies
 
             // Start game loop
             log('Starting animation loop');
@@ -389,6 +441,83 @@ export class Game {
         this.projectiles = this.projectiles.filter(projectile => projectile.update());
     }
 
+    updateEnemies(deltaTime) {
+        // Update all enemies
+        this.enemies.forEach(enemy => {
+            enemy.update(deltaTime);
+        });
+
+        // Check for projectile collisions with enemies
+        this.checkProjectileEnemyCollisions();
+
+        // Check for enemy projectile collisions with player
+        this.checkEnemyProjectilePlayerCollisions();
+    }
+
+    checkProjectileEnemyCollisions() {
+        // Simple collision detection between projectiles and enemies
+        for (let i = this.projectiles.length - 1; i >= 0; i--) {
+            const projectile = this.projectiles[i];
+            if (!projectile.mesh) continue;
+
+            const projectilePos = projectile.mesh.position;
+
+            for (let j = this.enemies.length - 1; j >= 0; j--) {
+                const enemy = this.enemies[j];
+                if (enemy.isDead || !enemy.mesh) continue;
+
+                const enemyPos = enemy.mesh.position;
+                const distance = projectilePos.distanceTo(enemyPos);
+
+                // If projectile is close enough to enemy
+                if (distance < 2) {
+                    // Enemy takes damage
+                    const isDead = enemy.takeDamage(25); // Each hit does 25 damage
+
+                    // Remove projectile
+                    projectile.remove();
+                    this.projectiles.splice(i, 1);
+
+                    // If enemy died, remove from array
+                    if (isDead) {
+                        this.enemies.splice(j, 1);
+                    }
+
+                    break; // Projectile can only hit one enemy
+                }
+            }
+        }
+    }
+
+    checkEnemyProjectilePlayerCollisions() {
+        if (!this.player || this.player.isDead) return;
+
+        const playerPos = this.player.getPosition();
+
+        for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
+            const projectile = this.enemyProjectiles[i];
+            if (!projectile.mesh) continue;
+
+            const projectilePos = projectile.mesh.position;
+            const distance = projectilePos.distanceTo(playerPos);
+
+            // If projectile is close enough to player
+            if (distance < 2) {
+                // Player takes damage
+                this.player.takeDamage(10); // Enemy projectiles do less damage
+
+                // Remove projectile
+                projectile.remove();
+                this.enemyProjectiles.splice(i, 1);
+            }
+        }
+    }
+
+    updateEnemyProjectiles() {
+        // Update and filter out expired projectiles
+        this.enemyProjectiles = this.enemyProjectiles.filter(projectile => projectile.update());
+    }
+
     update(deltaTime) {
         // Update physics
         this.physics.update(deltaTime);
@@ -417,6 +546,12 @@ export class Game {
         // Update projectiles
         this.updateProjectiles();
 
+        // Update enemy projectiles
+        this.updateEnemyProjectiles();
+
+        // Update enemies
+        this.updateEnemies(deltaTime);
+
         // Update camera to follow player
         if (this.player) {
             this.scene.updateCamera(this.player.getPosition());
@@ -437,10 +572,12 @@ export class Game {
     }
 
     addEnvironmentElements() {
-        // Add some decorative elements
+        // Add only decorative elements, no walls
         this.addTrees();
         this.addRocks();
         this.addSkybox();
+
+        // No walls!
     }
 
     addTrees() {
@@ -515,5 +652,23 @@ export class Game {
 
         const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterials);
         this.scene.scene.add(skybox);
+    }
+
+    spawnEnemies(count) {
+        log(`Spawning ${count} enemies`);
+
+        for (let i = 0; i < count; i++) {
+            // Create enemy at random position
+            const position = new THREE.Vector3(
+                (Math.random() - 0.5) * 40, // Random X position
+                2, // Fixed height
+                (Math.random() - 0.5) * 40  // Random Z position
+            );
+
+            const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, position);
+            this.enemies.push(enemy);
+        }
+
+        log(`${this.enemies.length} enemies spawned`);
     }
 } 

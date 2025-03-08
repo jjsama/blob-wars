@@ -10,6 +10,7 @@ export class Projectile {
         this.creationTime = Date.now();
         this.mesh = null;
         this.body = null;
+        this.damage = 25; // Each projectile does 25 damage
 
         this.create();
     }
