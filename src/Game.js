@@ -308,7 +308,7 @@ export class Game {
     shootProjectile() {
         if (!this.player) return;
 
-        // Get the direction from the camera (where the crosshair is pointing)
+        // Get the exact direction from the camera (where the crosshair is pointing)
         const direction = new THREE.Vector3();
         this.scene.camera.getWorldDirection(direction);
         direction.normalize();
@@ -330,12 +330,24 @@ export class Game {
             playerPos.z + direction.z * 1.5 + weaponOffset.z
         );
 
-        // Create the projectile with the full 3D direction
+        // Create a ray from the camera position through the crosshair
+        const raycaster = new THREE.Raycaster();
+        raycaster.set(this.scene.camera.position, direction);
+
+        // Calculate the exact direction to the target point
+        // This ensures the bullet goes exactly where the crosshair is pointing
+        const targetPoint = new THREE.Vector3();
+        targetPoint.copy(this.scene.camera.position).add(direction.multiplyScalar(1000));
+
+        const exactDirection = new THREE.Vector3();
+        exactDirection.subVectors(targetPoint, position).normalize();
+
+        // Create the projectile with the exact direction
         const projectile = new Projectile(
             this.scene.scene,
             this.physics.physicsWorld,
             position,
-            direction
+            exactDirection
         );
 
         this.projectiles.push(projectile);
