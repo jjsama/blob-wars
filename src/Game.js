@@ -576,8 +576,6 @@ export class Game {
         this.addTrees();
         this.addRocks();
         this.addSkybox();
-
-        // No walls!
     }
 
     addTrees() {
