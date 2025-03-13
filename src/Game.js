@@ -308,37 +308,40 @@ export class Game {
     shootProjectile() {
         if (!this.player) return;
 
-        // Get the exact direction from the camera (where the crosshair is pointing)
-        const direction = new THREE.Vector3();
-        this.scene.camera.getWorldDirection(direction);
-        direction.normalize();
+        // Get camera position and direction
+        const cameraPosition = this.scene.camera.position.clone();
 
-        const playerPos = this.player.getPosition();
-
-        // Calculate a weapon position that's offset from the player
-        // This simulates the projectile coming from a weapon rather than the player's center
-        const weaponOffset = new THREE.Vector3(
-            direction.z * 0.5,  // Offset to the right side of the player (perpendicular to direction)
-            1.5,                // Shoulder height
-            -direction.x * 0.5  // Offset to the right side of the player (perpendicular to direction)
-        );
-
-        // Start position is now from this weapon position
-        const position = new THREE.Vector3(
-            playerPos.x + direction.x * 1.5 + weaponOffset.x,
-            playerPos.y + weaponOffset.y,
-            playerPos.z + direction.z * 1.5 + weaponOffset.z
-        );
-
-        // Create a ray from the camera position through the crosshair
+        // Create a raycaster from the camera through the center of the screen (crosshair)
         const raycaster = new THREE.Raycaster();
-        raycaster.set(this.scene.camera.position, direction);
+        // Use the camera's view direction
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.unproject(this.scene.camera).sub(cameraPosition).normalize();
 
-        // Calculate the exact direction to the target point
-        // This ensures the bullet goes exactly where the crosshair is pointing
-        const targetPoint = new THREE.Vector3();
-        targetPoint.copy(this.scene.camera.position).add(direction.multiplyScalar(1000));
+        raycaster.set(cameraPosition, direction);
 
+        // Calculate a target point far in the distance
+        const targetPoint = cameraPosition.clone().add(direction.clone().multiplyScalar(1000));
+
+        // Calculate weapon position (offset from player)
+        const playerPos = this.player.getPosition();
+        const rightVector = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
+
+        // Position the weapon to the right side of the player at shoulder height
+        const weaponOffset = new THREE.Vector3(
+            rightVector.x * 0.5,
+            1.5, // Shoulder height
+            rightVector.z * 0.5
+        );
+
+        // Start position is from this weapon position
+        const position = new THREE.Vector3(
+            playerPos.x + weaponOffset.x,
+            playerPos.y + weaponOffset.y,
+            playerPos.z + weaponOffset.z
+        );
+
+        // Calculate the EXACT direction from the weapon position to the target point
+        // This is the key to accurate aiming
         const exactDirection = new THREE.Vector3();
         exactDirection.subVectors(targetPoint, position).normalize();
 
@@ -351,6 +354,25 @@ export class Game {
         );
 
         this.projectiles.push(projectile);
+
+        // Debug visualization (optional)
+        // this.drawDebugLine(position, targetPoint);
+    }
+
+    // Optional debug method to visualize the projectile path
+    drawDebugLine(start, end) {
+        const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+        const points = [];
+        points.push(start);
+        points.push(end);
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const line = new THREE.Line(geometry, material);
+        this.scene.scene.add(line);
+
+        // Remove the line after 1 second
+        setTimeout(() => {
+            this.scene.scene.remove(line);
+        }, 1000);
     }
 
     updateMovement() {

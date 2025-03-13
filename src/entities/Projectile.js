@@ -5,19 +5,20 @@ export class Projectile {
         this.physicsWorld = physicsWorld;
         this.position = position;
         this.direction = direction.clone().normalize();
-        this.speed = 100; // Increased from 50 to 100 for faster bullet-like speed
-        this.lifetime = 3000; // Reduced lifetime for more realistic bullets
+        this.speed = 100; // Fast bullet speed
+        this.lifetime = 3000; // 3 seconds lifetime
         this.creationTime = Date.now();
         this.mesh = null;
         this.body = null;
         this.damage = 25; // Each projectile does 25 damage
         this.trailParticles = []; // For bullet trail effect
+        this.initialDirection = direction.clone(); // Store initial direction
 
         this.create();
     }
 
     create() {
-        // Create a more bullet-like visual representation
+        // Create a bullet-like visual representation
         const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8);
         geometry.rotateX(Math.PI / 2); // Orient the cylinder along the z-axis
 
@@ -63,7 +64,7 @@ export class Projectile {
 
         this.body = new Ammo.btRigidBody(rbInfo);
 
-        // Set initial velocity in the direction of aim - much faster
+        // Set initial velocity in the direction of aim
         const velocity = new Ammo.btVector3(
             this.direction.x * this.speed,
             this.direction.y * this.speed,
@@ -74,8 +75,8 @@ export class Projectile {
         // Disable rotation to keep bullet oriented correctly
         this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0));
 
-        // Almost no gravity effect for bullets
-        this.body.setGravity(new Ammo.btVector3(0, -0.1, 0));
+        // COMPLETELY DISABLE GRAVITY - this is the key change
+        this.body.setGravity(new Ammo.btVector3(0, 0, 0));
 
         // No damping to maintain velocity
         this.body.setDamping(0, 0);
@@ -114,11 +115,24 @@ export class Projectile {
             const transform = new Ammo.btTransform();
             ms.getWorldTransform(transform);
             const p = transform.getOrigin();
-            const q = transform.getRotation();
 
             // Update position
             this.mesh.position.set(p.x(), p.y(), p.z());
-            this.mesh.quaternion.set(q.x(), q.y(), q.z(), q.w());
+
+            // IMPORTANT: Force the projectile to maintain its exact direction
+            // This ensures it travels in a perfectly straight line
+            const currentVelocity = this.body.getLinearVelocity();
+            const newVelocity = new Ammo.btVector3(
+                this.initialDirection.x * this.speed,
+                this.initialDirection.y * this.speed,
+                this.initialDirection.z * this.speed
+            );
+            this.body.setLinearVelocity(newVelocity);
+
+            // Keep the orientation aligned with the direction of travel
+            this.mesh.lookAt(
+                this.mesh.position.clone().add(this.initialDirection)
+            );
 
             // Add trail particles occasionally
             if (Math.random() < 0.3) { // 30% chance each frame
@@ -126,44 +140,7 @@ export class Projectile {
             }
 
             // Update trail particles
-            for (let i = this.trailParticles.length - 1; i >= 0; i--) {
-                const particle = this.trailParticles[i];
-
-                // Fade out particles
-                const age = Date.now() - particle.creationTime;
-                const lifeRatio = age / particle.lifetime;
-
-                if (lifeRatio >= 1) {
-                    // Remove old particles
-                    this.scene.remove(particle);
-                    this.trailParticles.splice(i, 1);
-                } else {
-                    // Fade out
-                    particle.material.opacity = 0.7 * (1 - lifeRatio);
-                    // Shrink slightly
-                    const scale = 1 - (lifeRatio * 0.5);
-                    particle.scale.set(scale, scale, scale);
-                }
-            }
-
-            // Maintain velocity to counter any slowdown
-            const velocity = this.body.getLinearVelocity();
-            const speed = Math.sqrt(
-                velocity.x() * velocity.x() +
-                velocity.y() * velocity.y() +
-                velocity.z() * velocity.z()
-            );
-
-            // If speed has dropped significantly, boost it back up
-            if (speed < this.speed * 0.9) {
-                const dir = new THREE.Vector3(velocity.x(), velocity.y(), velocity.z()).normalize();
-                const newVelocity = new Ammo.btVector3(
-                    dir.x * this.speed,
-                    dir.y * this.speed,
-                    dir.z * this.speed
-                );
-                this.body.setLinearVelocity(newVelocity);
-            }
+            this.updateTrailParticles();
         }
 
         // Check if projectile should be removed
@@ -173,6 +150,29 @@ export class Projectile {
         }
 
         return true;
+    }
+
+    updateTrailParticles() {
+        // Update trail particles
+        for (let i = this.trailParticles.length - 1; i >= 0; i--) {
+            const particle = this.trailParticles[i];
+
+            // Fade out particles
+            const age = Date.now() - particle.creationTime;
+            const lifeRatio = age / particle.lifetime;
+
+            if (lifeRatio >= 1) {
+                // Remove old particles
+                this.scene.remove(particle);
+                this.trailParticles.splice(i, 1);
+            } else {
+                // Fade out
+                particle.material.opacity = 0.7 * (1 - lifeRatio);
+                // Shrink slightly
+                const scale = 1 - (lifeRatio * 0.5);
+                particle.scale.set(scale, scale, scale);
+            }
+        }
     }
 
     remove() {
