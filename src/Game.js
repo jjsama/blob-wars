@@ -180,8 +180,8 @@ export class Game {
         const timeSinceLastJump = now - this.lastJumpTime;
 
         if (this.isPlayerOnGround()) {
-            // Set jump animation
-            this.player.playAnimation('jump');
+            // Call the player's jump method instead of just setting the animation
+            this.player.jump();
 
             // Apply jump force
             const jumpImpulse = new Ammo.btVector3(0, this.jumpForce, 0);
@@ -313,6 +313,9 @@ export class Game {
 
     shootProjectile() {
         if (!this.player) return;
+
+        // Trigger attack animation
+        this.player.attack();
 
         // Get camera position and direction
         const cameraPosition = this.scene.camera.position.clone();

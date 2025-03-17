@@ -6,8 +6,8 @@ export class GameScene {
         this.camera = null;
         this.renderer = null;
 
-        // Camera settings - adjust to match your Blender perspective
-        this.cameraOffset = new THREE.Vector3(0, 2.0, 4.0); // Centered behind player, slightly elevated
+        // Revert to the previous camera settings but with slight adjustments
+        this.cameraOffset = new THREE.Vector3(1.0, 2.0, 5.0); // Slightly to the right, good distance
         this.cameraTarget = new THREE.Vector3();
 
         // Mouse control variables
@@ -105,11 +105,11 @@ export class GameScene {
         // Calculate look target (further ahead of player)
         const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(rotationQuaternion);
 
-        // Position the look target further ahead
-        this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(20)); // Increased from 15 to 20
+        // Position the look target further ahead for better aiming
+        this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(20));
 
-        // Add a slight vertical offset to the look target to aim a bit higher
-        this.cameraTarget.y += 0.5; // Reduced from 1.0 to 0.5 for more natural aiming
+        // Add a slight vertical offset to the look target for better aiming
+        this.cameraTarget.y += 0.7; // Adjusted for better aiming height
 
         this.camera.lookAt(this.cameraTarget);
 

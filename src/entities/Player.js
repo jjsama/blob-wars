@@ -26,6 +26,7 @@ export class Player {
         this.health = 100;
         this.isDead = false;
         this.isAttacking = false;
+        this.isJumping = false;
 
         // Create a temporary mesh first - this ensures we always have a visible player
         this.createTempMesh();
@@ -359,8 +360,17 @@ export class Player {
     }
 
     playAnimation(name) {
-        if (!this.mixer || !this.animations[name]) {
-            log(`Animation ${name} not found`);
+        if (!this.mixer) {
+            log('No mixer available for animations');
+            return;
+        }
+
+        if (!this.animations[name]) {
+            log(`Animation ${name} not found, falling back to idle`);
+            // Try to fall back to idle
+            if (name !== 'idle' && this.animations.idle) {
+                this.playAnimation('idle');
+            }
             return;
         }
 
@@ -369,32 +379,31 @@ export class Player {
 
         log(`Playing animation: ${name}`);
 
-        // Stop any current animation
+        // For attack and jump animations, we want to make sure they complete
+        const isOneShot = (name === 'attack' || name === 'jump');
+
+        // Stop any current animation with appropriate crossfade
         if (this.currentAction) {
-            this.currentAction.fadeOut(0.2);
+            const fadeTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
+            this.currentAction.fadeOut(fadeTime);
         }
 
         // Start new animation
         const action = this.mixer.clipAction(this.animations[name]);
         action.reset();
-        action.fadeIn(0.2);
-        action.play();
 
-        this.currentAction = action;
-        this.currentAnimation = name;
+        const fadeInTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
+        action.fadeIn(fadeInTime);
 
         // For attack and jump animations, set them to play once and then return to idle
-        if (name === 'attack' || name === 'jump') {
+        if (isOneShot) {
             action.setLoop(THREE.LoopOnce);
-            action.clampWhenFinished = true;
-
-            // Listen for the finished event to return to idle
-            this.mixer.addEventListener('finished', () => {
-                if (this.currentAnimation === name) {
-                    this.playAnimation('idle');
-                }
-            });
+            action.clampWhenFinished = true; // Keep the last frame when finished
         }
+
+        action.play();
+        this.currentAction = action;
+        this.currentAnimation = name;
     }
 
     updateMovementAnimation(input) {
@@ -421,14 +430,38 @@ export class Player {
         this.isAttacking = true;
         this.playAnimation('attack');
 
-        // Reset attack state after animation completes
+        // Reset attack state after a fixed time
         setTimeout(() => {
             this.isAttacking = false;
-            // Return to idle if no movement keys are pressed
-            if (!this.currentAnimation || this.currentAnimation === 'attack') {
+
+            // If we're still in attack animation, switch back to idle
+            if (this.currentAnimation === 'attack') {
                 this.playAnimation('idle');
             }
-        }, 1200); // Increased from 800 to 1200 ms for smoother animation
+        }, 800); // Fixed time for attack animation
+    }
+
+    jump() {
+        if (this.isJumping) return;
+
+        this.isJumping = true;
+        this.playAnimation('jump');
+
+        // Get the duration of the jump animation
+        let jumpDuration = 1000; // Default duration if we can't determine it
+        if (this.animations.jump) {
+            // Get actual duration from the animation clip
+            jumpDuration = this.animations.jump.duration * 1000; // Convert to milliseconds
+
+            // Add a small buffer to ensure animation completes
+            jumpDuration += 200;
+        }
+
+        // Reset jump state after animation completes
+        setTimeout(() => {
+            this.isJumping = false;
+            log('Jump state reset');
+        }, jumpDuration);
     }
 
     update(deltaTime) {
@@ -445,6 +478,21 @@ export class Player {
                 // Update position
                 this.mesh.position.set(p.x(), p.y(), p.z());
 
+                // Make sure the player doesn't fall through the world
+                if (p.y() < -10) {
+                    // Reset position if player falls too far
+                    const resetTransform = new Ammo.btTransform();
+                    resetTransform.setIdentity();
+                    resetTransform.setOrigin(new Ammo.btVector3(0, 5, 0));
+                    ms.setWorldTransform(resetTransform);
+                    this.body.setWorldTransform(resetTransform);
+
+                    // Reset velocity
+                    const zero = new Ammo.btVector3(0, 0, 0);
+                    this.body.setLinearVelocity(zero);
+                    this.body.setAngularVelocity(zero);
+                }
+
                 // Make the player always face the direction of the crosshair/camera
                 if (this.modelLoaded && window.game && window.game.scene) {
                     const cameraDirection = new THREE.Vector3();
@@ -456,7 +504,6 @@ export class Player {
                     const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
 
                     // Set rotation to match crosshair direction
-                    // No need for + Math.PI since we want to face where we're aiming
                     this.mesh.rotation.set(0, angle, 0);
                 }
             }
