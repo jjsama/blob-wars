@@ -12,9 +12,12 @@ export class Player {
         this.modelLoaded = false;
         this.animations = {
             idle: null,
-            walk: null,
-            run: null,
-            jump: null
+            walkForward: null,
+            walkBackward: null,
+            strafeLeft: null,
+            strafeRight: null,
+            jump: null,
+            attack: null
         };
         this.currentAnimation = 'idle';
         this.mixer = null;
@@ -22,6 +25,7 @@ export class Player {
         this.tempMesh = null;
         this.health = 100;
         this.isDead = false;
+        this.isAttacking = false;
 
         // Create a temporary mesh first - this ensures we always have a visible player
         this.createTempMesh();
@@ -92,109 +96,194 @@ export class Player {
 
     loadModel() {
         try {
-            log('Loading player model');
+            log('Loading blobville player model');
 
             const loader = new GLTFLoader();
 
-            // Use local model path instead of external URL to avoid CORS issues
-            const modelUrl = './public/models/Soldier.glb';
+            // Try multiple possible paths to find the model
+            const modelPaths = [
+                './models/blobville-player.glb',
+                './public/models/blobville-player.glb',
+                '/models/blobville-player.glb',
+                '/public/models/blobville-player.glb'
+            ];
 
-            log(`Loading model from: ${modelUrl}`);
+            // Log all paths we're trying
+            log(`Attempting to load model from multiple possible paths`);
+            modelPaths.forEach(path => log(`- ${path}`));
 
-            loader.load(
-                modelUrl,
-                (gltf) => {
-                    try {
-                        log('Model loaded successfully');
-
-                        // Set up the model
-                        const model = gltf.scene;
-
-                        // Keep the current position
-                        if (this.mesh) {
-                            model.position.copy(this.mesh.position);
-                        } else {
-                            model.position.set(this.position.x, this.position.y, this.position.z);
-                        }
-
-                        model.scale.set(1, 1, 1);
-                        model.traverse((node) => {
-                            if (node.isMesh) {
-                                node.castShadow = true;
-                                node.receiveShadow = true;
-                            }
-                        });
-
-                        // Remove the temporary mesh
-                        if (this.tempMesh) {
-                            this.scene.remove(this.tempMesh);
-                        }
-
-                        // Replace the mesh
-                        if (this.mesh && this.mesh !== this.tempMesh) {
-                            this.scene.remove(this.mesh);
-                        }
-
-                        this.mesh = model;
-                        this.scene.add(this.mesh);
-                        this.modelLoaded = true;
-
-                        // Set up animations
-                        this.mixer = new THREE.AnimationMixer(model);
-
-                        // Map animations to our animation types
-                        if (gltf.animations && gltf.animations.length > 0) {
-                            log(`Found ${gltf.animations.length} animations`);
-
-                            gltf.animations.forEach((clip) => {
-                                log(`Found animation: ${clip.name}`);
-
-                                const lowerName = clip.name.toLowerCase();
-                                if (lowerName.includes('idle')) {
-                                    this.animations.idle = clip;
-                                } else if (lowerName.includes('walk')) {
-                                    this.animations.walk = clip;
-                                } else if (lowerName.includes('run')) {
-                                    this.animations.run = clip;
-                                } else if (lowerName.includes('jump')) {
-                                    this.animations.jump = clip;
-                                }
-                            });
-
-                            // Start with idle animation
-                            if (this.animations.idle) {
-                                this.setAnimation('idle');
-                            } else if (gltf.animations.length > 0) {
-                                // If no idle animation found, use the first one
-                                this.animations.idle = gltf.animations[0];
-                                this.setAnimation('idle');
-                            }
-                        } else {
-                            log('No animations found in the model');
-                        }
-
-                        log('Model setup complete');
-                    } catch (err) {
-                        error('Error in model loading callback', err);
-                        // Keep using the temporary mesh
-                        this.modelLoaded = false;
-                    }
-                },
-                (xhr) => {
-                    if (xhr.lengthComputable) {
-                        const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                        log(`Loading model: ${percent}%`);
-                    }
-                },
-                (err) => {
-                    error('Error loading model', err);
-                    log('Using temporary mesh instead');
-                    this.modelLoaded = false;
+            // Try each path until one works
+            const tryNextPath = (index) => {
+                if (index >= modelPaths.length) {
+                    // If we've tried all paths, use the fallback
+                    log('Could not find model in any location, using fallback');
+                    return;
                 }
-            );
+
+                const path = modelPaths[index];
+                log(`Trying to load from: ${path}`);
+
+                loader.load(
+                    path,
+                    (gltf) => {
+                        log('Blobville player model loaded successfully!');
+                        this.setupModel(gltf);
+                    },
+                    (xhr) => {
+                        if (xhr.lengthComputable) {
+                            const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
+                            log(`Loading model: ${percent}%`);
+                        }
+                    },
+                    (err) => {
+                        log(`Failed to load from ${path}: ${err.message}`);
+                        // Try the next path
+                        tryNextPath(index + 1);
+                    }
+                );
+            };
+
+            // Start trying paths
+            tryNextPath(0);
         } catch (err) {
             error('Error in loadModel', err);
-            this.modelLoaded = false;
+        }
+    }
+
+    // Separate method to set up the model once loaded
+    setupModel(gltf) {
+        try {
+            // Set up the model
+            const model = gltf.scene;
+
+            // Keep the current position
+            if (this.mesh) {
+                model.position.copy(this.mesh.position);
+            } else {
+                model.position.set(this.position.x, this.position.y, this.position.z);
+            }
+
+            // Make sure the model casts shadows
+            model.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                }
+            });
+
+            // Remove the temporary mesh
+            if (this.tempMesh) {
+                this.scene.remove(this.tempMesh);
+            }
+
+            // Replace the mesh
+            if (this.mesh && this.mesh !== this.tempMesh) {
+                this.scene.remove(this.mesh);
+            }
+
+            this.mesh = model;
+            this.scene.add(this.mesh);
+            this.modelLoaded = true;
+
+            // Set up animations
+            this.setupAnimations(gltf.animations);
+        } catch (err) {
+            error('Error setting up model', err);
+        }
+    }
+
+    // Separate method to set up animations
+    setupAnimations(animations) {
+        if (!animations || animations.length === 0) {
+            log('No animations found, creating fake animations');
+            this.createFakeAnimations();
+            return;
+        }
+
+        log(`Found ${animations.length} animations`);
+
+        // Create animation mixer
+        this.mixer = new THREE.AnimationMixer(this.mesh);
+
+        // Log all animation names
+        animations.forEach((clip, index) => {
+            log(`Animation ${index}: ${clip.name}`);
+        });
+
+        // Map animations to our animation types
+        animations.forEach(clip => {
+            switch (clip.name) {
+                case 'idle': this.animations.idle = clip; break;
+                case 'walkForward': this.animations.walkForward = clip; break;
+                case 'walkBackward': this.animations.walkBackward = clip; break;
+                case 'strafeLeft': this.animations.strafeLeft = clip; break;
+                case 'strafeRight': this.animations.strafeRight = clip; break;
+                case 'jump': this.animations.jump = clip; break;
+                case 'attack': this.animations.attack = clip; break;
+            }
+        });
+
+        // If we don't have all animations, use the first one as a fallback
+        if (!this.animations.idle && animations.length > 0) {
+            this.animations.idle = animations[0];
+            log('Using first animation as idle');
+        }
+
+        // Start with idle animation
+        if (this.animations.idle) {
+            this.playAnimation('idle');
+        }
+    }
+
+    createFakeAnimations() {
+        log('Creating fake animations for blob model');
+
+        // Create a simple up/down bobbing animation for idle
+        const times = [0, 0.5, 1];
+        const values = [0, 0.1, 0]; // Y position values
+
+        // Create tracks for different animations
+        const idleTrack = new THREE.KeyframeTrack(
+            '.position[y]', // Property to animate
+            times,
+            [0, 0.1, 0] // Slight up and down movement
+        );
+
+        const walkTrack = new THREE.KeyframeTrack(
+            '.position[y]',
+            times,
+            [0, 0.2, 0] // More pronounced movement
+        );
+
+        const runTrack = new THREE.KeyframeTrack(
+            '.position[y]',
+            times,
+            [0, 0.3, 0] // Even more movement
+        );
+
+        const jumpTrack = new THREE.KeyframeTrack(
+            '.position[y]',
+            [0, 0.5, 1],
+            [0, 0.5, 0] // Big jump
+        );
+
+        // Create animation clips
+        this.animations.idle = new THREE.AnimationClip('idle', 1.5, [idleTrack]);
+        this.animations.walkForward = new THREE.AnimationClip('walkForward', 1, [walkTrack]);
+        this.animations.walkBackward = new THREE.AnimationClip('walkBackward', 1, [walkTrack]);
+        this.animations.strafeLeft = new THREE.AnimationClip('strafeLeft', 1, [walkTrack]);
+        this.animations.strafeRight = new THREE.AnimationClip('strafeRight', 1, [walkTrack]);
+        this.animations.jump = new THREE.AnimationClip('jump', 0.8, [jumpTrack]);
+        this.animations.attack = new THREE.AnimationClip('attack', 0.8, [jumpTrack]);
+
+        // Create mixer if it doesn't exist
+        if (!this.mixer && this.mesh) {
+            this.mixer = new THREE.AnimationMixer(this.mesh);
+        }
+
+        // Start with idle animation
+        if (this.mixer) {
+            this.playAnimation('idle');
         }
     }
 
@@ -235,53 +324,73 @@ export class Player {
         }
     }
 
-    setAnimation(animationName) {
-        try {
-            log(`Player animation changed to: ${animationName}`);
-            this.currentAnimation = animationName;
-
-            // If we have a mixer and the requested animation
-            if (this.mixer && this.animations[animationName]) {
-                // If we have a current action, fade it out
-                if (this.currentAction) {
-                    const oldAction = this.currentAction;
-                    const newAction = this.mixer.clipAction(this.animations[animationName]);
-
-                    // Crossfade to new animation
-                    oldAction.fadeOut(0.2);
-                    newAction.reset().fadeIn(0.2).play();
-
-                    this.currentAction = newAction;
-                } else {
-                    // Just play the new animation
-                    this.currentAction = this.mixer.clipAction(this.animations[animationName]);
-                    this.currentAction.play();
-                }
-            } else if (!this.modelLoaded && this.tempMesh) {
-                // If model isn't loaded, change the color of the temp mesh
-                const bodyMesh = this.tempMesh.children.find(child =>
-                    child instanceof THREE.Mesh && child.position.y === 0.5);
-
-                if (bodyMesh) {
-                    switch (animationName) {
-                        case 'idle':
-                            bodyMesh.material.color.set(0x3366ff); // Blue
-                            break;
-                        case 'walk':
-                            bodyMesh.material.color.set(0x33cc33); // Green
-                            break;
-                        case 'run':
-                            bodyMesh.material.color.set(0xff6600); // Orange
-                            break;
-                        case 'jump':
-                            bodyMesh.material.color.set(0xffcc00); // Yellow
-                            break;
-                    }
-                }
-            }
-        } catch (err) {
-            error('Error in setAnimation', err);
+    playAnimation(name) {
+        if (!this.mixer || !this.animations[name]) {
+            log(`Animation ${name} not found`);
+            return;
         }
+
+        // Don't restart the same animation
+        if (this.currentAnimation === name) return;
+
+        log(`Playing animation: ${name}`);
+
+        // Stop any current animation
+        if (this.currentAction) {
+            this.currentAction.fadeOut(0.2);
+        }
+
+        // Start new animation
+        const action = this.mixer.clipAction(this.animations[name]);
+        action.reset();
+        action.fadeIn(0.2);
+        action.play();
+
+        this.currentAction = action;
+        this.currentAnimation = name;
+
+        // For attack and jump animations, set them to play once and then return to idle
+        if (name === 'attack' || name === 'jump') {
+            action.setLoop(THREE.LoopOnce);
+            action.clampWhenFinished = true;
+
+            // Listen for the finished event to return to idle
+            this.mixer.addEventListener('finished', () => {
+                if (this.currentAnimation === name) {
+                    this.playAnimation('idle');
+                }
+            });
+        }
+    }
+
+    updateMovementAnimation(input) {
+        if (this.isAttacking) return; // Don't interrupt attack animation
+
+        if (input.jump && this.canJump) {
+            this.playAnimation('jump');
+        } else if (input.forward) {
+            this.playAnimation('walkForward');
+        } else if (input.backward) {
+            this.playAnimation('walkBackward');
+        } else if (input.left) {
+            this.playAnimation('strafeLeft');
+        } else if (input.right) {
+            this.playAnimation('strafeRight');
+        } else {
+            this.playAnimation('idle');
+        }
+    }
+
+    attack() {
+        if (this.isAttacking) return;
+
+        this.isAttacking = true;
+        this.playAnimation('attack');
+
+        // Reset attack state after animation completes
+        setTimeout(() => {
+            this.isAttacking = false;
+        }, 800); // Match this with your animation duration
     }
 
     update(deltaTime) {
@@ -459,5 +568,9 @@ export class Player {
 
         // Activate the body
         this.body.activate(true);
+    }
+
+    setAnimation(name) {
+        this.playAnimation(name);
     }
 }

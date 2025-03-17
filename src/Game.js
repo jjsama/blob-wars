@@ -110,6 +110,10 @@ export class Game {
             this.physics.registerRigidBody(this.player.mesh, this.player.body);
             log('Player created');
 
+            // Add this line to make sure the player model loads
+            log('Loading player model');
+            this.player.loadModel();
+
             // Add a timeout to check if the player model loaded
             setTimeout(() => {
                 if (this.player && !this.player.modelLoaded) {
@@ -175,7 +179,7 @@ export class Game {
 
         if (this.isPlayerOnGround()) {
             // Set jump animation
-            this.player.setAnimation('jump');
+            this.player.playAnimation('jump');
 
             // Apply jump force
             const jumpImpulse = new Ammo.btVector3(0, this.jumpForce, 0);
@@ -386,11 +390,11 @@ export class Game {
 
         // Set animation based on movement state
         if (!isMoving) {
-            this.player.setAnimation('idle');
+            this.player.playAnimation('idle');
         } else if (this.input.isKeyPressed('shift')) {
-            this.player.setAnimation('run');
+            this.player.playAnimation('walkForward');
         } else {
-            this.player.setAnimation('walk');
+            this.player.playAnimation('walkForward');
         }
 
         // Skip if no movement keys are pressed
