@@ -36,23 +36,72 @@ export function initDebug() {
     }
 }
 
+// Create a toggleable console container
+let consoleContainer;
+let consoleVisible = false;
+
+function createConsoleContainer() {
+    if (consoleContainer) return consoleContainer;
+    
+    consoleContainer = document.createElement('div');
+    consoleContainer.id = 'game-console';
+    consoleContainer.style.position = 'fixed';
+    consoleContainer.style.top = '0';
+    consoleContainer.style.left = '0';
+    consoleContainer.style.width = '100%';
+    consoleContainer.style.height = '200px';
+    consoleContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    consoleContainer.style.color = '#fff';
+    consoleContainer.style.fontFamily = 'monospace';
+    consoleContainer.style.fontSize = '12px';
+    consoleContainer.style.padding = '10px';
+    consoleContainer.style.overflowY = 'auto';
+    consoleContainer.style.zIndex = '1000';
+    consoleContainer.style.display = 'none'; // Hidden by default
+    
+    document.body.appendChild(consoleContainer);
+    
+    // Add event listener for Tab key to toggle console
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Tab') {
+            event.preventDefault(); // Prevent default tab behavior
+            consoleVisible = !consoleVisible;
+            consoleContainer.style.display = consoleVisible ? 'block' : 'none';
+        }
+    });
+    
+    return consoleContainer;
+}
+
+// Initialize the console container
+createConsoleContainer();
+
+// Export log and error functions
 export function log(message) {
     console.log(message);
-    const debugElement = document.getElementById('debug');
-    if (debugElement) {
-        debugElement.innerHTML += `<br>${message}`;
-    }
+    
+    if (!consoleContainer) return;
+    
+    const logEntry = document.createElement('div');
+    logEntry.textContent = message;
+    consoleContainer.appendChild(logEntry);
+    
+    // Auto-scroll to bottom
+    consoleContainer.scrollTop = consoleContainer.scrollHeight;
 }
 
 export function error(message, err) {
     console.error(message, err);
-    const debugElement = document.getElementById('debug');
-    if (debugElement) {
-        debugElement.innerHTML += `<br><span style="color:red">ERROR: ${message}</span>`;
-        if (err && err.message) {
-            debugElement.innerHTML += `<br><span style="color:red">- ${err.message}</span>`;
-        }
-    }
+    
+    if (!consoleContainer) return;
+    
+    const errorEntry = document.createElement('div');
+    errorEntry.textContent = `${message}: ${err?.message || err}`;
+    errorEntry.style.color = '#ff5555';
+    consoleContainer.appendChild(errorEntry);
+    
+    // Auto-scroll to bottom
+    consoleContainer.scrollTop = consoleContainer.scrollHeight;
 }
 
 // Make these functions global
