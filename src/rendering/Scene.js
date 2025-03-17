@@ -6,8 +6,8 @@ export class GameScene {
         this.camera = null;
         this.renderer = null;
 
-        // Camera settings - adjust for better aiming visibility
-        this.cameraOffset = new THREE.Vector3(1.5, 2.0, 5.0); // Moved slightly to the right
+        // Camera settings - adjust to match your Blender perspective
+        this.cameraOffset = new THREE.Vector3(0, 2.0, 4.0); // Centered behind player, slightly elevated
         this.cameraTarget = new THREE.Vector3();
 
         // Mouse control variables

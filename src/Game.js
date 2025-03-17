@@ -160,6 +160,7 @@ export class Game {
 
             if (event.key === 'f' && !event.repeat) {
                 this.shootProjectile();
+                if (this.player) this.player.playAnimation('attack');
             }
         });
 
@@ -167,6 +168,7 @@ export class Game {
         this.input.onMouseDown((event) => {
             if (event.button === 0) { // Left mouse button
                 this.shootProjectile();
+                if (this.player) this.player.playAnimation('attack');
             }
         });
     }
@@ -382,23 +384,34 @@ export class Game {
     updateMovement() {
         if (!this.player || !this.player.body) return;
 
-        // Check if any movement keys are pressed
-        const isMoving = this.input.isKeyPressed('w') || this.input.isKeyPressed('a') ||
-            this.input.isKeyPressed('s') || this.input.isKeyPressed('d') ||
-            this.input.isKeyPressed('ArrowUp') || this.input.isKeyPressed('ArrowDown') ||
-            this.input.isKeyPressed('ArrowLeft') || this.input.isKeyPressed('ArrowRight');
+        // Check which keys are pressed
+        const forward = this.input.isKeyPressed('w') || this.input.isKeyPressed('ArrowUp');
+        const backward = this.input.isKeyPressed('s') || this.input.isKeyPressed('ArrowDown');
+        const left = this.input.isKeyPressed('a') || this.input.isKeyPressed('ArrowLeft');
+        const rightKey = this.input.isKeyPressed('d') || this.input.isKeyPressed('ArrowRight');
 
-        // Set animation based on movement state
-        if (!isMoving) {
+        // Determine the appropriate animation
+        if (!forward && !backward && !left && !rightKey) {
             this.player.playAnimation('idle');
-        } else if (this.input.isKeyPressed('shift')) {
+        } else if (forward && !backward && !left && !rightKey) {
             this.player.playAnimation('walkForward');
+        } else if (!forward && backward && !left && !rightKey) {
+            this.player.playAnimation('walkBackward');
+        } else if (!forward && !backward && left && !rightKey) {
+            this.player.playAnimation('strafeLeft');
+        } else if (!forward && !backward && !left && rightKey) {
+            this.player.playAnimation('strafeRight');
         } else {
-            this.player.playAnimation('walkForward');
+            // For diagonal movement, prioritize forward/backward
+            if (forward) {
+                this.player.playAnimation('walkForward');
+            } else if (backward) {
+                this.player.playAnimation('walkBackward');
+            }
         }
 
         // Skip if no movement keys are pressed
-        if (!isMoving) {
+        if (!forward && !backward && !left && !rightKey) {
             // Apply a stopping force when no keys are pressed to reduce sliding
             if (this.player.body) {
                 const velocity = this.player.body.getLinearVelocity();
@@ -432,27 +445,27 @@ export class Game {
         cameraDirection.y = 0;
         cameraDirection.normalize();
 
-        const right = new THREE.Vector3();
-        right.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0)).normalize();
+        const rightVector = new THREE.Vector3();
+        rightVector.crossVectors(cameraDirection, new THREE.Vector3(0, 1, 0)).normalize();
 
-        if (this.input.isKeyPressed('w') || this.input.isKeyPressed('ArrowUp')) {
+        if (forward) {
             force.setX(force.x() + cameraDirection.x * impulseStrength);
             force.setZ(force.z() + cameraDirection.z * impulseStrength);
         }
 
-        if (this.input.isKeyPressed('s') || this.input.isKeyPressed('ArrowDown')) {
+        if (backward) {
             force.setX(force.x() - cameraDirection.x * impulseStrength);
             force.setZ(force.z() - cameraDirection.z * impulseStrength);
         }
 
-        if (this.input.isKeyPressed('a') || this.input.isKeyPressed('ArrowLeft')) {
-            force.setX(force.x() - right.x * impulseStrength);
-            force.setZ(force.z() - right.z * impulseStrength);
+        if (left) {
+            force.setX(force.x() - rightVector.x * impulseStrength);
+            force.setZ(force.z() - rightVector.z * impulseStrength);
         }
 
-        if (this.input.isKeyPressed('d') || this.input.isKeyPressed('ArrowRight')) {
-            force.setX(force.x() + right.x * impulseStrength);
-            force.setZ(force.z() + right.z * impulseStrength);
+        if (rightKey) {
+            force.setX(force.x() + rightVector.x * impulseStrength);
+            force.setZ(force.z() + rightVector.z * impulseStrength);
         }
 
         if (force.x() !== 0 || force.z() !== 0) {

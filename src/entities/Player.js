@@ -163,6 +163,9 @@ export class Player {
                 model.position.set(this.position.x, this.position.y, this.position.z);
             }
 
+            // FIX 1: Rotate the model 180 degrees to face forward instead of backward
+            model.rotation.set(0, Math.PI, 0); // This should make it face forward
+
             // Make sure the model casts shadows
             model.traverse((node) => {
                 if (node.isMesh) {
@@ -170,6 +173,9 @@ export class Player {
                     node.receiveShadow = true;
                 }
             });
+
+            // FIX 2: Scale down the model to make it smaller
+            model.scale.set(0.35, 0.35, 0.35); // Reduced from 0.5 to 0.35 (70% of previous size)
 
             // Remove the temporary mesh
             if (this.tempMesh) {
@@ -222,6 +228,34 @@ export class Player {
                 case 'attack': this.animations.attack = clip; break;
             }
         });
+
+        // If strafeLeft is missing, use strafeRight and reverse it
+        if (!this.animations.strafeLeft && this.animations.strafeRight) {
+            log('Creating strafeLeft from strafeRight');
+            const strafeRightClip = this.animations.strafeRight;
+
+            // Clone the strafeRight animation and reverse it
+            const strafeLeftClip = THREE.AnimationClip.parse(THREE.AnimationClip.toJSON(strafeRightClip));
+            strafeLeftClip.name = 'strafeLeft';
+
+            // Reverse the animation by negating the values
+            strafeLeftClip.tracks.forEach(track => {
+                if (track.name.includes('position.x') || track.name.includes('quaternion')) {
+                    for (let i = 0; i < track.values.length; i++) {
+                        track.values[i] = -track.values[i];
+                    }
+                }
+            });
+
+            this.animations.strafeLeft = strafeLeftClip;
+        }
+
+        // Make attack animation smoother
+        if (this.animations.attack) {
+            const attackClip = this.animations.attack;
+            // Slow down the attack animation a bit
+            attackClip.duration *= 1.5;
+        }
 
         // If we don't have all animations, use the first one as a fallback
         if (!this.animations.idle && animations.length > 0) {
@@ -390,7 +424,11 @@ export class Player {
         // Reset attack state after animation completes
         setTimeout(() => {
             this.isAttacking = false;
-        }, 800); // Match this with your animation duration
+            // Return to idle if no movement keys are pressed
+            if (!this.currentAnimation || this.currentAnimation === 'attack') {
+                this.playAnimation('idle');
+            }
+        }, 1200); // Increased from 800 to 1200 ms for smoother animation
     }
 
     update(deltaTime) {
@@ -403,21 +441,23 @@ export class Player {
                 const transform = new Ammo.btTransform();
                 ms.getWorldTransform(transform);
                 const p = transform.getOrigin();
-                const q = transform.getRotation();
 
+                // Update position
                 this.mesh.position.set(p.x(), p.y(), p.z());
 
-                // For the soldier model, we don't want to rotate it with physics
-                // Instead, we'll handle rotation manually based on movement direction
-                if (this.modelLoaded) {
-                    // Keep the y rotation (for direction) but reset x and z rotation
-                    const euler = new THREE.Euler().setFromQuaternion(
-                        new THREE.Quaternion(q.x(), q.y(), q.z(), q.w())
-                    );
-                    this.mesh.rotation.y = euler.y;
-                } else {
-                    // For the temp mesh, apply full rotation
-                    this.mesh.quaternion.set(q.x(), q.y(), q.z(), q.w());
+                // Make the player always face the direction of the crosshair/camera
+                if (this.modelLoaded && window.game && window.game.scene) {
+                    const cameraDirection = new THREE.Vector3();
+                    window.game.scene.camera.getWorldDirection(cameraDirection);
+                    cameraDirection.y = 0; // Keep upright
+                    cameraDirection.normalize();
+
+                    // Calculate the angle to face the camera direction
+                    const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
+
+                    // Set rotation to match crosshair direction
+                    // No need for + Math.PI since we want to face where we're aiming
+                    this.mesh.rotation.set(0, angle, 0);
                 }
             }
 
