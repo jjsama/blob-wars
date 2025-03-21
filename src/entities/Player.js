@@ -101,51 +101,29 @@ export class Player {
 
             const loader = new GLTFLoader();
 
-            // Try multiple possible paths to find the model
-            const modelPaths = [
-                './models/blobville-player.glb',
-                './public/models/blobville-player.glb',
-                '/models/blobville-player.glb',
-                '/public/models/blobville-player.glb'
-            ];
+            // Simplify to just one path that we know works from the logs
+            const modelPath = '/public/models/blobville-player.glb';
 
-            // Log all paths we're trying
-            log(`Attempting to load model from multiple possible paths`);
-            modelPaths.forEach(path => log(`- ${path}`));
+            log(`Trying to load player model from: ${modelPath}`);
 
-            // Try each path until one works
-            const tryNextPath = (index) => {
-                if (index >= modelPaths.length) {
-                    // If we've tried all paths, use the fallback
-                    log('Could not find model in any location, using fallback');
-                    return;
-                }
-
-                const path = modelPaths[index];
-                log(`Trying to load from: ${path}`);
-
-                loader.load(
-                    path,
-                    (gltf) => {
-                        log('Blobville player model loaded successfully!');
-                        this.setupModel(gltf);
-                    },
-                    (xhr) => {
-                        if (xhr.lengthComputable) {
-                            const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                            log(`Loading model: ${percent}%`);
-                        }
-                    },
-                    (err) => {
-                        log(`Failed to load from ${path}: ${err.message}`);
-                        // Try the next path
-                        tryNextPath(index + 1);
+            loader.load(
+                modelPath,
+                (gltf) => {
+                    log('Blobville player model loaded successfully!');
+                    this.setupModel(gltf);
+                },
+                (xhr) => {
+                    if (xhr.lengthComputable) {
+                        const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
+                        log(`Loading model: ${percent}%`);
                     }
-                );
-            };
-
-            // Start trying paths
-            tryNextPath(0);
+                },
+                (err) => {
+                    error(`Failed to load player model: ${err.message}`);
+                    // Fall back to the temporary mesh
+                    log('Using fallback temporary mesh for player');
+                }
+            );
         } catch (err) {
             error('Error in loadModel', err);
         }
@@ -326,7 +304,7 @@ export class Player {
         try {
             log('Creating player physics');
 
-            // Create physics body for player
+            // Create physics body for player with simplified properties
             const shape = new Ammo.btCapsuleShape(0.5, 1);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
@@ -336,7 +314,9 @@ export class Player {
 
             const mass = 1;
             const localInertia = new Ammo.btVector3(0, 0, 0);
-            shape.calculateLocalInertia(mass, localInertia);
+
+            // Skip inertia calculation
+            // shape.calculateLocalInertia(mass, localInertia);
 
             const motionState = new Ammo.btDefaultMotionState(transform);
             const rbInfo = new Ammo.btRigidBodyConstructionInfo(
@@ -344,9 +324,8 @@ export class Player {
             );
 
             this.body = new Ammo.btRigidBody(rbInfo);
-            this.body.setFriction(0.8);
-            this.body.setRestitution(0.1);
-            this.body.setDamping(0.2, 0.2);
+            this.body.setFriction(0.5);
+            this.body.setRestitution(0.2);
 
             // Prevent player from tipping over
             this.body.setAngularFactor(new Ammo.btVector3(0, 1, 0));
@@ -476,7 +455,7 @@ export class Player {
                 const p = transform.getOrigin();
 
                 // Update position
-                this.mesh.position.set(p.x(), p.y(), p.z());
+                this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
 
                 // Make sure the player doesn't fall through the world
                 if (p.y() < -10) {

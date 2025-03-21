@@ -18,6 +18,7 @@ export class Ground {
         });
         this.mesh = new THREE.Mesh(groundGeometry, groundMaterial);
         this.mesh.rotation.x = -Math.PI / 2; // Rotate to be horizontal
+        this.mesh.position.y = 0; // Keep ground at y=0
         this.mesh.receiveShadow = true;
         this.scene.add(this.mesh);
 
