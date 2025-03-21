@@ -27,6 +27,7 @@ export class Player {
         this.isDead = false;
         this.isAttacking = false;
         this.isJumping = false;
+        this.canJump = false;
 
         // Create a temporary mesh first - this ensures we always have a visible player
         this.createTempMesh();
@@ -330,6 +331,9 @@ export class Player {
             // Prevent player from tipping over
             this.body.setAngularFactor(new Ammo.btVector3(0, 1, 0));
 
+            // Add this line to track if player is on ground
+            this.canJump = false;
+
             this.physicsWorld.addRigidBody(this.body);
 
             log('Player physics created');
@@ -353,8 +357,8 @@ export class Player {
             return;
         }
 
-        // Don't restart the same animation
-        if (this.currentAnimation === name) return;
+        // Don't restart the same animation unless it's a jump or attack
+        if (this.currentAnimation === name && name !== 'jump' && name !== 'attack') return;
 
         log(`Playing animation: ${name}`);
 
@@ -378,6 +382,16 @@ export class Player {
         if (isOneShot) {
             action.setLoop(THREE.LoopOnce);
             action.clampWhenFinished = true; // Keep the last frame when finished
+
+            // Set up a callback for when the animation completes
+            if (this.mixer.listeners('finished').length === 0) {
+                this.mixer.addEventListener('finished', (e) => {
+                    // When one-shot animation finishes, return to idle
+                    if (this.currentAnimation === 'jump' || this.currentAnimation === 'attack') {
+                        this.playAnimation('idle');
+                    }
+                });
+            }
         }
 
         action.play();
@@ -388,8 +402,8 @@ export class Player {
     updateMovementAnimation(input) {
         if (this.isAttacking) return; // Don't interrupt attack animation
 
-        if (input.jump && this.canJump) {
-            this.playAnimation('jump');
+        if (input.jump && !this.isJumping) {
+            this.jump();
         } else if (input.forward) {
             this.playAnimation('walkForward');
         } else if (input.backward) {
@@ -421,10 +435,18 @@ export class Player {
     }
 
     jump() {
-        if (this.isJumping) return;
+        if (this.isJumping || !this.canJump) return;
 
         this.isJumping = true;
         this.playAnimation('jump');
+
+        // Apply an upward impulse for the physical jump
+        const jumpForce = new Ammo.btVector3(0, 10, 0);
+        this.applyForce(jumpForce);
+        Ammo.destroy(jumpForce);
+
+        // Temporarily disable canJump to prevent multiple jumps
+        this.canJump = false;
 
         // Get the duration of the jump animation
         let jumpDuration = 1000; // Default duration if we can't determine it
@@ -456,6 +478,9 @@ export class Player {
 
                 // Update position
                 this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+
+                // Check if player is on ground
+                this.checkGroundContact();
 
                 // Make sure the player doesn't fall through the world
                 if (p.y() < -10) {
@@ -638,5 +663,25 @@ export class Player {
 
     setAnimation(name) {
         this.playAnimation(name);
+    }
+
+    checkGroundContact() {
+        if (!this.body) return;
+
+        // Cast a ray downward from the player's position to check for ground
+        const origin = this.body.getWorldTransform().getOrigin();
+        const rayStart = new Ammo.btVector3(origin.x(), origin.y(), origin.z());
+        const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 1.2, origin.z());
+
+        const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
+        this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+
+        // If the ray hit something, the player is on the ground
+        this.canJump = rayCallback.hasHit();
+
+        // Clean up Ammo.js objects to prevent memory leaks
+        Ammo.destroy(rayStart);
+        Ammo.destroy(rayEnd);
+        Ammo.destroy(rayCallback);
     }
 }
