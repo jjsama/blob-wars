@@ -139,7 +139,7 @@ export class Game {
             log('Input handlers set up');
 
             // Spawn enemies
-            this.spawnEnemies(5); // Spawn 5 enemies
+            this.spawnEnemies();
 
             // Start game loop
             log('Starting animation loop');
@@ -706,21 +706,80 @@ export class Game {
         this.scene.scene.add(skybox);
     }
 
-    spawnEnemies(count) {
-        log(`Spawning ${count} enemies`);
+    spawnEnemies() {
+        try {
+            log('Spawning enemies for deathmatch');
 
-        for (let i = 0; i < count; i++) {
-            // Create enemy at random position
-            const position = new THREE.Vector3(
-                (Math.random() - 0.5) * 40, // Random X position
-                2, // Fixed height
-                (Math.random() - 0.5) * 40  // Random Z position
-            );
+            // Clear any existing enemies
+            this.enemies.forEach(enemy => {
+                if (enemy.destroy) {
+                    enemy.destroy();
+                }
+            });
+            this.enemies = [];
 
-            const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, position);
-            this.enemies.push(enemy);
+            // Spawn 11 enemies for a total of 12 players (including the player)
+            const totalEnemies = 11;
+
+            // Create evenly distributed spawn positions around the map
+            // Use a grid-based approach for better distribution
+            const mapSize = 80; // Total map size
+            const gridSize = Math.ceil(Math.sqrt(totalEnemies + 1)); // +1 for player
+            const cellSize = mapSize / gridSize;
+
+            // Create a list of possible spawn positions
+            const spawnPositions = [];
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    // Calculate position in grid cell with some randomness
+                    const x = -mapSize / 2 + cellSize / 2 + i * cellSize + (Math.random() * cellSize / 2 - cellSize / 4);
+                    const z = -mapSize / 2 + cellSize / 2 + j * cellSize + (Math.random() * cellSize / 2 - cellSize / 4);
+
+                    // Skip positions too close to the player
+                    const playerPos = this.player.getPosition();
+                    const distToPlayer = Math.sqrt(Math.pow(x - playerPos.x, 2) + Math.pow(z - playerPos.z, 2));
+                    if (distToPlayer > 15) { // Minimum distance from player
+                        spawnPositions.push({ x, z });
+                    }
+                }
+            }
+
+            // Shuffle the positions for randomness
+            for (let i = spawnPositions.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [spawnPositions[i], spawnPositions[j]] = [spawnPositions[j], spawnPositions[i]];
+            }
+
+            // Spawn enemies at these positions
+            for (let i = 0; i < Math.min(totalEnemies, spawnPositions.length); i++) {
+                const pos = spawnPositions[i];
+
+                // Create enemy at this position
+                const position = { x: pos.x, y: 2, z: pos.z };
+
+                try {
+                    // Create the enemy with the correct scene and physics objects
+                    const enemy = new Enemy(
+                        this.scene.scene,
+                        this.physics.physicsWorld,
+                        position
+                    );
+
+                    // Set the player as the initial target
+                    enemy.target = this.player;
+
+                    // Add to enemies array
+                    this.enemies.push(enemy);
+
+                    log(`Spawned enemy ${i + 1} at position (${pos.x.toFixed(2)}, 2, ${pos.z.toFixed(2)})`);
+                } catch (err) {
+                    error(`Failed to spawn enemy ${i + 1}: ${err.message}`);
+                }
+            }
+
+            log(`Total enemies spawned: ${this.enemies.length}`);
+        } catch (err) {
+            error('Error spawning enemies', err);
         }
-
-        log(`${this.enemies.length} enemies spawned`);
     }
 } 

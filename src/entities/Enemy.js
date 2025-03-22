@@ -44,19 +44,27 @@ export class Enemy {
         this.isAttacking = false;
         this.isJumping = false;
 
-        // Add personality traits for more varied behavior
+        // Add more variety to personality traits for larger groups
         this.personality = {
-            aggression: 0.3 + Math.random() * 0.7, // 0.3-1.0, higher means more aggressive
-            caution: Math.random(),                // 0-1, higher means more cautious when low health
-            accuracy: 0.5 + Math.random() * 0.5,   // 0.5-1.0, affects shooting accuracy
-            mobility: 0.3 + Math.random() * 0.7    // 0.3-1.0, affects movement speed and flanking
+            aggression: 0.3 + Math.random() * 0.7,    // 0.3-1.0, higher means more aggressive
+            caution: Math.random(),                   // 0-1, higher means more cautious when low health
+            accuracy: 0.5 + Math.random() * 0.5,      // 0.5-1.0, affects shooting accuracy
+            mobility: 0.3 + Math.random() * 0.7,      // 0.3-1.0, affects movement speed and flanking
+            teamwork: Math.random(),                  // 0-1, affects coordination with other enemies
+            patience: Math.random()                   // 0-1, affects how long they'll wait in one spot
         };
 
-        // Adjust properties based on personality
-        this.detectionRange = 30 + this.personality.aggression * 10; // 30-40 units
-        this.attackRange = 10 + this.personality.aggression * 10;    // 10-20 units
-        this.moveSpeed = 5 * this.personality.mobility;              // 1.5-5 units
+        // Adjust properties based on personality for more varied behavior
+        this.detectionRange = 30 + this.personality.aggression * 10;  // 30-40 units
+        this.attackRange = 10 + this.personality.aggression * 10;     // 10-20 units
+        this.moveSpeed = 5 * this.personality.mobility;               // 1.5-5 units
         this.attackCooldown = 3000 - this.personality.aggression * 1000; // 2000-3000ms
+
+        // Add team awareness to prevent all enemies from attacking at once
+        this.teamAwarenessRadius = 15 + this.personality.teamwork * 10; // 15-25 units
+
+        // Add a unique ID to each enemy
+        this.id = Math.floor(Math.random() * 1000000);
 
         // Create a temporary mesh first
         this.createTempMesh();
@@ -496,6 +504,19 @@ export class Enemy {
 
         // Update AI behavior
         this.updateAI(deltaTime);
+
+        // Check for nearby teammates and adjust behavior
+        const nearbyTeammates = this.checkNearbyTeammates();
+
+        // If there are many teammates nearby, some enemies should hold back
+        if (nearbyTeammates > 2 && this.personality.teamwork > 0.5) {
+            // Higher teamwork enemies will coordinate better
+            if (Math.random() < this.personality.patience) {
+                // Sometimes just observe instead of attacking
+                this.state = 'patrol';
+                return;
+            }
+        }
     }
 
     updateAI(deltaTime) {
@@ -971,5 +992,35 @@ export class Enemy {
         );
 
         this.state = 'patrol';
+    }
+
+    // Add a method to check for nearby teammates
+    checkNearbyTeammates() {
+        if (!window.game || !window.game.enemies) return 0;
+
+        const myPosition = this.getPosition();
+        let nearbyCount = 0;
+
+        window.game.enemies.forEach(enemy => {
+            // Skip self
+            if (enemy.id === this.id) return;
+
+            const enemyPosition = enemy.getPosition();
+            const distance = myPosition.distanceTo(enemyPosition);
+
+            if (distance < this.teamAwarenessRadius) {
+                nearbyCount++;
+            }
+        });
+
+        return nearbyCount;
+    }
+
+    // Add a proper getPosition method to the Enemy class
+    getPosition() {
+        if (!this.mesh) {
+            return new THREE.Vector3();
+        }
+        return this.mesh.position.clone();
     }
 } 
