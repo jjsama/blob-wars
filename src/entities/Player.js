@@ -399,35 +399,55 @@ export class Player {
 
             // Stop any current animation with appropriate crossfade
             if (this.currentAction) {
-                const fadeTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
-                this.currentAction.fadeOut(fadeTime);
+                // For jump, we want a very quick transition with no blending
+                if (name === 'jump') {
+                    this.currentAction.stop();
+                } else {
+                    const fadeTime = isOneShot ? 0.1 : 0.2;
+                    this.currentAction.fadeOut(fadeTime);
+                }
             }
 
             // Start new animation
             const action = this.mixer.clipAction(this.animations[name]);
+
+            // Reset the action to ensure it plays from the beginning
             action.reset();
 
-            const fadeInTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
-            action.fadeIn(fadeInTime);
-
-            // For attack and jump animations, set them to play once and then return to idle
+            // For jump and attack, make sure they play only once
             if (isOneShot) {
                 action.setLoop(THREE.LoopOnce);
-                action.clampWhenFinished = true; // Keep the last frame when finished
+                action.clampWhenFinished = true; // Keep the last frame until we transition
 
-                // Use the mixer's finished event instead of listeners method
-                if (!this.mixerEventAdded) {
-                    this.mixer.addEventListener('finished', (e) => {
-                        // When one-shot animation finishes, return to idle
-                        if (this.currentAnimation === 'jump' || this.currentAnimation === 'attack') {
+                // For jump specifically, ensure smooth playback
+                if (name === 'jump') {
+                    action.timeScale = 1.0;  // Normal speed
+                    action.weight = 1.0;     // Full weight
+                    action.enabled = true;   // Make sure it's enabled
+
+                    // Don't use crossfade for jump - play it immediately
+                    action.play();
+
+                    // Schedule return to idle after animation completes
+                    const jumpDuration = this.animations.jump.duration * 1000;
+                    setTimeout(() => {
+                        if (this.currentAnimation === 'jump') {
                             this.playAnimation('idle');
                         }
-                    });
-                    this.mixerEventAdded = true;
+                    }, jumpDuration);
+                } else {
+                    // For other one-shot animations, use normal fade
+                    const fadeInTime = 0.1;
+                    action.fadeIn(fadeInTime);
+                    action.play();
                 }
+            } else {
+                // For regular animations, use normal crossfade
+                const fadeInTime = 0.2;
+                action.fadeIn(fadeInTime);
+                action.play();
             }
 
-            action.play();
             this.currentAction = action;
             this.currentAnimation = name;
         } catch (err) {
@@ -494,33 +514,32 @@ export class Player {
         log('JUMP INITIATED - Playing jump animation');
         this.isJumping = true;
 
-        // Play the jump animation
+        // Play the jump animation first
         this.playAnimation('jump');
 
-        // Apply physics for the jump
-        if (this.body) {
-            this.body.activate(true);
-            const jumpForce = new Ammo.btVector3(0, 50, 0);
-            this.body.applyCentralImpulse(jumpForce);
-            Ammo.destroy(jumpForce);
-            log('Jump force applied: 0, 50, 0');
-        } else {
-            log('WARNING: No physics body for jump!');
-        }
+        // Apply physics for the jump with a slight delay to match animation
+        setTimeout(() => {
+            if (this.body) {
+                this.body.activate(true);
 
-        // Reset jump state after animation completes
+                // Reduced jump force for a short hop
+                const jumpForce = new Ammo.btVector3(0, 10, 0);
+                this.body.applyCentralImpulse(jumpForce);
+                Ammo.destroy(jumpForce);
+                log('Jump force applied: 0, 10, 0');
+            }
+        }, 50); // Small delay to sync with animation start
+
+        // Get exact animation duration from the clip
         const jumpDuration = this.animations.jump ?
-            (this.animations.jump.duration * 1000) + 100 : 1000;
+            (this.animations.jump.duration * 1000) : 833; // 0.833 seconds as fallback
 
         log(`Jump animation duration: ${jumpDuration}ms`);
+
+        // Reset jump state after animation completes
         setTimeout(() => {
             this.isJumping = false;
             log('Jump state reset - player can jump again');
-
-            // Return to idle animation if we're still in jump animation
-            if (this.currentAnimation === 'jump') {
-                this.playAnimation('idle');
-            }
         }, jumpDuration);
     }
 
