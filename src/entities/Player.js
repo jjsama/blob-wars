@@ -28,6 +28,7 @@ export class Player {
         this.isAttacking = false;
         this.isJumping = false;
         this.canJump = false;
+        this.mixerEventAdded = false;
 
         // Create a temporary mesh first - this ensures we always have a visible player
         this.createTempMesh();
@@ -40,7 +41,15 @@ export class Player {
             this.loadModel();
         }, 1000);
 
-        log('Player created');
+        // Add a direct space key listener for testing
+        window.addEventListener('keydown', (event) => {
+            if (event.key === ' ' && !this.isJumping) {
+                log('DIRECT SPACE KEY DETECTED');
+                this.jump();
+            }
+        });
+
+        log('Player created with direct space key listener');
     }
 
     createTempMesh() {
@@ -98,11 +107,10 @@ export class Player {
 
     loadModel() {
         try {
-            log('Loading blobville player model');
-
+            log('Loading player model');
             const loader = new GLTFLoader();
 
-            // Simplify to just one path that we know works from the logs
+            // Use the exact same path as the enemy
             const modelPath = '/public/models/blobville-player.glb';
 
             log(`Trying to load player model from: ${modelPath}`);
@@ -110,18 +118,24 @@ export class Player {
             loader.load(
                 modelPath,
                 (gltf) => {
-                    log('Blobville player model loaded successfully!');
+                    log('Player model loaded successfully!');
+
+                    // Log all animations in the GLTF file
+                    log(`Player GLTF contains ${gltf.animations.length} animations:`);
+                    gltf.animations.forEach((anim, index) => {
+                        log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
+                    });
+
                     this.setupModel(gltf);
                 },
                 (xhr) => {
                     if (xhr.lengthComputable) {
                         const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                        log(`Loading model: ${percent}%`);
+                        log(`Loading player model: ${percent}%`);
                     }
                 },
                 (err) => {
                     error(`Failed to load player model: ${err.message}`);
-                    // Fall back to the temporary mesh
                     log('Using fallback temporary mesh for player');
                 }
             );
@@ -143,7 +157,7 @@ export class Player {
                 model.position.set(this.position.x, this.position.y, this.position.z);
             }
 
-            // FIX 1: Rotate the model 180 degrees to face forward instead of backward
+            // Rotate the model 180 degrees to face forward instead of backward
             model.rotation.set(0, Math.PI, 0); // This should make it face forward
 
             // Make sure the model casts shadows
@@ -154,7 +168,7 @@ export class Player {
                 }
             });
 
-            // FIX 2: Scale down the model to make it smaller
+            // Scale down the model to make it smaller
             model.scale.set(0.35, 0.35, 0.35); // Reduced from 0.5 to 0.35 (70% of previous size)
 
             // Remove the temporary mesh
@@ -171,6 +185,15 @@ export class Player {
             this.scene.add(this.mesh);
             this.modelLoaded = true;
 
+            // Store animations directly on the mesh for easier access
+            this.mesh.animations = gltf.animations;
+
+            // Log all animations in the GLTF file
+            log(`Player model loaded with ${gltf.animations.length} animations:`);
+            gltf.animations.forEach((anim, index) => {
+                log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
+            });
+
             // Set up animations
             this.setupAnimations(gltf.animations);
         } catch (err) {
@@ -181,71 +204,58 @@ export class Player {
     // Separate method to set up animations
     setupAnimations(animations) {
         if (!animations || animations.length === 0) {
-            log('No animations found, creating fake animations');
-            this.createFakeAnimations();
+            log('No animations found in player model');
             return;
         }
 
-        log(`Found ${animations.length} animations`);
+        log(`Setting up ${animations.length} animations for player`);
 
         // Create animation mixer
         this.mixer = new THREE.AnimationMixer(this.mesh);
 
-        // Log all animation names
-        animations.forEach((clip, index) => {
-            log(`Animation ${index}: ${clip.name}`);
-        });
+        // First, try to map animations by index (more reliable)
+        if (animations.length >= 7) {
+            log('Mapping animations by index (more reliable)');
+            // Map animations based on the indices we've seen in the console logs
+            this.animations.strafeLeft = animations[0];
+            this.animations.attack = animations[1];
+            this.animations.idle = animations[2];
+            this.animations.jump = animations[3];
+            this.animations.strafeRight = animations[4];
+            this.animations.walkBackward = animations[5];
+            this.animations.walkForward = animations[6];
 
-        // Map animations to our animation types
-        animations.forEach(clip => {
-            switch (clip.name) {
-                case 'idle': this.animations.idle = clip; break;
-                case 'walkForward': this.animations.walkForward = clip; break;
-                case 'walkBackward': this.animations.walkBackward = clip; break;
-                case 'strafeLeft': this.animations.strafeLeft = clip; break;
-                case 'strafeRight': this.animations.strafeRight = clip; break;
-                case 'jump': this.animations.jump = clip; break;
-                case 'attack': this.animations.attack = clip; break;
-            }
-        });
+            log('Animations mapped by index:');
+            log(`strafeLeft: ${this.animations.strafeLeft ? this.animations.strafeLeft.name : 'NOT FOUND'}`);
+            log(`attack: ${this.animations.attack ? this.animations.attack.name : 'NOT FOUND'}`);
+            log(`idle: ${this.animations.idle ? this.animations.idle.name : 'NOT FOUND'}`);
+            log(`jump: ${this.animations.jump ? this.animations.jump.name : 'NOT FOUND'}`);
+            log(`strafeRight: ${this.animations.strafeRight ? this.animations.strafeRight.name : 'NOT FOUND'}`);
+            log(`walkBackward: ${this.animations.walkBackward ? this.animations.walkBackward.name : 'NOT FOUND'}`);
+            log(`walkForward: ${this.animations.walkForward ? this.animations.walkForward.name : 'NOT FOUND'}`);
+        } else {
+            // Fallback to mapping by name
+            log('Mapping animations by name (fallback)');
+            animations.forEach((clip, index) => {
+                const name = clip.name.toLowerCase();
+                log(`Processing animation ${index}: "${clip.name}"`);
 
-        // If strafeLeft is missing, use strafeRight and reverse it
-        if (!this.animations.strafeLeft && this.animations.strafeRight) {
-            log('Creating strafeLeft from strafeRight');
-            const strafeRightClip = this.animations.strafeRight;
-
-            // Clone the strafeRight animation and reverse it
-            const strafeLeftClip = THREE.AnimationClip.parse(THREE.AnimationClip.toJSON(strafeRightClip));
-            strafeLeftClip.name = 'strafeLeft';
-
-            // Reverse the animation by negating the values
-            strafeLeftClip.tracks.forEach(track => {
-                if (track.name.includes('position.x') || track.name.includes('quaternion')) {
-                    for (let i = 0; i < track.values.length; i++) {
-                        track.values[i] = -track.values[i];
-                    }
-                }
+                if (name === 'idle') this.animations.idle = clip;
+                else if (name === 'walkforward') this.animations.walkForward = clip;
+                else if (name === 'walkbackward') this.animations.walkBackward = clip;
+                else if (name === 'strafeleft') this.animations.strafeLeft = clip;
+                else if (name === 'straferight') this.animations.strafeRight = clip;
+                else if (name === 'jump') this.animations.jump = clip;
+                else if (name === 'attack') this.animations.attack = clip;
             });
-
-            this.animations.strafeLeft = strafeLeftClip;
         }
 
-        // Make attack animation smoother
-        if (this.animations.attack) {
-            const attackClip = this.animations.attack;
-            // Slow down the attack animation a bit
-            attackClip.duration *= 1.5;
-        }
-
-        // If we don't have all animations, use the first one as a fallback
-        if (!this.animations.idle && animations.length > 0) {
-            this.animations.idle = animations[0];
-            log('Using first animation as idle');
-        }
-
-        // Start with idle animation
+        // Start with idle animation if available
         if (this.animations.idle) {
+            log('Starting with idle animation');
             this.playAnimation('idle');
+        } else {
+            log('No idle animation found, cannot start animations');
         }
     }
 
@@ -309,15 +319,15 @@ export class Player {
             const shape = new Ammo.btCapsuleShape(0.5, 1);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
+
+            // Position the physics body slightly higher to account for model offset
             transform.setOrigin(new Ammo.btVector3(
-                this.position.x, this.position.y, this.position.z
+                this.position.x, this.position.y + 1.0, this.position.z
             ));
 
             const mass = 1;
             const localInertia = new Ammo.btVector3(0, 0, 0);
-
-            // Skip inertia calculation
-            // shape.calculateLocalInertia(mass, localInertia);
+            shape.calculateLocalInertia(mass, localInertia);
 
             const motionState = new Ammo.btDefaultMotionState(transform);
             const rbInfo = new Ammo.btRigidBodyConstructionInfo(
@@ -329,11 +339,18 @@ export class Player {
             this.body.setRestitution(0.2);
 
             // Prevent player from tipping over
-            this.body.setAngularFactor(new Ammo.btVector3(0, 1, 0));
+            this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0)); // Lock all rotation
 
-            // Add this line to track if player is on ground
+            // Set linear damping to prevent excessive sliding
+            this.body.setDamping(0.1, 0.1);
+
+            // Allow jumping by setting the correct flags
+            this.body.setFlags(this.body.getFlags() | 2); // CF_CHARACTER_OBJECT flag
+
+            // Activate the body so it's affected by physics immediately
+            this.body.activate(true);
+
             this.canJump = false;
-
             this.physicsWorld.addRigidBody(this.body);
 
             log('Player physics created');
@@ -345,13 +362,27 @@ export class Player {
     playAnimation(name) {
         if (!this.mixer) {
             log('No mixer available for animations');
-            return;
+
+            // Try to create the mixer if we have a mesh but no mixer
+            if (this.mesh && !this.mixer) {
+                log('Attempting to create mixer on demand');
+                this.mixer = new THREE.AnimationMixer(this.mesh);
+            } else {
+                return; // Can't play animation without mixer
+            }
         }
 
         if (!this.animations[name]) {
             log(`Animation ${name} not found, falling back to idle`);
+
+            // If we're already trying to play idle, don't create an infinite loop
+            if (name === 'idle') {
+                log('Idle animation not found, cannot play any animation');
+                return;
+            }
+
             // Try to fall back to idle
-            if (name !== 'idle' && this.animations.idle) {
+            if (this.animations.idle) {
                 this.playAnimation('idle');
             }
             return;
@@ -362,58 +393,78 @@ export class Player {
 
         log(`Playing animation: ${name}`);
 
-        // For attack and jump animations, we want to make sure they complete
-        const isOneShot = (name === 'attack' || name === 'jump');
+        try {
+            // For attack and jump animations, we want to make sure they complete
+            const isOneShot = (name === 'attack' || name === 'jump');
 
-        // Stop any current animation with appropriate crossfade
-        if (this.currentAction) {
-            const fadeTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
-            this.currentAction.fadeOut(fadeTime);
-        }
-
-        // Start new animation
-        const action = this.mixer.clipAction(this.animations[name]);
-        action.reset();
-
-        const fadeInTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
-        action.fadeIn(fadeInTime);
-
-        // For attack and jump animations, set them to play once and then return to idle
-        if (isOneShot) {
-            action.setLoop(THREE.LoopOnce);
-            action.clampWhenFinished = true; // Keep the last frame when finished
-
-            // Set up a callback for when the animation completes
-            if (this.mixer.listeners('finished').length === 0) {
-                this.mixer.addEventListener('finished', (e) => {
-                    // When one-shot animation finishes, return to idle
-                    if (this.currentAnimation === 'jump' || this.currentAnimation === 'attack') {
-                        this.playAnimation('idle');
-                    }
-                });
+            // Stop any current animation with appropriate crossfade
+            if (this.currentAction) {
+                const fadeTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
+                this.currentAction.fadeOut(fadeTime);
             }
-        }
 
-        action.play();
-        this.currentAction = action;
-        this.currentAnimation = name;
+            // Start new animation
+            const action = this.mixer.clipAction(this.animations[name]);
+            action.reset();
+
+            const fadeInTime = isOneShot ? 0.1 : 0.2; // Faster transition for one-shot animations
+            action.fadeIn(fadeInTime);
+
+            // For attack and jump animations, set them to play once and then return to idle
+            if (isOneShot) {
+                action.setLoop(THREE.LoopOnce);
+                action.clampWhenFinished = true; // Keep the last frame when finished
+
+                // Use the mixer's finished event instead of listeners method
+                if (!this.mixerEventAdded) {
+                    this.mixer.addEventListener('finished', (e) => {
+                        // When one-shot animation finishes, return to idle
+                        if (this.currentAnimation === 'jump' || this.currentAnimation === 'attack') {
+                            this.playAnimation('idle');
+                        }
+                    });
+                    this.mixerEventAdded = true;
+                }
+            }
+
+            action.play();
+            this.currentAction = action;
+            this.currentAnimation = name;
+        } catch (err) {
+            error(`Error playing animation ${name}:`, err);
+        }
     }
 
     updateMovementAnimation(input) {
-        if (this.isAttacking) return; // Don't interrupt attack animation
+        // Don't change animations during attack
+        if (this.isAttacking) return;
 
+        // Debug the input state
+        if (input.jump) {
+            log('Jump input detected in updateMovementAnimation');
+            log(`isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
+        }
+
+        // Handle jump with highest priority
         if (input.jump && !this.isJumping) {
+            log('Jump conditions met, calling jump()');
             this.jump();
-        } else if (input.forward) {
-            this.playAnimation('walkForward');
-        } else if (input.backward) {
-            this.playAnimation('walkBackward');
-        } else if (input.left) {
-            this.playAnimation('strafeLeft');
-        } else if (input.right) {
-            this.playAnimation('strafeRight');
-        } else {
-            this.playAnimation('idle');
+            return;
+        }
+
+        // Only change other animations if we're not jumping
+        if (!this.isJumping) {
+            if (input.forward) {
+                this.playAnimation('walkForward');
+            } else if (input.backward) {
+                this.playAnimation('walkBackward');
+            } else if (input.left) {
+                this.playAnimation('strafeLeft');
+            } else if (input.right) {
+                this.playAnimation('strafeRight');
+            } else {
+                this.playAnimation('idle');
+            }
         }
     }
 
@@ -435,33 +486,41 @@ export class Player {
     }
 
     jump() {
-        if (this.isJumping || !this.canJump) return;
+        if (this.isJumping) {
+            log('Jump requested but already jumping');
+            return;
+        }
 
+        log('JUMP INITIATED - Playing jump animation');
         this.isJumping = true;
+
+        // Play the jump animation
         this.playAnimation('jump');
 
-        // Apply an upward impulse for the physical jump
-        const jumpForce = new Ammo.btVector3(0, 10, 0);
-        this.applyForce(jumpForce);
-        Ammo.destroy(jumpForce);
-
-        // Temporarily disable canJump to prevent multiple jumps
-        this.canJump = false;
-
-        // Get the duration of the jump animation
-        let jumpDuration = 1000; // Default duration if we can't determine it
-        if (this.animations.jump) {
-            // Get actual duration from the animation clip
-            jumpDuration = this.animations.jump.duration * 1000; // Convert to milliseconds
-
-            // Add a small buffer to ensure animation completes
-            jumpDuration += 200;
+        // Apply physics for the jump
+        if (this.body) {
+            this.body.activate(true);
+            const jumpForce = new Ammo.btVector3(0, 50, 0);
+            this.body.applyCentralImpulse(jumpForce);
+            Ammo.destroy(jumpForce);
+            log('Jump force applied: 0, 50, 0');
+        } else {
+            log('WARNING: No physics body for jump!');
         }
 
         // Reset jump state after animation completes
+        const jumpDuration = this.animations.jump ?
+            (this.animations.jump.duration * 1000) + 100 : 1000;
+
+        log(`Jump animation duration: ${jumpDuration}ms`);
         setTimeout(() => {
             this.isJumping = false;
-            log('Jump state reset');
+            log('Jump state reset - player can jump again');
+
+            // Return to idle animation if we're still in jump animation
+            if (this.currentAnimation === 'jump') {
+                this.playAnimation('idle');
+            }
         }, jumpDuration);
     }
 
@@ -476,7 +535,7 @@ export class Player {
                 ms.getWorldTransform(transform);
                 const p = transform.getOrigin();
 
-                // Update position
+                // Update position - adjust the offset to match the model
                 this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
 
                 // Check if player is on ground
@@ -524,7 +583,14 @@ export class Player {
     applyForce(force) {
         try {
             if (!this.body) return;
+
+            // Make sure the body is active
             this.body.activate(true);
+
+            // Only log forces during development/debugging
+            // log(`Applying force: ${force.x()}, ${force.y()}, ${force.z()}`);
+
+            // Apply the force as an impulse for immediate effect
             this.body.applyCentralImpulse(force);
         } catch (err) {
             error('Error applying force', err);
@@ -668,20 +734,30 @@ export class Player {
     checkGroundContact() {
         if (!this.body) return;
 
-        // Cast a ray downward from the player's position to check for ground
-        const origin = this.body.getWorldTransform().getOrigin();
-        const rayStart = new Ammo.btVector3(origin.x(), origin.y(), origin.z());
-        const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 1.2, origin.z());
+        try {
+            // Cast a ray downward from the player's position to check for ground
+            const origin = this.body.getWorldTransform().getOrigin();
+            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
+            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
 
-        const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
-        this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+            const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
+            this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
 
-        // If the ray hit something, the player is on the ground
-        this.canJump = rayCallback.hasHit();
+            // If the ray hit something, the player is on the ground
+            const wasOnGround = this.canJump;
+            this.canJump = rayCallback.hasHit();
 
-        // Clean up Ammo.js objects to prevent memory leaks
-        Ammo.destroy(rayStart);
-        Ammo.destroy(rayEnd);
-        Ammo.destroy(rayCallback);
+            // Log when ground state changes
+            if (wasOnGround !== this.canJump) {
+                log(this.canJump ? 'Player touched ground' : 'Player left ground');
+            }
+
+            // Clean up Ammo.js objects to prevent memory leaks
+            Ammo.destroy(rayStart);
+            Ammo.destroy(rayEnd);
+            Ammo.destroy(rayCallback);
+        } catch (err) {
+            error('Error in checkGroundContact', err);
+        }
     }
 }

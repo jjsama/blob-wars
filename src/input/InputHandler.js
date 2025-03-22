@@ -131,12 +131,14 @@ export class InputHandler {
         });
 
         return {
-            forward: this.keys.forward,
-            backward: this.keys.backward,
-            left: this.keys.left,
-            right: this.keys.right,
-            jump: this.keys.jump,
-            attack: this.keys.attack,
+            forward: this.keyStates['w'] || this.keyStates['arrowup'] || false,
+            backward: this.keyStates['s'] || this.keyStates['arrowdown'] || false,
+            left: this.keyStates['a'] || this.keyStates['arrowleft'] || false,
+            right: this.keyStates['d'] || this.keyStates['arrowright'] || false,
+            jump: this.keyStates[' '] || false,
+            attack: this.keyStates['e'] || this.keyStates['mouse0'] || false,
+            reload: this.keyStates['r'] || false,
+            interact: this.keyStates['f'] || false,
             mousePosition: this.mousePosition,
             mouseButtons: mouseButtonsObj
         };
@@ -170,5 +172,30 @@ export class InputHandler {
         if (typeof callback === 'function') {
             this.callbacks.mouseUp.push(callback);
         }
+    }
+
+    // Add this method to the InputHandler class to debug key presses
+    debugKeyPress(key) {
+        log(`Key pressed: "${key}" (code: ${key.charCodeAt(0)})`);
+        log(`Current key states: ${JSON.stringify(this.keyStates)}`);
+        log(`Jump key state: ${this.keyStates[' ']}`);
+        log(`Current input state: ${JSON.stringify(this.getInputState())}`);
+    }
+
+    // Update the handleKeyDown method to add debugging
+    handleKeyDown(event) {
+        const key = event.key.toLowerCase();
+
+        // Debug space key specifically
+        if (key === ' ') {
+            log('SPACE KEY DOWN DETECTED');
+        }
+
+        this.keyStates[key] = true;
+
+        // Call callbacks
+        this.callbacks.keyDown.forEach(callback => {
+            callback(key);
+        });
     }
 } 
