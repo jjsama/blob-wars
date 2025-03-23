@@ -39,7 +39,10 @@ export class Enemy {
         // Log for debugging
         console.log(`Enemy initialized at position: ${this.position.x}, ${this.position.y}, ${this.position.z}`);
 
-        // Create a temporary mesh first
+        // Add a flag to track initialization status
+        this.isInitialized = false;
+
+        // Create a temporary mesh first - MAKE IT VISIBLE until model loads
         this.createTempMesh();
 
         // Initialize other properties
@@ -78,45 +81,29 @@ export class Enemy {
             }
         }, 100);
 
-        // Load the model with a delay to ensure scene is ready
+        // Load the model IMMEDIATELY instead of with a delay
+        this.loadModel();
+
+        // Add a backup check to ensure model is loaded
         setTimeout(() => {
-            try {
-                this.loadModel();
-            } catch (error) {
-                console.error("Failed to load enemy model:", error);
+            if (!this.modelLoaded) {
+                console.warn("Enemy model failed to load, using fallback");
+                this.createFallbackModel();
             }
-        }, 150);
+        }, 3000); // Check after 3 seconds
     }
 
     createTempMesh() {
-        try {
-            // Create a simple temporary model
-            const enemyGroup = new THREE.Group();
+        // Create a visible temporary mesh
+        const geometry = new THREE.SphereGeometry(1, 8, 8);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xff0000,
+            wireframe: true
+        });
 
-            // Body
-            const bodyGeometry = new THREE.CapsuleGeometry(0.5, 1, 8, 16);
-            const bodyMaterial = new THREE.MeshStandardMaterial({
-                color: 0xff0000,
-                roughness: 0.7,
-                metalness: 0.3
-            });
-            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-            body.castShadow = true;
-            body.position.y = 0.5;
-            enemyGroup.add(body);
-
-            // Set the position from the stored position
-            enemyGroup.position.copy(this.position);
-
-            // Add to scene
-            this.scene.add(enemyGroup);
-            this.mesh = enemyGroup;
-
-            // Set initial rotation
-            this.mesh.rotation.y = Math.random() * Math.PI * 2;
-        } catch (err) {
-            console.error('Error creating temporary enemy model', err);
-        }
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.mesh.position.copy(this.position);
+        this.scene.add(this.mesh);
     }
 
     loadModel() {
@@ -695,65 +682,40 @@ export class Enemy {
     attack(targetPos) {
         if (this.isAttacking) return;
 
-        // Face the target
-        if (targetPos) {
-            this.lookAt(targetPos);
-        }
+        // Set attacking flag
+        this.isAttacking = true;
 
         // Play attack animation
         this.playAnimation('attack');
-        this.isAttacking = true;
 
-        // Reset attack state after animation completes
+        // Calculate direction to target
+        const direction = new THREE.Vector3()
+            .subVectors(targetPos, this.mesh.position)
+            .normalize();
+
+        // Create spawn position in front of enemy
+        const spawnOffset = direction.clone().multiplyScalar(1.0);
+        spawnOffset.y += 0.5; // Adjust height to match character
+        const spawnPos = this.mesh.position.clone().add(spawnOffset);
+
+        // Create projectile
+        const projectile = new window.game.projectileClass(
+            this.scene,
+            this.physicsWorld,
+            spawnPos,
+            direction,
+            50 // Speed
+        );
+
+        // Add to game's enemy projectiles array
+        if (window.game) {
+            window.game.enemyProjectiles.push(projectile);
+        }
+
+        // Reset attacking flag after animation completes
         setTimeout(() => {
             this.isAttacking = false;
         }, 500);
-
-        // Shoot at target
-        if (targetPos) {
-            this.shootAt(targetPos);
-        }
-    }
-
-    shootAt(targetPos) {
-        if (!window.game) return;
-
-        try {
-            // Calculate direction to target with slight randomness
-            const direction = new THREE.Vector3()
-                .subVectors(targetPos, this.mesh.position)
-                .normalize();
-
-            // Add slight randomness to aim
-            direction.x += (Math.random() - 0.5) * 0.1;
-            direction.y += (Math.random() - 0.5) * 0.1;
-            direction.z += (Math.random() - 0.5) * 0.1;
-            direction.normalize();
-
-            // Create projectile at position slightly in front of enemy
-            const spawnPos = new THREE.Vector3(
-                this.mesh.position.x + direction.x * 1.5,
-                this.mesh.position.y + 1.5, // Adjust for height
-                this.mesh.position.z + direction.z * 1.5
-            );
-
-            // Create the projectile
-            const projectile = new window.game.projectileClass(
-                this.scene,
-                this.physicsWorld,
-                spawnPos,
-                direction,
-                50, // Speed
-                this // Pass enemy as owner
-            );
-
-            // Add to game's projectiles
-            if (window.game.enemyProjectiles) {
-                window.game.enemyProjectiles.push(projectile);
-            }
-        } catch (err) {
-            console.error('Error shooting:', err);
-        }
     }
 
     takeDamage(amount) {
@@ -1117,5 +1079,50 @@ export class Enemy {
         } catch (err) {
             console.error('Error in checkGroundContact', err);
         }
+    }
+
+    // Add a fallback model method
+    createFallbackModel() {
+        // Create a simple colored sphere as fallback
+        const geometry = new THREE.SphereGeometry(1, 16, 16);
+
+        // Use a bright color from our palette
+        const brightColors = [
+            0xff6b6b, // Bright red
+            0x48dbfb, // Bright blue
+            0x1dd1a1, // Bright green
+            0xfeca57, // Bright yellow
+            0xff9ff3  // Bright pink
+        ];
+
+        const colorIndex = Math.floor(Math.random() * brightColors.length);
+        const enemyColor = brightColors[colorIndex];
+
+        const material = new THREE.MeshStandardMaterial({
+            color: enemyColor,
+            emissive: enemyColor,
+            emissiveIntensity: 0.2
+        });
+
+        // Create the fallback mesh
+        const fallbackMesh = new THREE.Mesh(geometry, material);
+        fallbackMesh.position.copy(this.position);
+        fallbackMesh.castShadow = true;
+        fallbackMesh.receiveShadow = true;
+
+        // Store the color for projectiles
+        this.color = enemyColor;
+
+        // Replace the current mesh
+        if (this.mesh) {
+            this.scene.remove(this.mesh);
+        }
+
+        this.mesh = fallbackMesh;
+        this.scene.add(this.mesh);
+
+        // Mark as initialized
+        this.modelLoaded = true;
+        this.isInitialized = true;
     }
 } 

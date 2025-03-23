@@ -45,6 +45,9 @@ export class PhysicsWorld {
             // Create temporary transform
             this.tmpTransform = new Ammo.btTransform();
 
+            // Set up collision detection
+            this.setupCollisionDetection();
+
             log('Physics world initialized successfully');
         } catch (err) {
             error('Failed to initialize physics world', err);
@@ -113,6 +116,85 @@ export class PhysicsWorld {
         } catch (err) {
             error('Failed to create rigid body', err);
             throw err;
+        }
+    }
+
+    setupCollisionDetection() {
+        if (!this.physicsWorld) return;
+
+        try {
+            // Get the dispatcher
+            const dispatcher = this.physicsWorld.getDispatcher();
+
+            // Set up a callback for each physics step
+            this.physicsWorld.setInternalTickCallback(() => {
+                try {
+                    const numManifolds = dispatcher.getNumManifolds();
+
+                    // Check each collision manifold
+                    for (let i = 0; i < numManifolds; i++) {
+                        const manifold = dispatcher.getManifoldByIndexInternal(i);
+                        const numContacts = manifold.getNumContacts();
+
+                        if (numContacts > 0) {
+                            // Get the two colliding bodies
+                            const body0 = Ammo.castObject(manifold.getBody0(), Ammo.btRigidBody);
+                            const body1 = Ammo.castObject(manifold.getBody1(), Ammo.btRigidBody);
+
+                            // Check if either is a projectile
+                            const isProjectile0 = body0.getCollisionFlags() & 4;
+                            const isProjectile1 = body1.getCollisionFlags() & 4;
+
+                            if (isProjectile0 || isProjectile1) {
+                                // Get the projectile
+                                const projectile = isProjectile0 ? body0 : body1;
+
+                                // Try to get the projectile instance using the direct reference
+                                if (projectile.projectileInstance) {
+                                    projectile.projectileInstance.handleCollision();
+                                } else {
+                                    // Fallback: find projectile in game arrays
+                                    const projectiles = window.game ?
+                                        [...window.game.projectiles, ...window.game.enemyProjectiles] : [];
+
+                                    for (const p of projectiles) {
+                                        if (p.body === projectile) {
+                                            p.handleCollision();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch (err) {
+                    console.error('Error in collision detection:', err);
+                }
+            });
+        } catch (err) {
+            console.error('Failed to set up collision detection:', err);
+        }
+    }
+
+    addRigidBody(body, userData = null) {
+        if (!this.physicsWorld) return;
+
+        this.physicsWorld.addRigidBody(body);
+
+        // If userData is provided, attach it to the body
+        if (userData) {
+            // Store the userData in the body
+            body.userData = userData;
+        }
+    }
+
+    removeRigidBody(body) {
+        if (!this.physicsWorld || !body) return;
+
+        try {
+            this.physicsWorld.removeRigidBody(body);
+        } catch (err) {
+            console.error('Error removing rigid body:', err);
         }
     }
 } 

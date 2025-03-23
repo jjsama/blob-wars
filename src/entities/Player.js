@@ -627,18 +627,27 @@ export class Player {
         // Get the direction the player is facing
         const direction = this.getAimDirection();
 
-        // Create projectile with player as owner
+        // Get the position to spawn the projectile (in front of the player)
+        const muzzleOffset = new THREE.Vector3(0, 0.5, 0).applyQuaternion(this.mesh.quaternion);
+        const muzzlePosition = this.mesh.position.clone().add(muzzleOffset);
+
+        // Create projectile
         const projectile = new Projectile(
             window.game.scene.scene,
             window.game.physics.physicsWorld,
             muzzlePosition,
             direction,
-            50, // Speed
-            this // Pass player as owner
+            50 // Speed
         );
 
-        // Set player color for reference
-        this.color = 0x3498db; // Blue for player
+        // Add to game's projectiles array
+        window.game.projectiles.push(projectile);
+
+        // Set cooldown
+        this.canShoot = false;
+        setTimeout(() => {
+            this.canShoot = true;
+        }, 500); // 500ms cooldown
     }
 
     getAimDirection() {
