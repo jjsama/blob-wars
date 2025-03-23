@@ -108,6 +108,11 @@ export class Game {
             this.addEnvironmentElements();
             log('Environment elements added');
 
+            // Add invisible walls
+            log('Adding invisible walls');
+            this.addInvisibleWalls();
+            log('Invisible walls added');
+
             log('Creating player');
             this.player = new Player(this.scene.scene, this.physics.physicsWorld, { x: 0, y: 5, z: 0 });
             this.physics.registerRigidBody(this.player.mesh, this.player.body);
@@ -707,6 +712,60 @@ export class Game {
 
         const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterials);
         this.scene.scene.add(skybox);
+    }
+
+    addInvisibleWalls() {
+        const mapSize = 100; // Size of the playable area
+        const wallHeight = 20; // Height of invisible walls
+        const wallThickness = 2;
+
+        // Create invisible wall material
+        const wallMaterial = new THREE.MeshBasicMaterial({
+            transparent: true,
+            opacity: 0.0 // Completely invisible
+        });
+
+        // Create walls for each side of the map
+        const walls = [
+            // North wall
+            { pos: { x: 0, y: wallHeight / 2, z: -mapSize / 2 }, size: { x: mapSize, y: wallHeight, z: wallThickness } },
+            // South wall
+            { pos: { x: 0, y: wallHeight / 2, z: mapSize / 2 }, size: { x: mapSize, y: wallHeight, z: wallThickness } },
+            // East wall
+            { pos: { x: mapSize / 2, y: wallHeight / 2, z: 0 }, size: { x: wallThickness, y: wallHeight, z: mapSize } },
+            // West wall
+            { pos: { x: -mapSize / 2, y: wallHeight / 2, z: 0 }, size: { x: wallThickness, y: wallHeight, z: mapSize } }
+        ];
+
+        walls.forEach(wall => {
+            // Create wall mesh
+            const geometry = new THREE.BoxGeometry(wall.size.x, wall.size.y, wall.size.z);
+            const mesh = new THREE.Mesh(geometry, wallMaterial);
+            mesh.position.set(wall.pos.x, wall.pos.y, wall.pos.z);
+            this.scene.scene.add(mesh);
+
+            // Create physics body for wall
+            const shape = new Ammo.btBoxShape(new Ammo.btVector3(
+                wall.size.x / 2,
+                wall.size.y / 2,
+                wall.size.z / 2
+            ));
+
+            const transform = new Ammo.btTransform();
+            transform.setIdentity();
+            transform.setOrigin(new Ammo.btVector3(wall.pos.x, wall.pos.y, wall.pos.z));
+
+            const motionState = new Ammo.btDefaultMotionState(transform);
+            const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, new Ammo.btVector3(0, 0, 0));
+            const body = new Ammo.btRigidBody(rbInfo);
+
+            this.physics.physicsWorld.addRigidBody(body);
+
+            // Clean up Ammo.js objects
+            Ammo.destroy(rbInfo);
+        });
+
+        log('Invisible walls added to map boundaries');
     }
 
     spawnEnemies() {

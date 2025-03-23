@@ -1,33 +1,49 @@
 import * as THREE from 'three';
 export class Projectile {
-    constructor(scene, physicsWorld, position, direction) {
+    constructor(scene, physicsWorld, position, direction, speed = 40, owner = null) {
         this.scene = scene;
         this.physicsWorld = physicsWorld;
         this.position = position;
         this.direction = direction.clone().normalize();
-        this.speed = 100; // Fast bullet speed
-        this.lifetime = 3000; // 3 seconds lifetime
+        this.speed = 40;
+        this.lifetime = 3000;
         this.creationTime = Date.now();
         this.mesh = null;
         this.body = null;
-        this.damage = 25; // Each projectile does 25 damage
-        this.trailParticles = []; // For bullet trail effect
-        this.initialDirection = direction.clone(); // Store initial direction
-
+        this.damage = 25;
+        this.trailParticles = [];
+        this.initialDirection = direction.clone();
+        this.owner = owner;
+        
         this.create();
     }
 
     create() {
-        // Create a bullet-like visual representation
-        const geometry = new THREE.CylinderGeometry(0.05, 0.05, 0.3, 8);
-        geometry.rotateX(Math.PI / 2); // Orient the cylinder along the z-axis
-
+        // Create a much smaller projectile
+        const radius = 0.05; // Reduced by 0.4 times
+        const geometry = new THREE.SphereGeometry(radius, 8, 8);
+        
+        // Determine projectile color based on owner
+        let projectileColor = 0xffff00; // Default yellow
+        
+        if (this.owner) {
+            // If owner has a color property, use it
+            if (this.owner.color) {
+                projectileColor = this.owner.color;
+            }
+            // For player (blue)
+            else if (this.owner.isPlayer) {
+                projectileColor = 0x3498db; // Blue for player
+            }
+        }
+        
+        // Make it more visible with emission based on owner's color
         const material = new THREE.MeshStandardMaterial({
-            color: 0xffff00, // Yellow/brass color
-            emissive: 0xff8800,
+            color: projectileColor,
+            emissive: projectileColor,
             emissiveIntensity: 0.5,
-            metalness: 0.9,
-            roughness: 0.2
+            metalness: 0.7,
+            roughness: 0.3
         });
 
         this.mesh = new THREE.Mesh(geometry, material);
@@ -86,13 +102,16 @@ export class Projectile {
 
         // Create initial trail particle
         this.addTrailParticle();
+
+        // Also update trail particles to match
+        this.trailColor = projectileColor;
     }
 
     addTrailParticle() {
         // Create a small particle at the current position
         const particleGeometry = new THREE.SphereGeometry(0.03, 4, 4);
         const particleMaterial = new THREE.MeshBasicMaterial({
-            color: 0xff4400,
+            color: this.trailColor || 0xff4400,
             transparent: true,
             opacity: 0.7
         });
@@ -106,7 +125,7 @@ export class Projectile {
         this.trailParticles.push(particle);
     }
 
-    update() {
+    update(deltaTime) {
         if (!this.body || !this.mesh) return false;
 
         // Update mesh position based on physics
@@ -147,6 +166,33 @@ export class Projectile {
         if (Date.now() - this.creationTime > this.lifetime) {
             this.remove();
             return false;
+        }
+
+        // Add particle trail for better visibility
+        if (this.mesh && Math.random() > 0.5) {
+            const trailParticle = new THREE.Mesh(
+                new THREE.SphereGeometry(0.05, 4, 4),
+                new THREE.MeshBasicMaterial({
+                    color: this.trailColor || 0xffff00,
+                    transparent: true,
+                    opacity: 0.7
+                })
+            );
+
+            trailParticle.position.copy(this.mesh.position);
+            this.scene.add(trailParticle);
+
+            // Fade out and remove trail particle
+            setTimeout(() => {
+                const fadeOut = setInterval(() => {
+                    if (trailParticle.material.opacity <= 0.1) {
+                        clearInterval(fadeOut);
+                        this.scene.remove(trailParticle);
+                    } else {
+                        trailParticle.material.opacity -= 0.1;
+                    }
+                }, 50);
+            }, 100);
         }
 
         return true;
@@ -191,5 +237,81 @@ export class Projectile {
             this.physicsWorld.removeRigidBody(this.body);
             this.body = null;
         }
+    }
+
+    handleCollision(collisionPoint, normal) {
+        // Create impact mark at collision point
+        if (collisionPoint) {
+            this.createImpactMark(collisionPoint, normal);
+        }
+        
+        // Always remove the projectile on any collision
+        this.remove();
+        
+        // Check if we hit a character to apply damage
+        if (this.hitObject && (this.hitObject.isPlayer || this.hitObject.isEnemy)) {
+            // Handle character hit
+            if (this.hitObject.takeDamage) {
+                this.hitObject.takeDamage(this.damage);
+            }
+        }
+    }
+
+    // Add a new method to create impact marks
+    createImpactMark(position, normal) {
+        // Create a small decal at the impact point
+        const decalSize = 0.2;
+        const decalGeometry = new THREE.CircleGeometry(decalSize, 8);
+        
+        // Rotate the decal to face along the normal
+        if (normal) {
+            const decalRotation = new THREE.Matrix4();
+            const decalUp = new THREE.Vector3(0, 1, 0);
+            
+            // Align with the surface normal
+            if (Math.abs(normal.dot(decalUp)) < 0.99) {
+                const axis = new THREE.Vector3().crossVectors(decalUp, normal).normalize();
+                const angle = Math.acos(decalUp.dot(normal));
+                decalRotation.makeRotationAxis(axis, angle);
+                decalGeometry.applyMatrix4(decalRotation);
+            }
+        }
+        
+        // Create material with the same color as the projectile but darker
+        const decalColor = new THREE.Color(this.trailColor || 0xff4400).multiplyScalar(0.7);
+        const decalMaterial = new THREE.MeshBasicMaterial({
+            color: decalColor,
+            transparent: true,
+            opacity: 0.8,
+            depthTest: true,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -4
+        });
+        
+        const decal = new THREE.Mesh(decalGeometry, decalMaterial);
+        
+        // Position slightly above the surface to prevent z-fighting
+        const offset = 0.01;
+        if (normal) {
+            decal.position.copy(position).addScaledVector(normal, offset);
+        } else {
+            decal.position.copy(position);
+        }
+        
+        // Add to scene
+        this.scene.add(decal);
+        
+        // Remove after 2 seconds with fade out
+        setTimeout(() => {
+            const fadeInterval = setInterval(() => {
+                if (decal.material.opacity <= 0.1) {
+                    clearInterval(fadeInterval);
+                    this.scene.remove(decal);
+                } else {
+                    decal.material.opacity -= 0.1;
+                }
+            }, 100);
+        }, 2000);
     }
 } 

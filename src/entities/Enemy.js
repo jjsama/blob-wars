@@ -144,20 +144,60 @@ export class Enemy {
                 // Scale the model appropriately - match player scale
                 model.scale.set(0.35, 0.35, 0.35);
 
-                // Apply any material adjustments - make enemies red
+                // Apply distinct bright colors to enemies - NO WHITE/GRAY
+                const brightColors = [
+                    0xff6b6b, // Bright red
+                    0x48dbfb, // Bright blue
+                    0x1dd1a1, // Bright green
+                    0xfeca57, // Bright yellow
+                    0xff9ff3, // Bright pink
+                    0x54a0ff, // Bright sky blue
+                    0x00d2d3, // Bright teal
+                    0xf368e0, // Bright magenta
+                    0xff9f43, // Bright orange
+                    0xee5253, // Bright crimson
+                    0xa29bfe  // Bright purple
+                ];
+
+                // Use a hash of the position to get a consistent color for this enemy
+                const colorIndex = Math.abs(
+                    Math.floor(
+                        (this.position.x * 13 + this.position.z * 17) % brightColors.length
+                    )
+                );
+                const enemyColor = brightColors[colorIndex];
+
                 model.traverse((child) => {
                     if (child.isMesh) {
                         // Clone the material to avoid sharing across instances
                         child.material = child.material.clone();
 
-                        // Make enemy red (distinctive from player)
-                        child.material.color.set(0xff0000);
+                        // Only color the body material, not the eyes
+                        const isEyeMaterial = child.material.name &&
+                            (child.material.name.toLowerCase().includes('eye') ||
+                                child.material.name.toLowerCase().includes('pupil'));
+
+                        if (!isEyeMaterial) {
+                            // Force set the color - ensure it's applied
+                            child.material.color.setHex(enemyColor);
+                            // Make sure the material is not transparent
+                            child.material.transparent = false;
+                            child.material.opacity = 1.0;
+                            // Ensure the material is updated
+                            child.material.needsUpdate = true;
+                        }
 
                         // Enable shadows
                         child.castShadow = true;
                         child.receiveShadow = true;
                     }
                 });
+
+                // Store the enemy color for projectiles to use
+                this.color = enemyColor;
+
+                // Log the color used for debugging
+                console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
 
                 // Replace the temporary mesh with the loaded model
                 const oldPosition = this.mesh.position.clone();
@@ -653,6 +693,8 @@ export class Enemy {
     }
 
     attack(targetPos) {
+        if (this.isAttacking) return;
+
         // Face the target
         if (targetPos) {
             this.lookAt(targetPos);
@@ -701,7 +743,8 @@ export class Enemy {
                 this.physicsWorld,
                 spawnPos,
                 direction,
-                this // Set the owner to this enemy
+                50, // Speed
+                this // Pass enemy as owner
             );
 
             // Add to game's projectiles

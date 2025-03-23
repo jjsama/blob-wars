@@ -622,11 +622,23 @@ export class Player {
     }
 
     shoot() {
+        if (!this.canShoot) return;
+
         // Get the direction the player is facing
         const direction = this.getAimDirection();
 
-        // Create a projectile in that direction
-        // ... existing projectile creation code ...
+        // Create projectile with player as owner
+        const projectile = new Projectile(
+            window.game.scene.scene,
+            window.game.physics.physicsWorld,
+            muzzlePosition,
+            direction,
+            50, // Speed
+            this // Pass player as owner
+        );
+
+        // Set player color for reference
+        this.color = 0x3498db; // Blue for player
     }
 
     getAimDirection() {
