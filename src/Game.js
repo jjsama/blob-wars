@@ -20,9 +20,12 @@ export class Game {
         this.enemyProjectiles = [];
         this.enemies = [];
         this.previousTime = 0;
-        this.moveForce = 20;
-        this.maxVelocity = 25;
-        this.jumpForce = 10;
+
+        // Reduce movement speed for better gameplay
+        this.moveForce = 15; // Reduced from 20
+        this.maxVelocity = 18; // Reduced from 25
+        this.jumpForce = 10; // Keep jump force the same
+
         this.canJump = true;
         this.lastJumpTime = 0;
         this.bhopWindow = 300;

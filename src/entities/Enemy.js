@@ -45,7 +45,13 @@ export class Enemy {
         // Initialize other properties
         this.patrolTarget = new THREE.Vector3();
         this.health = 100;
-        this.moveSpeed = 5;
+
+        // Reduce movement speed for better gameplay
+        this.moveSpeed = 15; // Reduced from 20
+        this.maxVelocity = 18; // Reduced from 25
+        this.jumpForce = 10; // Keep jump force the same
+
+        // More balanced combat parameters
         this.attackRange = 30;
         this.detectionRange = 60;
         this.attackCooldown = 2000;
@@ -289,26 +295,38 @@ export class Enemy {
             strafeDir.multiplyScalar(-1);
         }
 
-        // Apply strafe impulse
+        // Apply strafe force - match player physics exactly
         this.body.activate(true);
-        const velocity = this.body.getLinearVelocity();
-        const currentVel = new Ammo.btVector3(0, velocity.y(), 0);
-        this.body.setLinearVelocity(currentVel);
-        Ammo.destroy(currentVel);
 
+        // Use impulse with a slightly lower multiplier
         const strafeForce = new Ammo.btVector3(
-            strafeDir.x * this.moveSpeed * 8,
+            strafeDir.x * this.moveSpeed * 2.0, // Reduced from 2.5
             0,
-            strafeDir.z * this.moveSpeed * 8
+            strafeDir.z * this.moveSpeed * 2.0  // Reduced from 2.5
         );
 
         this.body.applyCentralImpulse(strafeForce);
         Ammo.destroy(strafeForce);
 
+        // Cap velocity to match player's max speed
+        const velocity = this.body.getLinearVelocity();
+        const horizSpeed = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
+
+        if (horizSpeed > this.maxVelocity) {
+            const scale = this.maxVelocity / horizSpeed;
+            const newVel = new Ammo.btVector3(
+                velocity.x() * scale,
+                velocity.y(),
+                velocity.z() * scale
+            );
+            this.body.setLinearVelocity(newVel);
+            Ammo.destroy(newVel);
+        }
+
         // Face the target while strafing
         this.lookAt(targetPos);
 
-        // Play appropriate strafe animation - simplified
+        // Play appropriate strafe animation
         if (strafeDir.x > 0) {
             this.playAnimation('strafeRight');
         } else {
@@ -497,7 +515,7 @@ export class Enemy {
         // Find all potential targets (player and other enemies)
         const targets = [];
 
-        // Add player if available
+        // Add player if available (no special priority)
         if (window.game && window.game.player && !window.game.player.isDead) {
             targets.push(window.game.player);
         }
@@ -511,7 +529,7 @@ export class Enemy {
             });
         }
 
-        // Find the closest target
+        // Find the closest target - no player preference
         let closestTarget = null;
         let closestDistance = Infinity;
 
@@ -585,12 +603,25 @@ export class Enemy {
         this.isJumping = true;
         this.playAnimation('jump');
 
-        // Apply jump force
+        // Apply jump force - match player's jump force
         if (this.body) {
             this.body.activate(true);
-            const jumpForce = new Ammo.btVector3(0, 10, 0);
+            const jumpForce = new Ammo.btVector3(0, this.jumpForce, 0);
             this.body.applyCentralImpulse(jumpForce);
             Ammo.destroy(jumpForce);
+
+            // Apply a smaller forward boost if moving for bhop (like player)
+            const velocity = this.body.getLinearVelocity();
+            const horizVelocity = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
+            if (horizVelocity > 5) {
+                const boostImpulse = new Ammo.btVector3(
+                    velocity.x() * 0.1,
+                    0,
+                    velocity.z() * 0.1
+                );
+                this.body.applyCentralImpulse(boostImpulse);
+                Ammo.destroy(boostImpulse);
+            }
         }
 
         // Reset jump state after animation completes
@@ -958,7 +989,7 @@ export class Enemy {
         // Otherwise, animation is handled in the movement methods
     }
 
-    // Improve the moveTowardWithForce method to use the correct animation
+    // Update the moveTowardWithForce method to use a slightly lower multiplier
     moveTowardWithForce(targetPosition, speed) {
         if (!this.body || !this.mesh) return;
 
@@ -970,24 +1001,54 @@ export class Enemy {
         // Look at the target
         this.lookAt(targetPosition);
 
-        // Apply movement force
-        this.body.activate(true);
-        const velocity = this.body.getLinearVelocity();
-        const currentVel = new Ammo.btVector3(0, velocity.y(), 0);
-        this.body.setLinearVelocity(currentVel);
-        Ammo.destroy(currentVel);
+        // Get the forward direction of the enemy
+        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
 
+        // Calculate dot product to determine if moving forward or backward
+        const dot = direction.dot(forward);
+
+        // Apply movement force - EXACT match to player physics
+        this.body.activate(true);
+
+        // Apply direct force with a slightly lower multiplier
         const moveForce = new Ammo.btVector3(
-            direction.x * speed * 10,
+            direction.x * speed * 2.0, // Reduced from 2.5
             0,
-            direction.z * speed * 10
+            direction.z * speed * 2.0  // Reduced from 2.5
         );
 
-        this.body.applyCentralImpulse(moveForce);
+        this.body.applyCentralImpulse(moveForce); // Use impulse for immediate effect
         Ammo.destroy(moveForce);
 
-        // Always use walkForward for simplicity
-        this.playAnimation('walkForward');
+        // Cap velocity to match player's max speed
+        const velocity = this.body.getLinearVelocity();
+        const horizSpeed = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
+
+        if (horizSpeed > this.maxVelocity) {
+            const scale = this.maxVelocity / horizSpeed;
+            const newVel = new Ammo.btVector3(
+                velocity.x() * scale,
+                velocity.y(),
+                velocity.z() * scale
+            );
+            this.body.setLinearVelocity(newVel);
+            Ammo.destroy(newVel);
+        }
+
+        // Play appropriate animation based on movement direction
+        if (dot > 0.7) {
+            this.playAnimation('walkForward');
+        } else if (dot < -0.7) {
+            this.playAnimation('walkBackward');
+        } else {
+            // For strafing, handled in strafeAroundTarget method
+            const cross = new THREE.Vector3().crossVectors(forward, direction);
+            if (cross.y > 0) {
+                this.playAnimation('strafeLeft');
+            } else {
+                this.playAnimation('strafeRight');
+            }
+        }
     }
 
     // Add ground contact check similar to player
