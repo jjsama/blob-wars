@@ -710,76 +710,114 @@ export class Game {
         try {
             log('Spawning enemies for deathmatch');
 
+            // Debug check to ensure scene and physics world are available
+            if (!this.scene || !this.scene.scene || !this.physics || !this.physics.physicsWorld) {
+                error('Cannot spawn enemies: scene or physics world not initialized');
+                return;
+            }
+
             // Clear any existing enemies
-            this.enemies.forEach(enemy => {
-                if (enemy.destroy) {
-                    enemy.destroy();
-                }
-            });
+            if (this.enemies && this.enemies.length > 0) {
+                this.enemies.forEach(enemy => {
+                    if (enemy && enemy.remove) {
+                        enemy.remove();
+                    }
+                });
+            }
+
+            // Initialize enemies array
             this.enemies = [];
 
-            // Spawn 11 enemies for a total of 12 players (including the player)
-            const totalEnemies = 11;
+            // Number of enemies to spawn
+            const enemyCount = 6;
 
-            // Create evenly distributed spawn positions around the map
-            // Use a grid-based approach for better distribution
-            const mapSize = 80; // Total map size
-            const gridSize = Math.ceil(Math.sqrt(totalEnemies + 1)); // +1 for player
-            const cellSize = mapSize / gridSize;
+            // Create a set of random positions that aren't too close to each other or the player
+            const positions = [];
+            const minDistance = 10; // Minimum distance between spawns
 
-            // Create a list of possible spawn positions
-            const spawnPositions = [];
-            for (let i = 0; i < gridSize; i++) {
-                for (let j = 0; j < gridSize; j++) {
-                    // Calculate position in grid cell with some randomness
-                    const x = -mapSize / 2 + cellSize / 2 + i * cellSize + (Math.random() * cellSize / 2 - cellSize / 4);
-                    const z = -mapSize / 2 + cellSize / 2 + j * cellSize + (Math.random() * cellSize / 2 - cellSize / 4);
+            for (let i = 0; i < enemyCount; i++) {
+                let validPosition = false;
+                let newPos;
+                let attempts = 0;
 
-                    // Skip positions too close to the player
-                    const playerPos = this.player.getPosition();
-                    const distToPlayer = Math.sqrt(Math.pow(x - playerPos.x, 2) + Math.pow(z - playerPos.z, 2));
-                    if (distToPlayer > 15) { // Minimum distance from player
-                        spawnPositions.push({ x, z });
+                // Try to find a valid position
+                while (!validPosition && attempts < 20) {
+                    attempts++;
+
+                    // Generate random position
+                    newPos = {
+                        x: (Math.random() - 0.5) * 60,
+                        y: 2,
+                        z: (Math.random() - 0.5) * 60
+                    };
+
+                    // Check distance from player
+                    let tooClose = false;
+
+                    if (this.player) {
+                        const playerPos = this.player.getPosition();
+                        const distToPlayer = Math.sqrt(
+                            Math.pow(newPos.x - playerPos.x, 2) +
+                            Math.pow(newPos.z - playerPos.z, 2)
+                        );
+
+                        if (distToPlayer < minDistance) {
+                            tooClose = true;
+                        }
                     }
+
+                    // Check distance from other enemies
+                    for (const pos of positions) {
+                        const dist = Math.sqrt(
+                            Math.pow(newPos.x - pos.x, 2) +
+                            Math.pow(newPos.z - pos.z, 2)
+                        );
+
+                        if (dist < minDistance) {
+                            tooClose = true;
+                            break;
+                        }
+                    }
+
+                    if (!tooClose) {
+                        validPosition = true;
+                        positions.push(newPos);
+                    }
+                }
+
+                // If we couldn't find a valid position after max attempts, use a fallback
+                if (!validPosition) {
+                    newPos = {
+                        x: (Math.random() - 0.5) * 60,
+                        y: 2,
+                        z: (Math.random() - 0.5) * 60
+                    };
+                    positions.push(newPos);
                 }
             }
 
-            // Shuffle the positions for randomness
-            for (let i = spawnPositions.length - 1; i > 0; i--) {
-                const j = Math.floor(Math.random() * (i + 1));
-                [spawnPositions[i], spawnPositions[j]] = [spawnPositions[j], spawnPositions[i]];
-            }
-
-            // Spawn enemies at these positions
-            for (let i = 0; i < Math.min(totalEnemies, spawnPositions.length); i++) {
-                const pos = spawnPositions[i];
-
-                // Create enemy at this position
-                const position = { x: pos.x, y: 2, z: pos.z };
-
+            // Spawn enemies at the generated positions
+            positions.forEach((position, i) => {
                 try {
-                    // Create the enemy with the correct scene and physics objects
+                    log(`Spawning enemy ${i + 1} at (${position.x}, ${position.y}, ${position.z})`);
+
+                    // Create the enemy with explicit position object
                     const enemy = new Enemy(
                         this.scene.scene,
                         this.physics.physicsWorld,
                         position
                     );
 
-                    // Set the player as the initial target
-                    enemy.target = this.player;
-
                     // Add to enemies array
                     this.enemies.push(enemy);
-
-                    log(`Spawned enemy ${i + 1} at position (${pos.x.toFixed(2)}, 2, ${pos.z.toFixed(2)})`);
                 } catch (err) {
                     error(`Failed to spawn enemy ${i + 1}: ${err.message}`);
                 }
-            }
+            });
 
             log(`Total enemies spawned: ${this.enemies.length}`);
         } catch (err) {
-            error('Error spawning enemies', err);
+            error('Error in spawnEnemies:', err);
         }
     }
 } 
