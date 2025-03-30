@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { PhysicsWorld } from './physics/PhysicsWorld.js';
 import { GameScene } from './rendering/Scene.js';
-import { InputHandler } from './controls/InputHandler.js';
+import { InputHandler } from './input/InputHandler.js';
 import { Player } from './entities/Player.js';
 import { Ground } from './entities/Ground.js';
 import { Projectile } from './entities/Projectile.js';

@@ -2,121 +2,179 @@
 <html lang="en">
 
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Blob Wars</title>
-    <!-- Make sure the path is correct for production -->
-    <link rel="stylesheet" href="./styles.css">
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blob Wars</title>
+  <!-- Make sure the path is correct for production -->
+  <link rel="stylesheet" href="./styles.css">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
 
-        canvas {
-            display: block;
-        }
+    canvas {
+      display: block;
+    }
 
-        #debug {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            font-family: monospace;
-            z-index: 100;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-        
-        /* Fallback crosshair styles in case the external CSS fails to load */
-        #crosshair {
-          position: fixed;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          width: 24px;
-          height: 24px;
-          pointer-events: none;
-          z-index: 1000;
-        }
+    #debug {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      background: rgba(0, 0, 0, 0.7);
+      padding: 10px;
+      font-family: monospace;
+      z-index: 100;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
 
-        .crosshair-vertical {
-          position: absolute;
-          top: 0;
-          left: 50%;
-          width: 2px;
-          height: 100%;
-          background-color: rgba(255, 255, 255, 0.9);
-          transform: translateX(-50%);
-          box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
-        }
+    /* Fallback crosshair styles in case the external CSS fails to load */
+    #crosshair {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 24px;
+      height: 24px;
+      pointer-events: none;
+      z-index: 1000;
+    }
 
-        .crosshair-horizontal {
-          position: absolute;
-          top: 50%;
-          left: 0;
-          width: 100%;
-          height: 2px;
-          background-color: rgba(255, 255, 255, 0.9);
-          transform: translateY(-50%);
-          box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
-        }
+    .crosshair-vertical {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 2px;
+      height: 100%;
+      background-color: rgba(255, 255, 255, 0.9);
+      transform: translateX(-50%);
+      box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    }
 
-        #crosshair::after {
-          content: '';
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          width: 5px;
-          height: 5px;
-          background-color: rgba(255, 0, 0, 0.9);
-          border-radius: 50%;
-          box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);
-        }
-    </style>
+    .crosshair-horizontal {
+      position: absolute;
+      top: 50%;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      background-color: rgba(255, 255, 255, 0.9);
+      transform: translateY(-50%);
+      box-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+    }
+
+    #crosshair::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 5px;
+      height: 5px;
+      background-color: rgba(255, 0, 0, 0.9);
+      border-radius: 50%;
+      box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);
+    }
+  </style>
 </head>
 
 <body>
-    <div id="debug">Loading game...</div>
+  <div id="debug">Loading game...</div>
 
-    <!-- Load Ammo.js directly -->
-    <script>
-        document.getElementById('debug').innerHTML += '<br>Loading Ammo.js...';
+  <!-- Load Ammo.js directly -->
+  <script>
+    document.getElementById('debug').innerHTML += '<br>Loading Ammo.js...';
 
-        // Load Ammo.js from CDN
-        const script = document.createElement('script');
-        script.src = 'https://raw.githack.com/kripken/ammo.js/master/builds/ammo.js';
+    function loadGame() {
+      const gameScript = document.createElement('script');
+      gameScript.type = 'module';
+      gameScript.src = './src/main.js';
+      gameScript.onerror = function () {
+        document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load game script</span>';
+        console.error('Failed to load game script from ./src/main.js');
+      };
+      document.body.appendChild(gameScript);
+      document.getElementById('debug').innerHTML += '<br>Game script loading...';
+    }
 
-        script.onload = function () {
-            document.getElementById('debug').innerHTML += '<br>Ammo.js loaded, initializing...';
+    // Try loading Ammo.js from local file
+    const script = document.createElement('script');
+    script.src = '/ammo.wasm.js';
 
-            // Initialize Ammo.js
-            Ammo().then(function (AmmoInstance) {
-                // Store Ammo instance globally
-                window.AmmoLib = AmmoInstance;
-                document.getElementById('debug').innerHTML += '<br>Ammo.js initialized successfully';
+    script.onload = function () {
+      document.getElementById('debug').innerHTML += '<br>Ammo.js script loaded, initializing...';
 
-                // Now load the game
-                const gameScript = document.createElement('script');
-                gameScript.type = 'module';
-                gameScript.src = './src/main.js';
-                document.body.appendChild(gameScript);
-                document.getElementById('debug').innerHTML += '<br>Game script loaded';
-            });
-        };
+      try {
+        // Initialize Ammo.js
+        Ammo().then(function (AmmoInstance) {
+          // Store Ammo instance globally
+          window.AmmoLib = AmmoInstance;
+          document.getElementById('debug').innerHTML += '<br>Ammo.js initialized successfully';
 
-        script.onerror = function () {
-            document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js</span>';
-        };
+          // Now load the game
+          loadGame();
+        }).catch(function (err) {
+          document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Failed to initialize Ammo.js: ${err.message}</span>`;
+          console.error('Failed to initialize Ammo.js:', err);
 
-        document.body.appendChild(script);
-    </script>
+          // Try to load the game anyway
+          loadGame();
+        });
+      } catch (err) {
+        document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Exception in Ammo.js initialization: ${err.message}</span>`;
+        console.error('Exception in Ammo.js initialization:', err);
 
-    <!-- Add this to your index.html before the game script loads -->
-    <script type="importmap">
+        // Try to load the game anyway
+        loadGame();
+      }
+    };
+
+    script.onerror = function (err) {
+      document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js script. Trying CDN fallback...</span>';
+      console.error('Failed to load Ammo.js script:', err);
+
+      // Try loading from CDN as fallback
+      const fallbackScript = document.createElement('script');
+      fallbackScript.src = 'https://raw.githack.com/kripken/ammo.js/master/builds/ammo.js';
+
+      fallbackScript.onload = function () {
+        document.getElementById('debug').innerHTML += '<br>Ammo.js loaded from CDN, initializing...';
+
+        // Initialize Ammo.js from CDN
+        try {
+          Ammo().then(function (AmmoInstance) {
+            window.AmmoLib = AmmoInstance;
+            document.getElementById('debug').innerHTML += '<br>Ammo.js (CDN) initialized successfully';
+            loadGame();
+          }).catch(function (err) {
+            document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Failed to initialize Ammo.js from CDN: ${err.message}</span>`;
+            console.error('Failed to initialize Ammo.js from CDN:', err);
+            loadGame();
+          });
+        } catch (err) {
+          document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Exception in Ammo.js CDN initialization: ${err.message}</span>`;
+          console.error('Exception in Ammo.js CDN initialization:', err);
+          loadGame();
+        }
+      };
+
+      fallbackScript.onerror = function () {
+        document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js from CDN. Proceeding without physics.</span>';
+        console.error('Failed to load Ammo.js from CDN');
+
+        // Try to load the game even without Ammo.js
+        loadGame();
+      };
+
+      document.body.appendChild(fallbackScript);
+    };
+
+    document.body.appendChild(script);
+  </script>
+
+  <!-- Add this to your index.html before the game script loads -->
+  <script type="importmap">
     {
       "imports": {
         "three": "https://unpkg.com/three@0.174.0/build/three.module.js",
@@ -125,10 +183,10 @@
     }
     </script>
 
-    <div id="crosshair">
-        <div class="crosshair-vertical"></div>
-        <div class="crosshair-horizontal"></div>
-    </div>
+  <div id="crosshair">
+    <div class="crosshair-vertical"></div>
+    <div class="crosshair-horizontal"></div>
+  </div>
 </body>
 
 </html>

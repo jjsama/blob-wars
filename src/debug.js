@@ -1,109 +1,52 @@
-export function createDebugSphere(scene, position, color = 0xff0000, size = 1) {
-    const geometry = new THREE.SphereGeometry(size, 16, 16);
-    const material = new THREE.MeshBasicMaterial({ color: color });
-    const sphere = new THREE.Mesh(geometry, material);
-    sphere.position.copy(position);
-    scene.add(sphere);
-    return sphere;
-}
-
-export function logSceneInfo(scene) {
-    console.log('Scene children count:', scene.children.length);
-    scene.children.forEach((child, index) => {
-        console.log(`Child ${index}:`, child.type, child.position);
-    });
-}
-
-// Debug utility functions
 export function initDebug() {
-    // Make sure debug element exists
-    const debugElement = document.getElementById('debug');
-    if (!debugElement) {
-        const newDebugElement = document.createElement('div');
-        newDebugElement.id = 'debug';
-        newDebugElement.style.position = 'absolute';
-        newDebugElement.style.top = '10px';
-        newDebugElement.style.left = '10px';
-        newDebugElement.style.color = 'white';
-        newDebugElement.style.background = 'rgba(0, 0, 0, 0.7)';
-        newDebugElement.style.padding = '10px';
-        newDebugElement.style.fontFamily = 'monospace';
-        newDebugElement.style.zIndex = '100';
-        newDebugElement.style.maxHeight = '80vh';
-        newDebugElement.style.overflowY = 'auto';
-        newDebugElement.innerHTML = 'Debug initialized';
-        document.body.appendChild(newDebugElement);
+    console.log('Debug system initialized');
+
+    // Create a debug div if it doesn't exist
+    if (!document.getElementById('debug')) {
+        const debugDiv = document.createElement('div');
+        debugDiv.id = 'debug';
+        document.body.appendChild(debugDiv);
     }
 }
 
-// Create a toggleable console container
-let consoleContainer;
-let consoleVisible = false;
+export function log(message, ...args) {
+    const timestamp = new Date().toLocaleTimeString();
+    const formattedMessage = `[${timestamp}] ${message}`;
 
-function createConsoleContainer() {
-    if (consoleContainer) return consoleContainer;
-    
-    consoleContainer = document.createElement('div');
-    consoleContainer.id = 'game-console';
-    consoleContainer.style.position = 'fixed';
-    consoleContainer.style.top = '0';
-    consoleContainer.style.left = '0';
-    consoleContainer.style.width = '100%';
-    consoleContainer.style.height = '200px';
-    consoleContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-    consoleContainer.style.color = '#fff';
-    consoleContainer.style.fontFamily = 'monospace';
-    consoleContainer.style.fontSize = '12px';
-    consoleContainer.style.padding = '10px';
-    consoleContainer.style.overflowY = 'auto';
-    consoleContainer.style.zIndex = '1000';
-    consoleContainer.style.display = 'none'; // Hidden by default
-    
-    document.body.appendChild(consoleContainer);
-    
-    // Add event listener for Tab key to toggle console
-    document.addEventListener('keydown', (event) => {
-        if (event.key === 'Tab') {
-            event.preventDefault(); // Prevent default tab behavior
-            consoleVisible = !consoleVisible;
-            consoleContainer.style.display = consoleVisible ? 'block' : 'none';
-        }
-    });
-    
-    return consoleContainer;
+    // Log to console
+    console.log(formattedMessage, ...args);
+
+    // Append to debug div if it exists
+    const debugDiv = document.getElementById('debug');
+    if (debugDiv) {
+        const logLine = document.createElement('div');
+        logLine.textContent = args.length > 0 ? `${formattedMessage} ${args.map(a => JSON.stringify(a)).join(' ')}` : formattedMessage;
+        debugDiv.appendChild(logLine);
+
+        // Auto-scroll to bottom
+        debugDiv.scrollTop = debugDiv.scrollHeight;
+    }
 }
 
-// Initialize the console container
-createConsoleContainer();
+export function error(message, ...args) {
+    const timestamp = new Date().toLocaleTimeString();
+    const formattedMessage = `[${timestamp}] ERROR: ${message}`;
 
-// Export log and error functions
-export function log(message) {
-    console.log(message);
-    
-    if (!consoleContainer) return;
-    
-    const logEntry = document.createElement('div');
-    logEntry.textContent = message;
-    consoleContainer.appendChild(logEntry);
-    
-    // Auto-scroll to bottom
-    consoleContainer.scrollTop = consoleContainer.scrollHeight;
+    // Log to console with error styling
+    console.error(formattedMessage, ...args);
+
+    // Append to debug div with error styling if it exists
+    const debugDiv = document.getElementById('debug');
+    if (debugDiv) {
+        const errorLine = document.createElement('div');
+        errorLine.style.color = 'red';
+        errorLine.style.fontWeight = 'bold';
+        errorLine.textContent = args.length > 0 ? `${formattedMessage} ${args.map(a => JSON.stringify(a)).join(' ')}` : formattedMessage;
+        debugDiv.appendChild(errorLine);
+
+        // Auto-scroll to bottom
+        debugDiv.scrollTop = debugDiv.scrollHeight;
+    }
 }
 
-export function error(message, err) {
-    console.error(message, err);
-    
-    if (!consoleContainer) return;
-    
-    const errorEntry = document.createElement('div');
-    errorEntry.textContent = `${message}: ${err?.message || err}`;
-    errorEntry.style.color = '#ff5555';
-    consoleContainer.appendChild(errorEntry);
-    
-    // Auto-scroll to bottom
-    consoleContainer.scrollTop = consoleContainer.scrollHeight;
-}
-
-// Make these functions global
-window.debugLog = log;
-window.debugError = error; 
+export const DEBUG_MODE = true;

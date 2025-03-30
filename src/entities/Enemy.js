@@ -114,8 +114,8 @@ export class Enemy {
             // Create a GLTFLoader
             const loader = new GLTFLoader();
 
-            // Load the model - FIXING THE PATH to match the player's model path
-            loader.load('/public/models/blobville-player.glb', (gltf) => {
+            // Make sure the path is consistent with what the Vite server expects
+            loader.load('/models/blobville-player.glb', (gltf) => {
                 // Only proceed if we still have a valid mesh
                 if (!this.mesh) {
                     console.warn('Enemy mesh was removed before model loaded');

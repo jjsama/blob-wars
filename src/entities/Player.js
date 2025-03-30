@@ -110,8 +110,8 @@ export class Player {
             log('Loading player model');
             const loader = new GLTFLoader();
 
-            // Use the exact same path as the enemy
-            const modelPath = '/public/models/blobville-player.glb';
+            // Make sure the path is consistent with what the Vite server expects
+            const modelPath = '/models/blobville-player.glb';
 
             log(`Trying to load player model from: ${modelPath}`);
 

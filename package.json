@@ -4,10 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run server.js"
+    "start": "bun run server.js",
+    "dev": "vite"
   },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "vite": "^5.4.15"
   },
   "peerDependencies": {
     "typescript": "^5"
