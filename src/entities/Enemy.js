@@ -328,33 +328,22 @@ export class Enemy {
             strafeDir.multiplyScalar(-1);
         }
 
-        // Apply strafe force - match player physics exactly
+        // Set velocity directly instead of applying force
         this.body.activate(true);
 
-        // Use impulse with a slightly lower multiplier
-        const strafeForce = new Ammo.btVector3(
-            strafeDir.x * this.moveSpeed * 2.0, // Reduced from 2.5
-            0,
-            strafeDir.z * this.moveSpeed * 2.0  // Reduced from 2.5
+        // Get current velocity to preserve Y component
+        const velocity = this.body.getLinearVelocity();
+        const currentVelY = velocity.y();
+
+        // Set constant velocity directly
+        const newVelocity = new Ammo.btVector3(
+            strafeDir.x * this.maxVelocity,
+            currentVelY,
+            strafeDir.z * this.maxVelocity
         );
 
-        this.body.applyCentralImpulse(strafeForce);
-        Ammo.destroy(strafeForce);
-
-        // Cap velocity to match player's max speed
-        const velocity = this.body.getLinearVelocity();
-        const horizSpeed = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
-
-        if (horizSpeed > this.maxVelocity) {
-            const scale = this.maxVelocity / horizSpeed;
-            const newVel = new Ammo.btVector3(
-                velocity.x() * scale,
-                velocity.y(),
-                velocity.z() * scale
-            );
-            this.body.setLinearVelocity(newVel);
-            Ammo.destroy(newVel);
-        }
+        this.body.setLinearVelocity(newVelocity);
+        Ammo.destroy(newVelocity);
 
         // Face the target while strafing
         this.lookAt(targetPos);
@@ -669,25 +658,24 @@ export class Enemy {
         this.isJumping = true;
         this.playAnimation('jump');
 
-        // Apply jump force - match player's jump force
+        // Set jump velocity directly instead of applying force
         if (this.body) {
             this.body.activate(true);
-            const jumpForce = new Ammo.btVector3(0, this.jumpForce, 0);
-            this.body.applyCentralImpulse(jumpForce);
-            Ammo.destroy(jumpForce);
 
-            // Apply a smaller forward boost if moving for bhop (like player)
+            // Get current velocity to preserve horizontal components
             const velocity = this.body.getLinearVelocity();
-            const horizVelocity = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
-            if (horizVelocity > 5) {
-                const boostImpulse = new Ammo.btVector3(
-                    velocity.x() * 0.1,
-                    0,
-                    velocity.z() * 0.1
-                );
-                this.body.applyCentralImpulse(boostImpulse);
-                Ammo.destroy(boostImpulse);
-            }
+            const currentVelX = velocity.x();
+            const currentVelZ = velocity.z();
+
+            // Set velocity directly for jumping
+            const jumpVelocity = new Ammo.btVector3(
+                currentVelX,
+                10.0, // Upward velocity for jump
+                currentVelZ
+            );
+
+            this.body.setLinearVelocity(jumpVelocity);
+            Ammo.destroy(jumpVelocity);
         }
 
         // Reset jump state after animation completes
@@ -1033,7 +1021,7 @@ export class Enemy {
         // Otherwise, animation is handled in the movement methods
     }
 
-    // Update the moveTowardWithForce method to use a slightly lower multiplier
+    // Update the moveTowardWithForce method to use constant velocity
     moveTowardWithForce(targetPosition, speed) {
         if (!this.body || !this.mesh) return;
 
@@ -1051,33 +1039,22 @@ export class Enemy {
         // Calculate dot product to determine if moving forward or backward
         const dot = direction.dot(forward);
 
-        // Apply movement force - EXACT match to player physics
+        // Set velocity directly - use constant speed
         this.body.activate(true);
 
-        // Apply direct force with a slightly lower multiplier
-        const moveForce = new Ammo.btVector3(
-            direction.x * speed * 2.0, // Reduced from 2.5
-            0,
-            direction.z * speed * 2.0  // Reduced from 2.5
+        // Get current velocity to preserve Y component
+        const velocity = this.body.getLinearVelocity();
+        const currentVelY = velocity.y();
+
+        // Set constant velocity directly
+        const newVelocity = new Ammo.btVector3(
+            direction.x * this.maxVelocity,
+            currentVelY,
+            direction.z * this.maxVelocity
         );
 
-        this.body.applyCentralImpulse(moveForce); // Use impulse for immediate effect
-        Ammo.destroy(moveForce);
-
-        // Cap velocity to match player's max speed
-        const velocity = this.body.getLinearVelocity();
-        const horizSpeed = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
-
-        if (horizSpeed > this.maxVelocity) {
-            const scale = this.maxVelocity / horizSpeed;
-            const newVel = new Ammo.btVector3(
-                velocity.x() * scale,
-                velocity.y(),
-                velocity.z() * scale
-            );
-            this.body.setLinearVelocity(newVel);
-            Ammo.destroy(newVel);
-        }
+        this.body.setLinearVelocity(newVelocity);
+        Ammo.destroy(newVelocity);
 
         // Play appropriate animation based on movement direction
         if (dot > 0.7) {

@@ -18,7 +18,8 @@ export class InputHandler {
             left: false,
             right: false,
             jump: false,
-            attack: false
+            attack: false,
+            interact: false
         };
     }
 
@@ -27,14 +28,21 @@ export class InputHandler {
         const gameKeys = ['w', 'a', 's', 'd', ' ', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
 
         window.addEventListener('keydown', (event) => {
-            // Store the raw key state
-            this.keyStates[event.key] = true;
+            // Store the raw key state - ensure we're capturing keys case-insensitively
+            const key = event.key;
+            this.keyStates[key] = true;
+
+            // Special handling for space bar since it can be represented differently
+            if (key === ' ' || key === 'Spacebar') {
+                this.keyStates[' '] = true;
+                console.log('Jump key pressed');
+            }
 
             // Update specific key tracking
-            this.updateKeyState(event.key, true);
+            this.updateKeyState(key, true);
 
             // Prevent scrolling when pressing space
-            if (gameKeys.includes(event.key)) {
+            if (gameKeys.includes(key)) {
                 event.preventDefault();
             }
 
@@ -44,10 +52,17 @@ export class InputHandler {
 
         window.addEventListener('keyup', (event) => {
             // Store the raw key state
-            this.keyStates[event.key] = false;
+            const key = event.key;
+            this.keyStates[key] = false;
+
+            // Special handling for space bar
+            if (key === ' ' || key === 'Spacebar') {
+                this.keyStates[' '] = false;
+                console.log('Jump key released');
+            }
 
             // Update specific key tracking
-            this.updateKeyState(event.key, false);
+            this.updateKeyState(key, false);
 
             // Call callbacks - ensure we're passing the correct event type
             this.callbacks.keyUp.forEach(callback => callback(event));
@@ -85,7 +100,7 @@ export class InputHandler {
 
     // Update the specific key tracking
     updateKeyState(key, isPressed) {
-        // Movement keys
+        // Movement keys - case insensitive
         if (key === 'w' || key === 'W' || key === 'ArrowUp') {
             this.keys.forward = isPressed;
         }
@@ -100,11 +115,15 @@ export class InputHandler {
         }
 
         // Action keys
-        if (key === ' ') {
+        if (key === ' ' || key === 'Spacebar') {
             this.keys.jump = isPressed;
+            console.log(`Jump key ${isPressed ? 'pressed' : 'released'} in updateKeyState`);
         }
         if (key === 'e' || key === 'E') {
             this.keys.attack = isPressed;
+        }
+        if (key === 'f' || key === 'F') {
+            this.keys.interact = isPressed;
         }
     }
 
@@ -130,17 +149,79 @@ export class InputHandler {
             mouseButtonsObj[key] = value;
         });
 
+        // Handle multiple key representations and case sensitivity
+        const forward = this.keyStates['w'] || this.keyStates['W'] || this.keyStates['ArrowUp'] || this.keys.forward || false;
+        const backward = this.keyStates['s'] || this.keyStates['S'] || this.keyStates['ArrowDown'] || this.keys.backward || false;
+        const left = this.keyStates['a'] || this.keyStates['A'] || this.keyStates['ArrowLeft'] || this.keys.left || false;
+        const right = this.keyStates['d'] || this.keyStates['D'] || this.keyStates['ArrowRight'] || this.keys.right || false;
+        const jump = this.keyStates[' '] || this.keyStates['Spacebar'] || this.keys.jump || false;
+
+        if (jump) {
+            console.log('Jump detected in getInputState');
+        }
+
         return {
-            forward: this.keyStates['w'] || this.keyStates['arrowup'] || false,
-            backward: this.keyStates['s'] || this.keyStates['arrowdown'] || false,
-            left: this.keyStates['a'] || this.keyStates['arrowleft'] || false,
-            right: this.keyStates['d'] || this.keyStates['arrowright'] || false,
-            jump: this.keyStates[' '] || false,
-            attack: this.keyStates['e'] || this.keyStates['mouse0'] || false,
-            reload: this.keyStates['r'] || false,
-            interact: this.keyStates['f'] || false,
+            forward,
+            backward,
+            left,
+            right,
+            jump,
+            attack: this.keyStates['e'] || this.keyStates['E'] || this.keys.attack || this.mouseButtons.get(0) || false,
+            reload: this.keyStates['r'] || this.keyStates['R'] || false,
+            interact: this.keyStates['f'] || this.keyStates['F'] || this.keys.interact || false,
             mousePosition: this.mousePosition,
             mouseButtons: mouseButtonsObj
+        };
+    }
+
+    // Get movement direction vector for player movement
+    getMovementDirection() {
+        // Process key states to determine movement direction
+        const forward = this.keyStates['w'] || this.keyStates['W'] || this.keyStates['ArrowUp'] || false;
+        const backward = this.keyStates['s'] || this.keyStates['S'] || this.keyStates['ArrowDown'] || false;
+        const left = this.keyStates['a'] || this.keyStates['A'] || this.keyStates['ArrowLeft'] || false;
+        const right = this.keyStates['d'] || this.keyStates['D'] || this.keyStates['ArrowRight'] || false;
+
+        // Return null if no movement keys are pressed
+        if (!forward && !backward && !left && !right) {
+            return null;
+        }
+
+        // Calculate the movement direction
+        let x = 0;
+        let z = 0;
+
+        // Add the contributions of each key
+        if (forward) z -= 1;
+        if (backward) z += 1;
+        if (left) x -= 1;
+        if (right) x += 1;
+
+        // Normalize the direction vector for consistent movement speed in all directions
+        const length = Math.sqrt(x * x + z * z);
+        if (length > 0) {
+            x /= length;
+            z /= length;
+        }
+
+        return { x, z };
+    }
+
+    // Get the current movement state for animations
+    getMovementState() {
+        const forward = this.keyStates['w'] || this.keyStates['W'] || this.keyStates['ArrowUp'] || false;
+        const backward = this.keyStates['s'] || this.keyStates['S'] || this.keyStates['ArrowDown'] || false;
+        const left = this.keyStates['a'] || this.keyStates['A'] || this.keyStates['ArrowLeft'] || false;
+        const right = this.keyStates['d'] || this.keyStates['D'] || this.keyStates['ArrowRight'] || false;
+        const jump = this.keyStates[' '] || false;
+
+        return {
+            isMoving: forward || backward || left || right,
+            isJumping: jump,
+            forward: forward,
+            backward: backward,
+            left: left,
+            right: right
         };
     }
 

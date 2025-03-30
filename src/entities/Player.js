@@ -281,22 +281,59 @@ export class Player {
                 return;
             }
 
-            // Determine which animation to play based on movement state
-            let animationName = 'idle';
-
-            if (movementState.isMoving) {
-                animationName = 'walkForward';
-
-                // If jumping while moving
-                if (movementState.isJumping) {
-                    animationName = 'jump';
-                }
-            } else if (movementState.isJumping) {
-                animationName = 'jump';
+            // If player is jumping, play jump animation regardless of other movements
+            if (movementState.isJumping) {
+                this.playAnimation('jump');
+                return;
             }
 
-            // Play the determined animation
-            this.playAnimation(animationName);
+            // If player is attacking, don't override the animation
+            if (this.isAttacking) {
+                return;
+            }
+
+            // Determine which animation to play based on the specific keys pressed
+            if (movementState.isMoving) {
+                // Priority for animations:
+                // 1. Strafe left/right takes precedence if only those keys are pressed
+                // 2. Forward/backward if only those keys are pressed
+                // 3. Otherwise combination movements use forward/backward
+
+                // Check for pure strafing (left or right without forward/backward)
+                if (movementState.left && !movementState.right && !movementState.forward && !movementState.backward) {
+                    this.playAnimation('strafeLeft');
+                    return;
+                }
+
+                if (movementState.right && !movementState.left && !movementState.forward && !movementState.backward) {
+                    this.playAnimation('strafeRight');
+                    return;
+                }
+
+                // Forward/backward movement
+                if (movementState.forward && !movementState.backward) {
+                    this.playAnimation('walkForward');
+                    return;
+                }
+
+                if (movementState.backward && !movementState.forward) {
+                    this.playAnimation('walkBackward');
+                    return;
+                }
+
+                // Combination - default to forward/backward depending on which is active
+                if (movementState.forward) {
+                    this.playAnimation('walkForward');
+                } else if (movementState.backward) {
+                    this.playAnimation('walkBackward');
+                } else {
+                    // This case shouldn't really happen given the isMoving check
+                    this.playAnimation('idle');
+                }
+            } else {
+                // No movement, play idle
+                this.playAnimation('idle');
+            }
         } catch (err) {
             console.error('Error updating movement animation:', err);
         }
@@ -336,11 +373,21 @@ export class Player {
             if (this.body) {
                 this.body.activate(true);
 
-                // Reduced jump force for a short hop
-                const jumpForce = new Ammo.btVector3(0, 10, 0);
-                this.body.applyCentralImpulse(jumpForce);
-                Ammo.destroy(jumpForce);
-                log('Jump force applied: 0, 10, 0');
+                // Get current velocity to preserve horizontal components
+                const velocity = this.body.getLinearVelocity();
+                const currentVelX = velocity.x();
+                const currentVelZ = velocity.z();
+
+                // Set velocity directly instead of applying force
+                const jumpVelocity = new Ammo.btVector3(
+                    currentVelX,
+                    10.0, // Upward velocity for jump
+                    currentVelZ
+                );
+
+                this.body.setLinearVelocity(jumpVelocity);
+                Ammo.destroy(jumpVelocity);
+                log('Jump velocity set: x=' + currentVelX + ', y=10.0, z=' + currentVelZ);
             }
         }, 50); // Small delay to sync with animation start
 
@@ -462,6 +509,60 @@ export class Player {
             this.body.applyCentralImpulse(force);
         } catch (err) {
             error('Error applying force', err);
+        }
+    }
+
+    /**
+     * Apply movement using constant velocity in a specific direction, with respect to camera
+     * @param {Object} direction - Direction vector { x, z }
+     * @param {Number} moveForce - This is now used as the base speed
+     * @param {Number} maxVelocity - Maximum velocity to set
+     */
+    applyMovementForce(direction, moveForce, maxVelocity) {
+        try {
+            if (!this.body || !this.mesh) return;
+
+            // Make sure the body is active
+            this.body.activate(true);
+
+            // Get camera's forward and right vectors to move relative to camera orientation
+            const camera = window.game.scene.camera;
+            if (!camera) return;
+
+            // Get forward and right vectors from camera (but ignore y-component for horizontal movement)
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            right.y = 0;
+            right.normalize();
+
+            // Calculate movement direction in camera space
+            const moveX = direction.x;
+            const moveZ = direction.z;
+
+            // Calculate final direction by combining forward/back and left/right components
+            const finalDirection = new THREE.Vector3();
+            finalDirection.addScaledVector(forward, -moveZ); // Forward is -Z
+            finalDirection.addScaledVector(right, moveX);
+            finalDirection.normalize();
+
+            // Get current velocity to preserve Y component (for jumping/falling)
+            const velocity = this.body.getLinearVelocity();
+            const currentVelY = velocity.y();
+
+            // Set velocity directly instead of applying force
+            const newVelocity = new Ammo.btVector3(
+                finalDirection.x * maxVelocity,
+                currentVelY,
+                finalDirection.z * maxVelocity
+            );
+
+            this.body.setLinearVelocity(newVelocity);
+            Ammo.destroy(newVelocity);
+        } catch (err) {
+            error('Error applying movement velocity', err);
         }
     }
 

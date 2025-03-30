@@ -390,7 +390,11 @@ export class Game {
     setupInputHandlers() {
         // Handle key down events
         this.input.onKeyDown((event) => {
-            if (event.key === ' ' && !event.repeat) {
+            const key = event.key;
+
+            // Jump handling
+            if ((key === ' ' || key === 'Spacebar') && !event.repeat) {
+                console.log('Space key pressed in Game, triggering jump');
                 this.handleJump();
 
                 // Send jump event to server in multiplayer
@@ -399,7 +403,8 @@ export class Game {
                 }
             }
 
-            if (event.key === 'f' && !event.repeat) {
+            // Shooting with F key
+            if ((key === 'f' || key === 'F') && !event.repeat) {
                 this.shootProjectile();
                 if (this.player) this.player.playAnimation('attack');
             }
@@ -408,6 +413,7 @@ export class Game {
         // Handle mouse down events
         this.input.onMouseDown((event) => {
             if (event.button === 0) { // Left mouse button
+                console.log('Left mouse button pressed, shooting');
                 this.shootProjectile();
                 if (this.player) this.player.playAnimation('attack');
 
@@ -419,6 +425,21 @@ export class Game {
                 }
             }
         });
+
+        // Add a regular check for jump key
+        // This helps if the key event was missed or there are issues with key events
+        setInterval(() => {
+            const inputState = this.input.getInputState();
+            if (inputState.jump && this.isPlayerOnGround()) {
+                console.log('Jump detected from interval check');
+                this.handleJump();
+
+                // Send jump event to server in multiplayer
+                if (this.isMultiplayer && this.networkManager.connected) {
+                    this.networkManager.sendJump();
+                }
+            }
+        }, 100); // Check every 100ms
     }
 
     handleJump() {
@@ -428,44 +449,15 @@ export class Game {
         const timeSinceLastJump = now - this.lastJumpTime;
 
         if (this.isPlayerOnGround()) {
-            // Call the player's jump method instead of just setting the animation
+            // Call the player's jump method - it now handles setting velocity directly
             this.player.jump();
-
-            // Apply jump force
-            const jumpImpulse = new Ammo.btVector3(0, this.jumpForce, 0);
-            this.player.applyForce(jumpImpulse);
             this.lastJumpTime = now;
             this.canJump = false;
-
-            // Apply a smaller forward boost if moving for bhop
-            if (this.player.body) {
-                const velocity = this.player.body.getLinearVelocity();
-                const horizVelocity = Math.sqrt(velocity.x() * velocity.x() + velocity.z() * velocity.z());
-                if (horizVelocity > 5) {
-                    const boostImpulse = new Ammo.btVector3(
-                        velocity.x() * 0.1,
-                        0,
-                        velocity.z() * 0.1
-                    );
-                    this.player.applyForce(boostImpulse);
-                }
-            }
         } else if (timeSinceLastJump < this.bhopWindow) {
-            // Bhop - significantly reduced jump force for subsequent hops
-            const jumpImpulse = new Ammo.btVector3(0, this.jumpForce * 0.7, 0);
-            this.player.applyForce(jumpImpulse);
+            // For bunny hopping, we'll just call jump again but with a smaller velocity
+            // The jump method now manages velocity directly
+            this.player.jump();
             this.lastJumpTime = now;
-
-            // Apply a smaller forward boost
-            if (this.player.body) {
-                const velocity = this.player.body.getLinearVelocity();
-                const boostImpulse = new Ammo.btVector3(
-                    velocity.x() * 0.1,
-                    0,
-                    velocity.z() * 0.1
-                );
-                this.player.applyForce(boostImpulse);
-            }
         }
     }
 
@@ -642,8 +634,17 @@ export class Game {
             // Get movement input
             const moveDirection = this.input.getMovementDirection();
 
-            // Skip if no movement
+            // If no movement, explicitly stop the player by setting velocity to zero
             if (!moveDirection) {
+                // Only preserve vertical velocity (for jumps/gravity)
+                if (this.player.body) {
+                    const velocity = this.player.body.getLinearVelocity();
+                    const currentVelY = velocity.y();
+
+                    const zeroVelocity = new Ammo.btVector3(0, currentVelY, 0);
+                    this.player.body.setLinearVelocity(zeroVelocity);
+                    Ammo.destroy(zeroVelocity);
+                }
                 return;
             }
 
@@ -782,12 +783,22 @@ export class Game {
                 try {
                     this.player.update(deltaTime);
 
-                    // Update player movement based on input
+                    // Update player movement based on input - CRITICAL FOR MOVEMENT
                     this.updateMovement();
 
+                    // Log player position for debugging
+                    if (Math.random() < 0.01) { // Only log occasionally to avoid spam
+                        const pos = this.player.getPosition();
+                        console.log(`Player position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}, z=${pos.z.toFixed(2)}`);
+                    }
+
                     // Update player animation based on input
-                    if (this.player && this.input) {
-                        this.player.updateMovementAnimation(this.input.getMovementState());
+                    if (this.input) {
+                        const movementState = this.input.getMovementState();
+                        console.log('Movement state:',
+                            movementState.isMoving ? 'Moving' : 'Not moving',
+                            movementState.isJumping ? 'Jumping' : 'Not jumping');
+                        this.player.updateMovementAnimation(movementState);
                     }
                 } catch (playerError) {
                     error('Error updating player:', playerError.message || playerError);
