@@ -110,6 +110,7 @@
         Ammo().then(function (AmmoInstance) {
           // Store Ammo instance globally
           window.AmmoLib = AmmoInstance;
+          window.Ammo = AmmoInstance; // Also make available as Ammo directly for compatibility
           document.getElementById('debug').innerHTML += '<br>Ammo.js initialized successfully';
 
           // Now load the game
@@ -131,43 +132,77 @@
     };
 
     script.onerror = function (err) {
-      document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js script. Trying CDN fallback...</span>';
-      console.error('Failed to load Ammo.js script:', err);
+      document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js script from root. Trying public directory...</span>';
+      console.error('Failed to load Ammo.js script from root:', err);
 
-      // Try loading from CDN as fallback
-      const fallbackScript = document.createElement('script');
-      fallbackScript.src = 'https://raw.githack.com/kripken/ammo.js/master/builds/ammo.js';
+      // Try loading from public directory
+      const publicScript = document.createElement('script');
+      publicScript.src = '/public/ammo.wasm.js';
 
-      fallbackScript.onload = function () {
-        document.getElementById('debug').innerHTML += '<br>Ammo.js loaded from CDN, initializing...';
+      publicScript.onload = function () {
+        document.getElementById('debug').innerHTML += '<br>Ammo.js loaded from public directory, initializing...';
 
-        // Initialize Ammo.js from CDN
+        // Initialize Ammo.js 
         try {
           Ammo().then(function (AmmoInstance) {
             window.AmmoLib = AmmoInstance;
-            document.getElementById('debug').innerHTML += '<br>Ammo.js (CDN) initialized successfully';
+            window.Ammo = AmmoInstance; // Also make available as Ammo directly
+            document.getElementById('debug').innerHTML += '<br>Ammo.js (public) initialized successfully';
             loadGame();
           }).catch(function (err) {
-            document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Failed to initialize Ammo.js from CDN: ${err.message}</span>`;
-            console.error('Failed to initialize Ammo.js from CDN:', err);
+            document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Failed to initialize Ammo.js from public: ${err.message}</span>`;
+            console.error('Failed to initialize Ammo.js from public:', err);
             loadGame();
           });
         } catch (err) {
-          document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Exception in Ammo.js CDN initialization: ${err.message}</span>`;
-          console.error('Exception in Ammo.js CDN initialization:', err);
+          document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Exception in Ammo.js public initialization: ${err.message}</span>`;
+          console.error('Exception in Ammo.js public initialization:', err);
           loadGame();
         }
       };
 
-      fallbackScript.onerror = function () {
-        document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js from CDN. Proceeding without physics.</span>';
-        console.error('Failed to load Ammo.js from CDN');
+      publicScript.onerror = function () {
+        document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js from public. Trying CDN fallback...</span>';
+        console.error('Failed to load Ammo.js from public');
 
-        // Try to load the game even without Ammo.js
-        loadGame();
+        // Try loading from CDN as final fallback
+        const fallbackScript = document.createElement('script');
+        fallbackScript.src = 'https://raw.githack.com/kripken/ammo.js/master/builds/ammo.js';
+
+        fallbackScript.onload = function () {
+          document.getElementById('debug').innerHTML += '<br>Ammo.js loaded from CDN, initializing...';
+
+          // Initialize Ammo.js from CDN
+          try {
+            Ammo().then(function (AmmoInstance) {
+              window.AmmoLib = AmmoInstance;
+              window.Ammo = AmmoInstance; // Also make available as Ammo directly
+              document.getElementById('debug').innerHTML += '<br>Ammo.js (CDN) initialized successfully';
+              loadGame();
+            }).catch(function (err) {
+              document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Failed to initialize Ammo.js from CDN: ${err.message}</span>`;
+              console.error('Failed to initialize Ammo.js from CDN:', err);
+              loadGame();
+            });
+          } catch (err) {
+            document.getElementById('debug').innerHTML += `<br><span style="color:red">ERROR: Exception in Ammo.js CDN initialization: ${err.message}</span>`;
+            console.error('Exception in Ammo.js CDN initialization:', err);
+            loadGame();
+          }
+        };
+
+        fallbackScript.onerror = function () {
+          document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load Ammo.js from CDN. Proceeding without physics.</span>';
+          console.error('Failed to load Ammo.js from CDN');
+
+          // Try to load the game even without Ammo.js
+          loadGame();
+        };
+
+        document.body.appendChild(fallbackScript);
       };
 
-      document.body.appendChild(fallbackScript);
+      document.body.appendChild(publicScript);
     };
 
     document.body.appendChild(script);

@@ -10,36 +10,24 @@ export class Player {
         this.mesh = null;
         this.body = null;
         this.modelLoaded = false;
-        this.animations = {
-            idle: null,
-            walkForward: null,
-            walkBackward: null,
-            strafeLeft: null,
-            strafeRight: null,
-            jump: null,
-            attack: null
-        };
+        this.animations = {};
+        this.animationActions = {};
         this.currentAnimation = 'idle';
         this.mixer = null;
         this.currentAction = null;
-        this.tempMesh = null;
         this.health = 100;
         this.isDead = false;
         this.isAttacking = false;
         this.isJumping = false;
         this.canJump = false;
         this.mixerEventAdded = false;
-
-        // Create a temporary mesh first - this ensures we always have a visible player
-        this.createTempMesh();
+        this._loggedMissingIdle = false;
 
         // Create physics body
         this.createPhysics();
 
-        // Try to load the model, but don't wait for it
-        setTimeout(() => {
-            this.loadModel();
-        }, 1000);
+        // Load the model immediately
+        this.loadModel();
 
         // Add a direct space key listener for testing
         window.addEventListener('keydown', (event) => {
@@ -52,93 +40,60 @@ export class Player {
         log('Player created with direct space key listener');
     }
 
-    createTempMesh() {
-        try {
-            log('Creating temporary player model');
-
-            // Create a simple temporary model
-            const playerGroup = new THREE.Group();
-
-            // Body
-            const bodyGeometry = new THREE.CapsuleGeometry(0.5, 1, 8, 16);
-            const bodyMaterial = new THREE.MeshStandardMaterial({
-                color: 0x3366ff,
-                roughness: 0.7,
-                metalness: 0.3
-            });
-            const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
-            body.castShadow = true;
-            body.position.y = 0.5;
-            playerGroup.add(body);
-
-            // Head
-            const headGeometry = new THREE.SphereGeometry(0.3, 16, 16);
-            const headMaterial = new THREE.MeshStandardMaterial({
-                color: 0xffcc99,
-                roughness: 0.7,
-                metalness: 0.2
-            });
-            const head = new THREE.Mesh(headGeometry, headMaterial);
-            head.position.y = 1.3;
-            head.castShadow = true;
-            playerGroup.add(head);
-
-            // Set position
-            playerGroup.position.set(this.position.x, this.position.y, this.position.z);
-
-            this.tempMesh = playerGroup;
-            this.mesh = playerGroup; // Use temp mesh until model loads
-            this.scene.add(this.mesh);
-
-            log('Temporary player model created');
-        } catch (err) {
-            error('Error creating temporary mesh', err);
-
-            // Create an absolute fallback - just a box
-            const geometry = new THREE.BoxGeometry(1, 2, 1);
-            const material = new THREE.MeshStandardMaterial({ color: 0xff0000 });
-            this.mesh = new THREE.Mesh(geometry, material);
-            this.mesh.position.set(this.position.x, this.position.y, this.position.z);
-            this.scene.add(this.mesh);
-
-            log('Fallback box mesh created');
-        }
-    }
-
     loadModel() {
         try {
             log('Loading player model');
             const loader = new GLTFLoader();
 
-            // Make sure the path is consistent with what the Vite server expects
-            const modelPath = '/models/blobville-player.glb';
+            // Try multiple paths to handle both development and production builds
+            // Order matters - try the most likely paths first
+            const modelPaths = [
+                '/models/blobville-player.glb',  // Standard path
+                '/public/models/blobville-player.glb',  // With public prefix
+                '/dist/models/blobville-player.glb',  // From dist
+                '/dist/models/models/blobville-player.glb'  // Nested models folder
+            ];
 
-            log(`Trying to load player model from: ${modelPath}`);
+            let pathIndex = 0;
 
-            loader.load(
-                modelPath,
-                (gltf) => {
-                    log('Player model loaded successfully!');
-
-                    // Log all animations in the GLTF file
-                    log(`Player GLTF contains ${gltf.animations.length} animations:`);
-                    gltf.animations.forEach((anim, index) => {
-                        log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
-                    });
-
-                    this.setupModel(gltf);
-                },
-                (xhr) => {
-                    if (xhr.lengthComputable) {
-                        const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                        log(`Loading player model: ${percent}%`);
-                    }
-                },
-                (err) => {
-                    error(`Failed to load player model: ${err.message}`);
-                    log('Using fallback temporary mesh for player');
+            const tryLoadModel = (index) => {
+                if (index >= modelPaths.length) {
+                    error('Failed to load player model after trying all paths');
+                    return;
                 }
-            );
+
+                const modelPath = modelPaths[index];
+                log(`Trying to load player model from: ${modelPath}`);
+
+                loader.load(
+                    modelPath,
+                    (gltf) => {
+                        log(`Player model loaded successfully from ${modelPath}!`);
+
+                        // Log all animations in the GLTF file
+                        log(`Player GLTF contains ${gltf.animations.length} animations:`);
+                        gltf.animations.forEach((anim, index) => {
+                            log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
+                        });
+
+                        this.setupModel(gltf);
+                    },
+                    (xhr) => {
+                        if (xhr.lengthComputable) {
+                            const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
+                            log(`Loading player model: ${percent}%`);
+                        }
+                    },
+                    (err) => {
+                        error(`Failed to load player model from ${modelPath}: ${err.message}`);
+                        // Try next path
+                        tryLoadModel(index + 1);
+                    }
+                );
+            };
+
+            // Start trying paths
+            tryLoadModel(pathIndex);
         } catch (err) {
             error('Error in loadModel', err);
         }
@@ -150,12 +105,8 @@ export class Player {
             // Set up the model
             const model = gltf.scene;
 
-            // Keep the current position
-            if (this.mesh) {
-                model.position.copy(this.mesh.position);
-            } else {
-                model.position.set(this.position.x, this.position.y, this.position.z);
-            }
+            // Set the model position 
+            model.position.set(this.position.x, this.position.y, this.position.z);
 
             // Rotate the model 180 degrees to face forward instead of backward
             model.rotation.set(0, Math.PI, 0); // This should make it face forward
@@ -171,28 +122,9 @@ export class Player {
             // Scale down the model to make it smaller
             model.scale.set(0.35, 0.35, 0.35); // Reduced from 0.5 to 0.35 (70% of previous size)
 
-            // Remove the temporary mesh
-            if (this.tempMesh) {
-                this.scene.remove(this.tempMesh);
-            }
-
-            // Replace the mesh
-            if (this.mesh && this.mesh !== this.tempMesh) {
-                this.scene.remove(this.mesh);
-            }
-
             this.mesh = model;
             this.scene.add(this.mesh);
             this.modelLoaded = true;
-
-            // Store animations directly on the mesh for easier access
-            this.mesh.animations = gltf.animations;
-
-            // Log all animations in the GLTF file
-            log(`Player model loaded with ${gltf.animations.length} animations:`);
-            gltf.animations.forEach((anim, index) => {
-                log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
-            });
 
             // Set up animations
             this.setupAnimations(gltf.animations);
@@ -213,101 +145,39 @@ export class Player {
         // Create animation mixer
         this.mixer = new THREE.AnimationMixer(this.mesh);
 
-        // First, try to map animations by index (more reliable)
-        if (animations.length >= 7) {
-            log('Mapping animations by index (more reliable)');
-            // Map animations based on the indices we've seen in the console logs
-            this.animations.strafeLeft = animations[0];
-            this.animations.attack = animations[1];
-            this.animations.idle = animations[2];
-            this.animations.jump = animations[3];
-            this.animations.strafeRight = animations[4];
-            this.animations.walkBackward = animations[5];
-            this.animations.walkForward = animations[6];
+        // Clear existing animations
+        this.animations = {};
+        this.animationActions = {};
 
-            log('Animations mapped by index:');
-            log(`strafeLeft: ${this.animations.strafeLeft ? this.animations.strafeLeft.name : 'NOT FOUND'}`);
-            log(`attack: ${this.animations.attack ? this.animations.attack.name : 'NOT FOUND'}`);
-            log(`idle: ${this.animations.idle ? this.animations.idle.name : 'NOT FOUND'}`);
-            log(`jump: ${this.animations.jump ? this.animations.jump.name : 'NOT FOUND'}`);
-            log(`strafeRight: ${this.animations.strafeRight ? this.animations.strafeRight.name : 'NOT FOUND'}`);
-            log(`walkBackward: ${this.animations.walkBackward ? this.animations.walkBackward.name : 'NOT FOUND'}`);
-            log(`walkForward: ${this.animations.walkForward ? this.animations.walkForward.name : 'NOT FOUND'}`);
-        } else {
-            // Fallback to mapping by name
-            log('Mapping animations by name (fallback)');
-            animations.forEach((clip, index) => {
-                const name = clip.name.toLowerCase();
-                log(`Processing animation ${index}: "${clip.name}"`);
+        // Define the expected animation names
+        const animationNames = [
+            'strafeLeft',    // 0
+            'attack',        // 1
+            'idle',          // 2
+            'jump',          // 3
+            'strafeRight',   // 4
+            'walkBackward',  // 5
+            'walkForward'    // 6
+        ];
 
-                if (name === 'idle') this.animations.idle = clip;
-                else if (name === 'walkforward') this.animations.walkForward = clip;
-                else if (name === 'walkbackward') this.animations.walkBackward = clip;
-                else if (name === 'strafeleft') this.animations.strafeLeft = clip;
-                else if (name === 'straferight') this.animations.strafeRight = clip;
-                else if (name === 'jump') this.animations.jump = clip;
-                else if (name === 'attack') this.animations.attack = clip;
-            });
+        // Map animations by index (more reliable)
+        for (let i = 0; i < Math.min(animations.length, animationNames.length); i++) {
+            const name = animationNames[i];
+            const clip = animations[i];
+
+            if (clip) {
+                log(`Mapping player animation ${i}: ${clip.name} -> ${name}`);
+                this.animations[name] = clip;
+                this.animationActions[name] = this.mixer.clipAction(clip);
+            }
         }
 
         // Start with idle animation if available
-        if (this.animations.idle) {
+        if (this.animations.idle && this.animationActions.idle) {
             log('Starting with idle animation');
             this.playAnimation('idle');
         } else {
             log('No idle animation found, cannot start animations');
-        }
-    }
-
-    createFakeAnimations() {
-        log('Creating fake animations for blob model');
-
-        // Create a simple up/down bobbing animation for idle
-        const times = [0, 0.5, 1];
-        const values = [0, 0.1, 0]; // Y position values
-
-        // Create tracks for different animations
-        const idleTrack = new THREE.KeyframeTrack(
-            '.position[y]', // Property to animate
-            times,
-            [0, 0.1, 0] // Slight up and down movement
-        );
-
-        const walkTrack = new THREE.KeyframeTrack(
-            '.position[y]',
-            times,
-            [0, 0.2, 0] // More pronounced movement
-        );
-
-        const runTrack = new THREE.KeyframeTrack(
-            '.position[y]',
-            times,
-            [0, 0.3, 0] // Even more movement
-        );
-
-        const jumpTrack = new THREE.KeyframeTrack(
-            '.position[y]',
-            [0, 0.5, 1],
-            [0, 0.5, 0] // Big jump
-        );
-
-        // Create animation clips
-        this.animations.idle = new THREE.AnimationClip('idle', 1.5, [idleTrack]);
-        this.animations.walkForward = new THREE.AnimationClip('walkForward', 1, [walkTrack]);
-        this.animations.walkBackward = new THREE.AnimationClip('walkBackward', 1, [walkTrack]);
-        this.animations.strafeLeft = new THREE.AnimationClip('strafeLeft', 1, [walkTrack]);
-        this.animations.strafeRight = new THREE.AnimationClip('strafeRight', 1, [walkTrack]);
-        this.animations.jump = new THREE.AnimationClip('jump', 0.8, [jumpTrack]);
-        this.animations.attack = new THREE.AnimationClip('attack', 0.8, [jumpTrack]);
-
-        // Create mixer if it doesn't exist
-        if (!this.mixer && this.mesh) {
-            this.mixer = new THREE.AnimationMixer(this.mesh);
-        }
-
-        // Start with idle animation
-        if (this.mixer) {
-            this.playAnimation('idle');
         }
     }
 
@@ -360,30 +230,18 @@ export class Player {
     }
 
     playAnimation(name) {
-        if (!this.mixer) {
-            log('No mixer available for animations');
-
-            // Try to create the mixer if we have a mesh but no mixer
-            if (this.mesh && !this.mixer) {
-                log('Attempting to create mixer on demand');
-                this.mixer = new THREE.AnimationMixer(this.mesh);
-            } else {
-                return; // Can't play animation without mixer
-            }
+        // Don't attempt to play animations until mesh and mixer are available
+        if (!this.modelLoaded || !this.mixer || !this.mesh) {
+            // Instead of logging an error, silently return until model is ready
+            return;
         }
 
-        if (!this.animations[name]) {
-            log(`Animation ${name} not found, falling back to idle`);
-
-            // If we're already trying to play idle, don't create an infinite loop
-            if (name === 'idle') {
-                log('Idle animation not found, cannot play any animation');
-                return;
-            }
-
-            // Try to fall back to idle
-            if (this.animations.idle) {
-                this.playAnimation('idle');
+        // Only proceed with valid animation
+        if (!this.animations[name] || !this.animationActions[name]) {
+            // Only log once for better performance
+            if (name === 'idle' && !this._loggedMissingIdle) {
+                console.warn('Idle animation not found, animations may not be properly loaded');
+                this._loggedMissingIdle = true;
             }
             return;
         }
@@ -391,100 +249,56 @@ export class Player {
         // Don't restart the same animation unless it's a jump or attack
         if (this.currentAnimation === name && name !== 'jump' && name !== 'attack') return;
 
-        log(`Playing animation: ${name}`);
-
         try {
             // For attack and jump animations, we want to make sure they complete
             const isOneShot = (name === 'attack' || name === 'jump');
 
-            // Stop any current animation with appropriate crossfade
+            // If we have a current action, fade it out
             if (this.currentAction) {
-                // For jump, we want a very quick transition with no blending
-                if (name === 'jump') {
-                    this.currentAction.stop();
-                } else {
-                    const fadeTime = isOneShot ? 0.1 : 0.2;
-                    this.currentAction.fadeOut(fadeTime);
-                }
+                this.currentAction.fadeOut(0.2);
             }
 
-            // Start new animation
-            const action = this.mixer.clipAction(this.animations[name]);
+            // Get the new action
+            const action = this.animationActions[name];
 
-            // Reset the action to ensure it plays from the beginning
+            // Reset and play the new action
             action.reset();
+            action.fadeIn(0.2);
+            action.play();
 
-            // For jump and attack, make sure they play only once
-            if (isOneShot) {
-                action.setLoop(THREE.LoopOnce);
-                action.clampWhenFinished = true; // Keep the last frame until we transition
-
-                // For jump specifically, ensure smooth playback
-                if (name === 'jump') {
-                    action.timeScale = 1.0;  // Normal speed
-                    action.weight = 1.0;     // Full weight
-                    action.enabled = true;   // Make sure it's enabled
-
-                    // Don't use crossfade for jump - play it immediately
-                    action.play();
-
-                    // Schedule return to idle after animation completes
-                    const jumpDuration = this.animations.jump.duration * 1000;
-                    setTimeout(() => {
-                        if (this.currentAnimation === 'jump') {
-                            this.playAnimation('idle');
-                        }
-                    }, jumpDuration);
-                } else {
-                    // For other one-shot animations, use normal fade
-                    const fadeInTime = 0.1;
-                    action.fadeIn(fadeInTime);
-                    action.play();
-                }
-            } else {
-                // For regular animations, use normal crossfade
-                const fadeInTime = 0.2;
-                action.fadeIn(fadeInTime);
-                action.play();
-            }
-
-            this.currentAction = action;
+            // Update current animation and action
             this.currentAnimation = name;
+            this.currentAction = action;
         } catch (err) {
-            error(`Error playing animation ${name}:`, err);
+            console.error(`Error playing animation '${name}':`, err);
         }
     }
 
-    updateMovementAnimation(input) {
-        // Don't change animations during attack
-        if (this.isAttacking) return;
-
-        // Debug the input state
-        if (input.jump) {
-            log('Jump input detected in updateMovementAnimation');
-            log(`isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
-        }
-
-        // Handle jump with highest priority
-        if (input.jump && !this.isJumping) {
-            log('Jump conditions met, calling jump()');
-            this.jump();
-            return;
-        }
-
-        // Only change other animations if we're not jumping
-        if (!this.isJumping) {
-            if (input.forward) {
-                this.playAnimation('walkForward');
-            } else if (input.backward) {
-                this.playAnimation('walkBackward');
-            } else if (input.left) {
-                this.playAnimation('strafeLeft');
-            } else if (input.right) {
-                this.playAnimation('strafeRight');
-            } else {
-                this.playAnimation('idle');
+    updateMovementAnimation(movementState) {
+        try {
+            // Don't attempt to play animations until mesh and mixer are available
+            if (!this.modelLoaded || !this.mixer || !this.mesh) {
+                return;
             }
+
+            // Determine which animation to play based on movement state
+            let animationName = 'idle';
+
+            if (movementState.isMoving) {
+                animationName = 'walkForward';
+
+                // If jumping while moving
+                if (movementState.isJumping) {
+                    animationName = 'jump';
+                }
+            } else if (movementState.isJumping) {
+                animationName = 'jump';
+            }
+
+            // Play the determined animation
+            this.playAnimation(animationName);
+        } catch (err) {
+            console.error('Error updating movement animation:', err);
         }
     }
 
@@ -545,57 +359,92 @@ export class Player {
 
     update(deltaTime) {
         try {
-            if (!this.body || !this.mesh) return;
+            if (!this.body || !this.mesh) {
+                // Silent return if basic objects aren't available yet
+                return;
+            }
+
+            // Check if Ammo is defined before proceeding
+            if (typeof Ammo === 'undefined') {
+                error('Ammo is not defined in Player update');
+                return;
+            }
 
             // Update mesh position based on physics
-            const ms = this.body.getMotionState();
-            if (ms) {
-                const transform = new Ammo.btTransform();
-                ms.getWorldTransform(transform);
-                const p = transform.getOrigin();
+            try {
+                const ms = this.body.getMotionState();
+                if (ms) {
+                    const transform = new Ammo.btTransform();
+                    ms.getWorldTransform(transform);
 
-                // Update position - adjust the offset to match the model
-                this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                    // Make sure transform is valid
+                    if (transform) {
+                        const p = transform.getOrigin();
 
-                // Check if player is on ground
-                this.checkGroundContact();
+                        // Make sure p is valid and has x, y, z methods
+                        if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
+                            // Update mesh position with the offset for the model
+                            this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                        }
+                    }
+                }
+            } catch (physicsError) {
+                throw new Error(`Physics transform error: ${physicsError.message || 'Unknown physics error'}`);
+            }
 
-                // Make sure the player doesn't fall through the world
-                if (p.y() < -10) {
-                    // Reset position if player falls too far
-                    const resetTransform = new Ammo.btTransform();
-                    resetTransform.setIdentity();
-                    resetTransform.setOrigin(new Ammo.btVector3(0, 5, 0));
-                    ms.setWorldTransform(resetTransform);
-                    this.body.setWorldTransform(resetTransform);
+            // Update animation mixer
+            try {
+                if (this.mixer && deltaTime) {
+                    this.mixer.update(deltaTime);
+                }
+            } catch (animationError) {
+                throw new Error(`Animation error: ${animationError.message || 'Unknown animation error'}`);
+            }
 
-                    // Reset velocity
-                    const zero = new Ammo.btVector3(0, 0, 0);
-                    this.body.setLinearVelocity(zero);
-                    this.body.setAngularVelocity(zero);
+            // Make the player always face the direction of the crosshair/camera
+            try {
+                // First verify that all required objects exist
+                if (!this.modelLoaded) return;
+                if (typeof window === 'undefined') return;
+                if (!window.game) return;
+
+                const game = window.game;
+                if (!game.scene || !game.scene.camera) return;
+
+                // Create a vector to store camera direction
+                const cameraDirection = new THREE.Vector3();
+
+                // Get the world direction from the camera
+                game.scene.camera.getWorldDirection(cameraDirection);
+
+                // Only proceed if we have a valid direction vector
+                if (isNaN(cameraDirection.x) || isNaN(cameraDirection.y) || isNaN(cameraDirection.z)) {
+                    error('Invalid camera direction:', cameraDirection);
+                    return;
                 }
 
-                // Make the player always face the direction of the crosshair/camera
-                if (this.modelLoaded && window.game && window.game.scene) {
-                    const cameraDirection = new THREE.Vector3();
-                    window.game.scene.camera.getWorldDirection(cameraDirection);
-                    cameraDirection.y = 0; // Keep upright
+                // Zero out the Y component to keep character upright
+                cameraDirection.y = 0;
+
+                // Only normalize if the vector has non-zero length
+                if (cameraDirection.length() > 0) {
                     cameraDirection.normalize();
 
                     // Calculate the angle to face the camera direction
                     const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
 
-                    // Set rotation to match crosshair direction
-                    this.mesh.rotation.set(0, angle, 0);
+                    // Set rotation to match crosshair direction - with error checking
+                    if (!isNaN(angle)) {
+                        this.mesh.rotation.set(0, angle, 0);
+                    }
                 }
-            }
-
-            // Update animation mixer
-            if (this.mixer && deltaTime) {
-                this.mixer.update(deltaTime);
+            } catch (rotationError) {
+                throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
             }
         } catch (err) {
-            error('Error in player update', err);
+            // Ensure we're properly logging the error with details
+            error('Error updating player:', err.message || err);
+            console.error('Player update stack trace:', err.stack || 'No stack trace available');
         }
     }
 
@@ -617,8 +466,79 @@ export class Player {
     }
 
     getPosition() {
-        if (!this.mesh) return new THREE.Vector3();
-        return this.mesh.position;
+        const position = new THREE.Vector3();
+        if (this.mesh) {
+            this.mesh.getWorldPosition(position);
+        }
+        return { x: position.x, y: position.y, z: position.z };
+    }
+
+    /**
+     * Set the player's position directly (used for remote players)
+     * @param {Object} position - Position object with x, y, z coordinates
+     */
+    setPosition(position) {
+        if (!position) return;
+
+        // Update the mesh position
+        if (this.mesh) {
+            this.mesh.position.set(position.x, position.y, position.z);
+        }
+
+        // If this is a remote player, we don't need to update physics
+        if (this.isRemote) return;
+
+        // Update the physics body position if it exists
+        if (this.body) {
+            const transform = this.body.getWorldTransform();
+            const origin = transform.getOrigin();
+
+            origin.setX(position.x);
+            origin.setY(position.y);
+            origin.setZ(position.z);
+
+            transform.setOrigin(origin);
+            this.body.setWorldTransform(transform);
+        }
+    }
+
+    /**
+     * Get the player's rotation
+     * @returns {Object} Rotation as an object with x, y, z (in radians)
+     */
+    getRotation() {
+        if (!this.mesh) return { x: 0, y: 0, z: 0 };
+
+        return {
+            x: this.mesh.rotation.x,
+            y: this.mesh.rotation.y,
+            z: this.mesh.rotation.z
+        };
+    }
+
+    /**
+     * Set the player's rotation (used for remote players)
+     * @param {Object} rotation - Rotation object with x, y, z in radians
+     */
+    setRotation(rotation) {
+        if (!rotation) return;
+
+        if (typeof rotation === 'number') {
+            // Handle the case where we just get a y rotation value
+            if (this.mesh) {
+                this.mesh.rotation.y = rotation;
+            }
+            return;
+        }
+
+        // Handle the case where we get a full rotation object
+        if (this.mesh) {
+            this.mesh.rotation.set(
+                rotation.x || 0,
+                rotation.y || 0,
+                rotation.z || 0
+            );
+        }
     }
 
     shoot() {
@@ -659,29 +579,6 @@ export class Player {
             window.game.scene.camera.getWorldDirection(direction);
         }
         return direction;
-    }
-
-    setRotation(yRotation) {
-        if (this.mesh) {
-            // For the model, we only want to set the Y rotation
-            if (this.modelLoaded) {
-                // Add a small delay to make the rotation smoother
-                const currentRotation = this.mesh.rotation.y;
-                const rotationDiff = yRotation - currentRotation;
-
-                // Normalize the difference to be between -PI and PI
-                let normalizedDiff = rotationDiff;
-                while (normalizedDiff > Math.PI) normalizedDiff -= Math.PI * 2;
-                while (normalizedDiff < -Math.PI) normalizedDiff += Math.PI * 2;
-
-                // Apply a smooth rotation (interpolate)
-                this.mesh.rotation.y += normalizedDiff * 0.1; // 10% of the way there
-            } else {
-                // For the temp mesh, we can set the full rotation
-                const currentRotation = new THREE.Euler().setFromQuaternion(this.mesh.quaternion);
-                this.mesh.rotation.set(currentRotation.x, yRotation, currentRotation.z);
-            }
-        }
     }
 
     takeDamage(amount) {
@@ -743,28 +640,57 @@ export class Player {
     }
 
     respawn() {
-        // Reset health
-        this.health = 100;
-        this.isDead = false;
-        this.updateHealthUI();
+        try {
+            // Check if Ammo is defined
+            if (typeof Ammo === 'undefined') {
+                error('Ammo is not defined in respawn');
+                return;
+            }
 
-        // Reset position
-        const transform = new Ammo.btTransform();
-        transform.setIdentity();
-        transform.setOrigin(new Ammo.btVector3(0, 5, 0));
+            // Reset health
+            this.health = 100;
+            this.isDead = false;
+            this.updateHealthUI();
 
-        const ms = this.body.getMotionState();
-        ms.setWorldTransform(transform);
+            // Reset position
+            if (this.body) {
+                const transform = new Ammo.btTransform();
+                transform.setIdentity();
+                transform.setOrigin(new Ammo.btVector3(0, 5, 0));
 
-        this.body.setWorldTransform(transform);
+                const ms = this.body.getMotionState();
+                if (ms && typeof ms.setWorldTransform === 'function') {
+                    ms.setWorldTransform(transform);
+                }
 
-        // Reset velocity
-        const zero = new Ammo.btVector3(0, 0, 0);
-        this.body.setLinearVelocity(zero);
-        this.body.setAngularVelocity(zero);
+                if (typeof this.body.setWorldTransform === 'function') {
+                    this.body.setWorldTransform(transform);
+                }
 
-        // Activate the body
-        this.body.activate(true);
+                // Reset velocity
+                const zero = new Ammo.btVector3(0, 0, 0);
+                if (typeof this.body.setLinearVelocity === 'function') {
+                    this.body.setLinearVelocity(zero);
+                }
+
+                if (typeof this.body.setAngularVelocity === 'function') {
+                    this.body.setAngularVelocity(zero);
+                }
+
+                // Activate the body
+                if (typeof this.body.activate === 'function') {
+                    this.body.activate(true);
+                }
+
+                // Clean up Ammo objects
+                Ammo.destroy(zero);
+                Ammo.destroy(transform);
+            } else {
+                error('Cannot respawn player: physics body is null');
+            }
+        } catch (err) {
+            error('Error in respawn:', err);
+        }
     }
 
     setAnimation(name) {
@@ -775,12 +701,44 @@ export class Player {
         if (!this.body) return;
 
         try {
+            // Check if Ammo is defined
+            if (typeof Ammo === 'undefined') {
+                error('Ammo is not defined in checkGroundContact');
+                return;
+            }
+
+            // Make sure the body has getWorldTransform
+            if (typeof this.body.getWorldTransform !== 'function') {
+                error('Player body missing getWorldTransform method');
+                return;
+            }
+
             // Cast a ray downward from the player's position to check for ground
-            const origin = this.body.getWorldTransform().getOrigin();
+            const transform = this.body.getWorldTransform();
+            if (!transform) {
+                error('Invalid transform in checkGroundContact');
+                return;
+            }
+
+            const origin = transform.getOrigin();
+            if (!origin || typeof origin.x !== 'function') {
+                error('Invalid origin in checkGroundContact');
+                return;
+            }
+
             const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
             const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
 
             const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
+
+            if (!this.physicsWorld || typeof this.physicsWorld.rayTest !== 'function') {
+                error('Invalid physicsWorld or missing rayTest method');
+                Ammo.destroy(rayStart);
+                Ammo.destroy(rayEnd);
+                Ammo.destroy(rayCallback);
+                return;
+            }
+
             this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
 
             // If the ray hit something, the player is on the ground
@@ -789,7 +747,11 @@ export class Player {
 
             // Log when ground state changes
             if (wasOnGround !== this.canJump) {
-                log(this.canJump ? 'Player touched ground' : 'Player left ground');
+                if (this.canJump) {
+                    log('Player touched ground');
+                } else {
+                    log('Player left ground');
+                }
             }
 
             // Clean up Ammo.js objects to prevent memory leaks
@@ -797,7 +759,7 @@ export class Player {
             Ammo.destroy(rayEnd);
             Ammo.destroy(rayCallback);
         } catch (err) {
-            error('Error in checkGroundContact', err);
+            error('Error in checkGroundContact:', err);
         }
     }
 }

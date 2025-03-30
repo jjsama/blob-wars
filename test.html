@@ -1,66 +1,152 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>THREE.js Test</title>
+    <title>Blob Wars Multiplayer Test</title>
     <style>
-        body { margin: 0; overflow: hidden; }
-        canvas { display: block; }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 20px;
+        }
+
+        .buttons {
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 10px 15px;
+            margin: 0 5px;
+            background-color: #4CAF50;
             color: white;
-            background: rgba(0, 0, 0, 0.7);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        .frame-container {
+            display: flex;
+            justify-content: space-around;
+            width: 100%;
+        }
+
+        .game-frame {
+            border: 2px solid #333;
+            margin: 10px;
+            width: 45%;
+            height: 500px;
+        }
+
+        .instructions {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: #333;
+            border-radius: 5px;
+        }
+
+        .status {
             padding: 10px;
-            font-family: monospace;
+            margin: 10px 0;
+            background-color: #333;
+            border-radius: 5px;
         }
     </style>
 </head>
+
 <body>
-    <div id="info">Testing THREE.js...</div>
-    
-    <script type="module">
-        import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.174.0/build/three.module.js';
-        
-        const info = document.getElementById('info');
-        info.innerHTML += `<br>THREE.js version: ${THREE.REVISION}`;
-        
-        // Create a simple scene
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x88ccff);
-        
-        // Create camera
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(0, 0, 5);
-        
-        // Create renderer
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
-        
-        // Create a simple cube
-        const geometry = new THREE.BoxGeometry(1, 1, 1);
-        const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-        const cube = new THREE.Mesh(geometry, material);
-        scene.add(cube);
-        
-        info.innerHTML += `<br>Scene created successfully`;
-        
-        // Animation loop
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            // Rotate the cube
-            cube.rotation.x += 0.01;
-            cube.rotation.y += 0.01;
-            
-            renderer.render(scene, camera);
+    <div class="container">
+        <h1>Blob Wars Multiplayer Test</h1>
+
+        <div class="status">
+            Status: <span id="connection-status">Waiting to connect</span>
+        </div>
+
+        <div class="buttons">
+            <button id="load-games">Load Both Games</button>
+            <button id="reload-games">Reload Games</button>
+            <button id="open-new-window">Open in New Window</button>
+        </div>
+
+        <div class="instructions">
+            <h3>Testing Instructions:</h3>
+            <p>This page allows you to test multiplayer functionality by running two game instances side by side.</p>
+            <p>1. Click "Load Both Games" to load two instances of the game</p>
+            <p>2. Wait for both instances to connect to the server</p>
+            <p>3. You should see each player represented in both game views</p>
+            <p>4. You can control each game by clicking on its window first</p>
+        </div>
+
+        <div class="frame-container">
+            <iframe id="game1" class="game-frame" src="about:blank"></iframe>
+            <iframe id="game2" class="game-frame" src="about:blank"></iframe>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('load-games').addEventListener('click', () => {
+            document.getElementById('game1').src = '/';
+            document.getElementById('game2').src = '/';
+            document.getElementById('connection-status').textContent = 'Games loading...';
+        });
+
+        document.getElementById('reload-games').addEventListener('click', () => {
+            document.getElementById('game1').src = 'about:blank';
+            document.getElementById('game2').src = 'about:blank';
+            setTimeout(() => {
+                document.getElementById('game1').src = '/';
+                document.getElementById('game2').src = '/';
+                document.getElementById('connection-status').textContent = 'Games reloading...';
+            }, 500);
+        });
+
+        document.getElementById('open-new-window').addEventListener('click', () => {
+            window.open('/', '_blank', 'width=800,height=600');
+            document.getElementById('connection-status').textContent = 'Opened new window';
+        });
+
+        // Check server status periodically
+        function checkServerStatus() {
+            fetch('/')
+                .then(response => {
+                    if (response.ok) {
+                        document.getElementById('connection-status').textContent = 'Server is running';
+                        document.getElementById('connection-status').style.color = '#4CAF50';
+                    } else {
+                        document.getElementById('connection-status').textContent = 'Server error: ' + response.status;
+                        document.getElementById('connection-status').style.color = '#f44336';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('connection-status').textContent = 'Server not responding';
+                    document.getElementById('connection-status').style.color = '#f44336';
+                });
         }
-        
-        animate();
-        info.innerHTML += `<br>Animation started`;
+
+        // Check server status immediately and then every 5 seconds
+        checkServerStatus();
+        setInterval(checkServerStatus, 5000);
     </script>
 </body>
-</html> 
+
+</html>

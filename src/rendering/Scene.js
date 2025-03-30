@@ -71,54 +71,134 @@ export class GameScene {
             this.renderer.domElement.requestPointerLock();
         });
 
-        // Mouse movement handler
+        // Mouse movement handler with error handling
         document.addEventListener('mousemove', (event) => {
-            if (document.pointerLockElement === this.renderer.domElement) {
-                // Update rotation based on mouse movement
-                this.targetRotationX -= event.movementX * this.sensitivity;
-                this.targetRotationY -= event.movementY * this.sensitivity;
+            try {
+                if (document.pointerLockElement === this.renderer.domElement) {
+                    // Ensure movement values are valid numbers
+                    const movementX = event.movementX || 0;
+                    const movementY = event.movementY || 0;
 
-                // Limit vertical rotation to prevent flipping
-                this.targetRotationY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.targetRotationY));
+                    if (isNaN(movementX) || isNaN(movementY)) {
+                        console.warn('Invalid mouse movement values:', event.movementX, event.movementY);
+                        return;
+                    }
+
+                    // Update rotation based on mouse movement
+                    this.targetRotationX -= movementX * this.sensitivity;
+                    this.targetRotationY -= movementY * this.sensitivity;
+
+                    // Limit vertical rotation to prevent flipping
+                    this.targetRotationY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.targetRotationY));
+                }
+            } catch (err) {
+                console.error('Error handling mouse movement:', err);
             }
+        });
+
+        // Handle pointer lock change and error events
+        document.addEventListener('pointerlockchange', () => {
+            if (document.pointerLockElement !== this.renderer.domElement) {
+                console.log('Pointer lock released');
+            }
+        });
+
+        document.addEventListener('pointerlockerror', (event) => {
+            console.error('Pointer lock error:', event);
         });
     }
 
     updateCamera(target) {
-        if (!target) {
-            console.warn('No target provided for camera update');
-            return;
+        try {
+            if (!target) {
+                console.warn('No target provided for camera update');
+                return;
+            }
+
+            // Validate target position
+            if (isNaN(target.x) || isNaN(target.y) || isNaN(target.z)) {
+                console.error('Invalid target position for camera update:', target);
+                return;
+            }
+
+            // Create a rotation quaternion based on mouse input
+            const rotationQuaternion = new THREE.Quaternion();
+            rotationQuaternion.setFromEuler(
+                new THREE.Euler(this.targetRotationY, this.targetRotationX, 0, 'YXZ')
+            );
+
+            // Apply rotation to the offset
+            const rotatedOffset = this.cameraOffset.clone().applyQuaternion(rotationQuaternion);
+
+            // Set camera position and look direction
+            this.camera.position.copy(target).add(rotatedOffset);
+
+            // Calculate look target (further ahead of player)
+            const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(rotationQuaternion);
+
+            // Position the look target further ahead for better aiming
+            this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(20));
+
+            // Add a slight vertical offset to the look target for better aiming
+            this.cameraTarget.y += 0.7; // Adjusted for better aiming height
+
+            this.camera.lookAt(this.cameraTarget);
+
+            // Return the look direction for use in shooting
+            return lookDirection;
+        } catch (err) {
+            console.error('Error in updateCamera:', err);
+            return new THREE.Vector3(0, 0, -1); // Return a default look direction in case of error
         }
+    }
 
-        // Create a rotation quaternion based on mouse input
-        const rotationQuaternion = new THREE.Quaternion();
-        rotationQuaternion.setFromEuler(
-            new THREE.Euler(this.targetRotationY, this.targetRotationX, 0, 'YXZ')
-        );
+    update() {
+        try {
+            // Get player position for camera if game instance exists
+            if (window.game && window.game.player) {
+                try {
+                    const playerPos = window.game.player.getPosition();
 
-        // Apply rotation to the offset
-        const rotatedOffset = this.cameraOffset.clone().applyQuaternion(rotationQuaternion);
+                    // Verify position is valid before updating camera
+                    if (playerPos &&
+                        typeof playerPos.x === 'number' &&
+                        typeof playerPos.y === 'number' &&
+                        typeof playerPos.z === 'number' &&
+                        !isNaN(playerPos.x) &&
+                        !isNaN(playerPos.y) &&
+                        !isNaN(playerPos.z)) {
 
-        // Set camera position and look direction
-        this.camera.position.copy(target).add(rotatedOffset);
+                        this.updateCamera(new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z));
+                    } else {
+                        console.warn('Invalid player position:', playerPos);
+                    }
+                } catch (posError) {
+                    console.error('Error getting player position:', posError);
+                }
+            }
 
-        // Calculate look target (further ahead of player)
-        const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(rotationQuaternion);
-
-        // Position the look target further ahead for better aiming
-        this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(20));
-
-        // Add a slight vertical offset to the look target for better aiming
-        this.cameraTarget.y += 0.7; // Adjusted for better aiming height
-
-        this.camera.lookAt(this.cameraTarget);
-
-        // Return the look direction for use in shooting
-        return lookDirection;
+            // Make sure we render each frame
+            this.render();
+        } catch (err) {
+            console.error('Error in scene update:', err);
+            // Still try to render even if there was an error
+            try {
+                this.render();
+            } catch (renderErr) {
+                console.error('Critical render error:', renderErr);
+            }
+        }
     }
 
     render() {
-        if (!this.renderer || !this.scene || !this.camera) return;
-        this.renderer.render(this.scene, this.camera);
+        if (!this.renderer || !this.scene || !this.camera) {
+            console.warn('Cannot render: missing renderer, scene, or camera');
+            return;
+        }
+        try {
+            this.renderer.render(this.scene, this.camera);
+        } catch (err) {
+            console.error('Error rendering scene:', err);
+        }
     }
 } 

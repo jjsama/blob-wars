@@ -28,24 +28,26 @@ export function log(message, ...args) {
     }
 }
 
-export function error(message, ...args) {
-    const timestamp = new Date().toLocaleTimeString();
-    const formattedMessage = `[${timestamp}] ERROR: ${message}`;
+/**
+ * Log an error message to the console
+ * @param {string} message - The error message
+ * @param {Error|Object} [err] - Optional error object
+ */
+export function error(message, err) {
+    const timestamp = new Date().toTimeString().split(' ')[0];
+    const errorMsg = `[${timestamp}] ERROR: ${message}`;
 
-    // Log to console with error styling
-    console.error(formattedMessage, ...args);
-
-    // Append to debug div with error styling if it exists
-    const debugDiv = document.getElementById('debug');
-    if (debugDiv) {
-        const errorLine = document.createElement('div');
-        errorLine.style.color = 'red';
-        errorLine.style.fontWeight = 'bold';
-        errorLine.textContent = args.length > 0 ? `${formattedMessage} ${args.map(a => JSON.stringify(a)).join(' ')}` : formattedMessage;
-        debugDiv.appendChild(errorLine);
-
-        // Auto-scroll to bottom
-        debugDiv.scrollTop = debugDiv.scrollHeight;
+    if (err) {
+        if (err instanceof Error) {
+            console.error(errorMsg, err.message);
+            console.error(err.stack);
+        } else if (typeof err === 'object') {
+            console.error(errorMsg, JSON.stringify(err, null, 2));
+        } else {
+            console.error(errorMsg, err);
+        }
+    } else {
+        console.error(errorMsg);
     }
 }
 

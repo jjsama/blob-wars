@@ -19,6 +19,12 @@ export class Enemy {
         this.isJumping = false;
         this.healthBarContainer = null;
         this.healthBar = null;
+        this.modelLoaded = false;
+        this.animations = {};
+        this.animationActions = {};
+        this.mixer = null;
+        this.currentAnimation = null;
+        this.currentAction = null;
 
         // Create a default position if none provided
         if (!position) {
@@ -41,9 +47,6 @@ export class Enemy {
 
         // Add a flag to track initialization status
         this.isInitialized = false;
-
-        // Create a temporary mesh first - MAKE IT VISIBLE until model loads
-        this.createTempMesh();
 
         // Initialize other properties
         this.patrolTarget = new THREE.Vector3();
@@ -81,29 +84,8 @@ export class Enemy {
             }
         }, 100);
 
-        // Load the model IMMEDIATELY instead of with a delay
+        // Load the model IMMEDIATELY
         this.loadModel();
-
-        // Add a backup check to ensure model is loaded
-        setTimeout(() => {
-            if (!this.modelLoaded) {
-                console.warn("Enemy model failed to load, using fallback");
-                this.createFallbackModel();
-            }
-        }, 3000); // Check after 3 seconds
-    }
-
-    createTempMesh() {
-        // Create a visible temporary mesh
-        const geometry = new THREE.SphereGeometry(1, 8, 8);
-        const material = new THREE.MeshBasicMaterial({
-            color: 0xff0000,
-            wireframe: true
-        });
-
-        this.mesh = new THREE.Mesh(geometry, material);
-        this.mesh.position.copy(this.position);
-        this.scene.add(this.mesh);
     }
 
     loadModel() {
@@ -114,113 +96,126 @@ export class Enemy {
             // Create a GLTFLoader
             const loader = new GLTFLoader();
 
-            // Make sure the path is consistent with what the Vite server expects
-            loader.load('/models/blobville-player.glb', (gltf) => {
-                // Only proceed if we still have a valid mesh
-                if (!this.mesh) {
-                    console.warn('Enemy mesh was removed before model loaded');
+            // Try multiple paths to handle both development and production builds
+            const modelPaths = [
+                '/models/blobville-player.glb',  // Standard path
+                '/public/models/blobville-player.glb',  // With public prefix
+                '/dist/models/blobville-player.glb',  // From dist
+                '/dist/models/models/blobville-player.glb'  // Nested models folder
+            ];
+
+            let pathIndex = 0;
+
+            const tryLoadModel = (index) => {
+                if (index >= modelPaths.length) {
+                    console.error('Failed to load enemy model after trying all paths');
+                    this.isModelLoading = false;
                     return;
                 }
 
-                // Store the gltf object
-                this.gltf = gltf;
+                const modelPath = modelPaths[index];
+                console.log(`Trying to load enemy model from: ${modelPath}`);
 
-                // Get the model from the loaded GLTF
-                const model = gltf.scene;
+                loader.load(
+                    modelPath,
+                    (gltf) => {
+                        console.log(`Enemy model loaded successfully from ${modelPath}!`);
 
-                // Scale the model appropriately - match player scale
-                model.scale.set(0.35, 0.35, 0.35);
+                        // Get the model from the loaded GLTF
+                        const model = gltf.scene;
 
-                // Apply distinct bright colors to enemies - NO WHITE/GRAY
-                const brightColors = [
-                    0xff6b6b, // Bright red
-                    0x48dbfb, // Bright blue
-                    0x1dd1a1, // Bright green
-                    0xfeca57, // Bright yellow
-                    0xff9ff3, // Bright pink
-                    0x54a0ff, // Bright sky blue
-                    0x00d2d3, // Bright teal
-                    0xf368e0, // Bright magenta
-                    0xff9f43, // Bright orange
-                    0xee5253, // Bright crimson
-                    0xa29bfe  // Bright purple
-                ];
+                        // Scale the model appropriately - match player scale
+                        model.scale.set(0.35, 0.35, 0.35);
 
-                // Use a hash of the position to get a consistent color for this enemy
-                const colorIndex = Math.abs(
-                    Math.floor(
-                        (this.position.x * 13 + this.position.z * 17) % brightColors.length
-                    )
-                );
-                const enemyColor = brightColors[colorIndex];
+                        // Apply distinct bright colors to enemies - NO WHITE/GRAY
+                        const brightColors = [
+                            0xff6b6b, // Bright red
+                            0x48dbfb, // Bright blue
+                            0x1dd1a1, // Bright green
+                            0xfeca57, // Bright yellow
+                            0xff9ff3, // Bright pink
+                            0x54a0ff, // Bright sky blue
+                            0x00d2d3, // Bright teal
+                            0xf368e0, // Bright magenta
+                            0xff9f43, // Bright orange
+                            0xee5253, // Bright crimson
+                            0xa29bfe  // Bright purple
+                        ];
 
-                model.traverse((child) => {
-                    if (child.isMesh) {
-                        // Clone the material to avoid sharing across instances
-                        child.material = child.material.clone();
+                        // Use a hash of the position to get a consistent color for this enemy
+                        const colorIndex = Math.abs(
+                            Math.floor(
+                                (this.position.x * 13 + this.position.z * 17) % brightColors.length
+                            )
+                        );
+                        const enemyColor = brightColors[colorIndex];
 
-                        // Only color the body material, not the eyes
-                        const isEyeMaterial = child.material.name &&
-                            (child.material.name.toLowerCase().includes('eye') ||
-                                child.material.name.toLowerCase().includes('pupil'));
+                        model.traverse((child) => {
+                            if (child.isMesh) {
+                                // Clone the material to avoid sharing across instances
+                                child.material = child.material.clone();
 
-                        if (!isEyeMaterial) {
-                            // Force set the color - ensure it's applied
-                            child.material.color.setHex(enemyColor);
-                            // Make sure the material is not transparent
-                            child.material.transparent = false;
-                            child.material.opacity = 1.0;
-                            // Ensure the material is updated
-                            child.material.needsUpdate = true;
-                        }
+                                // Only color the body material, not the eyes
+                                const isEyeMaterial = child.material.name &&
+                                    (child.material.name.toLowerCase().includes('eye') ||
+                                        child.material.name.toLowerCase().includes('pupil'));
 
-                        // Enable shadows
-                        child.castShadow = true;
-                        child.receiveShadow = true;
+                                if (!isEyeMaterial) {
+                                    // Force set the color - ensure it's applied
+                                    child.material.color.setHex(enemyColor);
+                                    // Make sure the material is not transparent
+                                    child.material.transparent = false;
+                                    child.material.opacity = 1.0;
+                                    // Ensure the material is updated
+                                    child.material.needsUpdate = true;
+                                }
+
+                                // Enable shadows
+                                child.castShadow = true;
+                                child.receiveShadow = true;
+                            }
+                        });
+
+                        // Store the enemy color for projectiles to use
+                        this.color = enemyColor;
+
+                        // Log the color used for debugging
+                        console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
+
+                        // Set the model's position
+                        model.position.copy(this.position);
+
+                        // Rotate the model to face forward
+                        model.rotation.set(0, Math.PI, 0);
+
+                        // Set the new model as the mesh
+                        this.mesh = model;
+
+                        // Add the new model to the scene
+                        this.scene.add(this.mesh);
+                        this.modelLoaded = true;
+                        this.isModelLoading = false;
+
+                        // Set up animations
+                        this.setupAnimations(gltf);
+
+                        console.log("Enemy model loaded successfully");
+                    },
+                    // Progress callback
+                    (xhr) => {
+                        console.log(`Enemy model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
+                    },
+                    // Error callback
+                    (error) => {
+                        console.error(`Failed to load enemy model from ${modelPath}: ${error.message}`);
+                        // Try next path
+                        tryLoadModel(index + 1);
                     }
-                });
+                );
+            };
 
-                // Store the enemy color for projectiles to use
-                this.color = enemyColor;
-
-                // Log the color used for debugging
-                console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
-
-                // Replace the temporary mesh with the loaded model
-                const oldPosition = this.mesh.position.clone();
-                const oldRotation = this.mesh.rotation.clone();
-
-                // Remove the old mesh from the scene
-                this.scene.remove(this.mesh);
-
-                // Set the new model as the mesh
-                this.mesh = model;
-
-                // Add the new model to the scene
-                this.scene.add(this.mesh);
-
-                // Restore position and rotation
-                this.mesh.position.copy(oldPosition);
-                this.mesh.rotation.copy(oldRotation);
-
-                // Set up animations
-                this.setupAnimations(gltf);
-
-                // Flag that the model is loaded
-                this.modelLoaded = true;
-                this.isModelLoading = false;
-
-                console.log("Enemy model loaded successfully");
-            },
-                // Progress callback
-                (xhr) => {
-                    console.log(`Enemy model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-                },
-                // Error callback
-                (error) => {
-                    console.error('Error loading enemy model:', error);
-                    this.isModelLoading = false;
-                });
+            // Start trying paths
+            tryLoadModel(pathIndex);
         } catch (err) {
             console.error('Exception while loading enemy model:', err);
             this.isModelLoading = false;
@@ -228,6 +223,11 @@ export class Enemy {
     }
 
     setupAnimations(gltf) {
+        if (!gltf.animations || gltf.animations.length === 0) {
+            console.log('No animations found in enemy model');
+            return;
+        }
+
         // Create animation mixer
         this.mixer = new THREE.AnimationMixer(this.mesh);
 
@@ -236,8 +236,11 @@ export class Enemy {
             console.log(`Enemy animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
         });
 
-        // DIRECT APPROACH: Map animations by index exactly like the player
-        // This is the most reliable method since we know the player's animations work
+        // Clear any existing animations
+        this.animations = {};
+        this.animationActions = {};
+
+        // Define the expected animation names
         const animationNames = [
             'strafeLeft',    // 0
             'attack',        // 1
@@ -247,10 +250,6 @@ export class Enemy {
             'walkBackward',  // 5
             'walkForward'    // 6
         ];
-
-        // Clear any existing animations
-        this.animations = {};
-        this.animationActions = {};
 
         // Map animations directly by index
         for (let i = 0; i < Math.min(gltf.animations.length, animationNames.length); i++) {
@@ -275,35 +274,42 @@ export class Enemy {
     }
 
     playAnimation(name) {
-        // Skip if no mixer or we're already playing this animation
-        if (!this.mixer || this.currentAnimation === name) {
+        // Skip if the model isn't loaded or we don't have a mixer or mesh
+        if (!this.modelLoaded || !this.mixer || !this.mesh) {
+            // Silently return until everything is ready
+            return;
+        }
+
+        // Skip if we're already playing this animation
+        if (this.currentAnimation === name) {
             return;
         }
 
         // Get the action for this animation
         const action = this.animationActions[name];
 
-        // If action doesn't exist, log and return
+        // If action doesn't exist, silently return
         if (!action) {
-            console.warn(`Animation '${name}' not found for enemy`);
             return;
         }
 
-        // If we were playing a different animation, stop it
-        if (this.currentAction) {
-            this.currentAction.fadeOut(0.2);
+        try {
+            // If we were playing a different animation, stop it
+            if (this.currentAction) {
+                this.currentAction.fadeOut(0.2);
+            }
+
+            // Play the new animation
+            action.reset();
+            action.fadeIn(0.2);
+            action.play();
+
+            // Update current animation tracking
+            this.currentAction = action;
+            this.currentAnimation = name;
+        } catch (err) {
+            console.error(`Error playing animation ${name}:`, err);
         }
-
-        // Play the new animation
-        action.reset();
-        action.fadeIn(0.2);
-        action.play();
-
-        // Update current animation tracking
-        this.currentAction = action;
-        this.currentAnimation = name;
-
-        console.log(`Enemy playing animation: ${name}`);
     }
 
     strafeAroundTarget(targetPos) {
@@ -502,32 +508,65 @@ export class Enemy {
 
         try {
             // Update mesh position based on physics
+            // Check if Ammo is available before proceeding
+            if (typeof Ammo === 'undefined') {
+                console.warn("Ammo is not defined in Enemy update");
+                return;
+            }
+
             const ms = this.body.getMotionState();
             if (ms) {
-                const transform = new Ammo.btTransform();
-                ms.getWorldTransform(transform);
-                const p = transform.getOrigin();
+                try {
+                    const transform = new Ammo.btTransform();
+                    ms.getWorldTransform(transform);
 
-                // Update mesh position with the offset for the model
-                // Use the same offset as the player (-1.0)
-                this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                    // Make sure transform is valid before using it
+                    if (transform) {
+                        const p = transform.getOrigin();
+
+                        // Safety check for position coordinates
+                        if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
+                            // Update mesh position with the offset for the model
+                            // Use the same offset as the player (-1.0)
+                            this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                        }
+                    }
+                } catch (physicsError) {
+                    console.error("Physics transform error in enemy update:", physicsError);
+                }
             }
 
             // Update animation mixer
             if (this.mixer && deltaTime) {
-                this.mixer.update(deltaTime);
+                try {
+                    this.mixer.update(deltaTime);
+                } catch (animError) {
+                    console.error("Animation error in enemy update:", animError);
+                }
             }
 
             // Only update health bar if we have the necessary properties
             if (this.healthBarContainer && this.healthBar && this.mesh) {
-                this.updateHealthBar();
+                try {
+                    this.updateHealthBar();
+                } catch (uiError) {
+                    console.error("Health bar update error:", uiError);
+                }
             }
 
             // Check if on ground before attempting to jump
-            this.checkGroundContact();
+            try {
+                this.checkGroundContact();
+            } catch (groundError) {
+                console.error("Ground contact check error:", groundError);
+            }
 
             // Update AI behavior
-            this.updateAI(deltaTime);
+            try {
+                this.updateAI(deltaTime);
+            } catch (aiError) {
+                console.error("AI update error:", aiError);
+            }
         } catch (error) {
             console.error("Error in enemy update:", error);
         }
@@ -1058,71 +1097,34 @@ export class Enemy {
 
     // Add ground contact check similar to player
     checkGroundContact() {
-        if (!this.body || !this.physicsWorld) return;
-
         try {
-            // Cast a ray downward from the enemy's position to check for ground
-            const origin = this.body.getWorldTransform().getOrigin();
-            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
-            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
+            // Check if we have a valid physics body and mesh
+            if (!this.body || !this.mesh) return false;
 
-            const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
-            this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+            // Get the current position
+            const transform = this.body.getWorldTransform();
+            const origin = transform.getOrigin();
+            const position = new THREE.Vector3(origin.x(), origin.y(), origin.z());
 
-            // If the ray hit something, the enemy is on the ground
-            this.canJump = rayCallback.hasHit();
+            // Create a ray cast from slightly above current position downward
+            const raySource = new Ammo.btVector3(position.x, position.y - 0.05, position.z);
+            const rayTarget = new Ammo.btVector3(position.x, position.y - 1.1, position.z);
+            const rayCallback = new Ammo.ClosestRayResultCallback(raySource, rayTarget);
 
-            // Clean up Ammo.js objects to prevent memory leaks
-            Ammo.destroy(rayStart);
-            Ammo.destroy(rayEnd);
+            // Perform the raycast
+            this.physicsWorld.rayTest(raySource, rayTarget, rayCallback);
+
+            // Clean up Ammo.js objects
+            Ammo.destroy(raySource);
+            Ammo.destroy(rayTarget);
+
+            // Check if the ray hit something
+            const hasContact = rayCallback.hasHit();
             Ammo.destroy(rayCallback);
+
+            return hasContact;
         } catch (err) {
             console.error('Error in checkGroundContact', err);
         }
-    }
-
-    // Add a fallback model method
-    createFallbackModel() {
-        // Create a simple colored sphere as fallback
-        const geometry = new THREE.SphereGeometry(1, 16, 16);
-
-        // Use a bright color from our palette
-        const brightColors = [
-            0xff6b6b, // Bright red
-            0x48dbfb, // Bright blue
-            0x1dd1a1, // Bright green
-            0xfeca57, // Bright yellow
-            0xff9ff3  // Bright pink
-        ];
-
-        const colorIndex = Math.floor(Math.random() * brightColors.length);
-        const enemyColor = brightColors[colorIndex];
-
-        const material = new THREE.MeshStandardMaterial({
-            color: enemyColor,
-            emissive: enemyColor,
-            emissiveIntensity: 0.2
-        });
-
-        // Create the fallback mesh
-        const fallbackMesh = new THREE.Mesh(geometry, material);
-        fallbackMesh.position.copy(this.position);
-        fallbackMesh.castShadow = true;
-        fallbackMesh.receiveShadow = true;
-
-        // Store the color for projectiles
-        this.color = enemyColor;
-
-        // Replace the current mesh
-        if (this.mesh) {
-            this.scene.remove(this.mesh);
-        }
-
-        this.mesh = fallbackMesh;
-        this.scene.add(this.mesh);
-
-        // Mark as initialized
-        this.modelLoaded = true;
-        this.isInitialized = true;
     }
 } 

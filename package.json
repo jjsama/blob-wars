@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "bun run server.js",
-    "dev": "vite"
+    "dev": "vite",
+    "server": "bun run start-server.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -15,6 +16,7 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "three": "^0.174.0"
+    "three": "^0.174.0",
+    "ws": "^8.18.1"
   }
 }
