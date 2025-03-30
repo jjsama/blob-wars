@@ -8,6 +8,7 @@ import { Projectile } from './entities/Projectile.js';
 import { Enemy } from './entities/Enemy.js';
 import { log, error } from './debug.js';
 import { NetworkManager } from './utils/NetworkManager.js';
+import { GAME_CONFIG } from './utils/constants.js';
 
 export class Game {
     constructor() {
@@ -1045,16 +1046,27 @@ export class Game {
 
     spawnEnemies(count) {
         try {
+            log('Spawning ' + count + ' enemies');
+
             // Spawn enemies at random positions
             for (let i = 0; i < count; i++) {
-                const x = Math.random() * 50 - 25;
-                const y = 2;
-                const z = Math.random() * 50 - 25;
+                // Use a wider distribution for enemy spawning
+                const x = Math.random() * 80 - 40;
+                const z = Math.random() * 80 - 40;
+
+                // IMPORTANT: Set y to a consistent value slightly above ground
+                // This ensures enemies start above ground and fall naturally
+                const y = 5; // Start 5 units above ground, matching player's default height
+
                 const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, { x, y, z });
                 this.enemies.push(enemy);
+
+                log(`Enemy ${i} spawned at position x=${x.toFixed(2)}, y=${y.toFixed(2)}, z=${z.toFixed(2)}`);
             }
+
+            log('Successfully spawned ' + count + ' enemies');
         } catch (err) {
-            error('Error in spawnEnemies:', err);
+            error('Error spawning enemies:', err);
         }
     }
 } 

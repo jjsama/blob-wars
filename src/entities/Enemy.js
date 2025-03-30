@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { log, error } from '../debug.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class Enemy {
     constructor(scene, physicsWorld, position = null) {
@@ -12,11 +13,12 @@ export class Enemy {
 
         this.scene = scene;
         this.physicsWorld = physicsWorld;
-        this.mesh = null; // Ensure mesh is initialized as null
-        this.body = null; // Ensure body is initialized as null
+        this.mesh = null;
+        this.body = null;
         this.isDead = false;
         this.isAttacking = false;
         this.isJumping = false;
+        this.canJump = false;
         this.healthBarContainer = null;
         this.healthBar = null;
         this.modelLoaded = false;
@@ -30,34 +32,27 @@ export class Enemy {
         if (!position) {
             position = {
                 x: (Math.random() - 0.5) * 40,
-                y: 2,
+                y: GAME_CONFIG.enemySpawnHeight,
                 z: (Math.random() - 0.5) * 40
             };
         }
 
-        // IMPORTANT: Create a proper THREE.Vector3 position object
+        // IMPORTANT: Store position as a THREE.Vector3
         this.position = new THREE.Vector3(
             position.x || 0,
             position.y || 2,
             position.z || 0
         );
 
-        // Log for debugging
+        // Log initial position for debugging
         console.log(`Enemy initialized at position: ${this.position.x}, ${this.position.y}, ${this.position.z}`);
-
-        // Add a flag to track initialization status
-        this.isInitialized = false;
 
         // Initialize other properties
         this.patrolTarget = new THREE.Vector3();
         this.health = 100;
-
-        // Reduce movement speed for better gameplay
-        this.moveSpeed = 15; // Reduced from 20
-        this.maxVelocity = 18; // Reduced from 25
-        this.jumpForce = 10; // Keep jump force the same
-
-        // More balanced combat parameters
+        this.moveSpeed = 15;
+        this.maxVelocity = 18;
+        this.jumpForce = 10;
         this.attackRange = 30;
         this.detectionRange = 60;
         this.attackCooldown = 2000;
@@ -66,16 +61,13 @@ export class Enemy {
         this.lastJumpTime = 0;
         this.teamAwarenessRadius = 15;
 
-        // Create physics with slight delay to ensure mesh is ready
-        setTimeout(() => {
-            try {
-                this.createPhysics();
-            } catch (error) {
-                console.error("Failed to create physics:", error);
-            }
-        }, 50);
+        // Keep track of loading state
+        this._physicsCreated = false;
 
-        // Create health bar with delay to ensure document is ready
+        // First load the model (CRITICAL: Load before physics)
+        this.loadModel();
+
+        // Create health bar
         setTimeout(() => {
             try {
                 this.createHealthBar();
@@ -83,9 +75,6 @@ export class Enemy {
                 console.error("Failed to create health bar:", error);
             }
         }, 100);
-
-        // Load the model IMMEDIATELY
-        this.loadModel();
     }
 
     loadModel() {
@@ -96,128 +85,119 @@ export class Enemy {
             // Create a GLTFLoader
             const loader = new GLTFLoader();
 
-            // Try multiple paths to handle both development and production builds
-            const modelPaths = [
-                '/models/blobville-player.glb',  // Standard path
-                '/public/models/blobville-player.glb',  // With public prefix
-                '/dist/models/blobville-player.glb',  // From dist
-                '/dist/models/models/blobville-player.glb'  // Nested models folder
-            ];
+            // Use path from constants file that works in both dev and prod
+            const modelPath = ASSET_PATHS.models.player; // Using same model as player
+            console.log(`Loading enemy model from path: ${modelPath}`);
 
-            let pathIndex = 0;
+            loader.load(
+                modelPath,
+                (gltf) => {
+                    console.log(`Enemy model loaded successfully from ${modelPath}!`);
 
-            const tryLoadModel = (index) => {
-                if (index >= modelPaths.length) {
-                    console.error('Failed to load enemy model after trying all paths');
-                    this.isModelLoading = false;
-                    return;
-                }
+                    // Get the model from the loaded GLTF
+                    const model = gltf.scene;
 
-                const modelPath = modelPaths[index];
-                console.log(`Trying to load enemy model from: ${modelPath}`);
+                    // Scale the model appropriately - match player scale
+                    model.scale.set(0.35, 0.35, 0.35);
 
-                loader.load(
-                    modelPath,
-                    (gltf) => {
-                        console.log(`Enemy model loaded successfully from ${modelPath}!`);
+                    // Apply distinct bright colors to enemies - NO WHITE/GRAY
+                    const brightColors = [
+                        0xff6b6b, // Bright red
+                        0x48dbfb, // Bright blue
+                        0x1dd1a1, // Bright green
+                        0xfeca57, // Bright yellow
+                        0xff9ff3, // Bright pink
+                        0x54a0ff, // Bright sky blue
+                        0x00d2d3, // Bright teal
+                        0xf368e0, // Bright magenta
+                        0xff9f43, // Bright orange
+                        0xee5253, // Bright crimson
+                        0xa29bfe  // Bright purple
+                    ];
 
-                        // Get the model from the loaded GLTF
-                        const model = gltf.scene;
+                    // Use a hash of the position to get a consistent color for this enemy
+                    const colorIndex = Math.abs(
+                        Math.floor(
+                            (this.position.x * 13 + this.position.z * 17) % brightColors.length
+                        )
+                    );
+                    const enemyColor = brightColors[colorIndex];
 
-                        // Scale the model appropriately - match player scale
-                        model.scale.set(0.35, 0.35, 0.35);
+                    model.traverse((child) => {
+                        if (child.isMesh) {
+                            // Clone the material to avoid sharing across instances
+                            child.material = child.material.clone();
 
-                        // Apply distinct bright colors to enemies - NO WHITE/GRAY
-                        const brightColors = [
-                            0xff6b6b, // Bright red
-                            0x48dbfb, // Bright blue
-                            0x1dd1a1, // Bright green
-                            0xfeca57, // Bright yellow
-                            0xff9ff3, // Bright pink
-                            0x54a0ff, // Bright sky blue
-                            0x00d2d3, // Bright teal
-                            0xf368e0, // Bright magenta
-                            0xff9f43, // Bright orange
-                            0xee5253, // Bright crimson
-                            0xa29bfe  // Bright purple
-                        ];
+                            // Only color the body material, not the eyes
+                            const isEyeMaterial = child.material.name &&
+                                (child.material.name.toLowerCase().includes('eye') ||
+                                    child.material.name.toLowerCase().includes('pupil'));
 
-                        // Use a hash of the position to get a consistent color for this enemy
-                        const colorIndex = Math.abs(
-                            Math.floor(
-                                (this.position.x * 13 + this.position.z * 17) % brightColors.length
-                            )
-                        );
-                        const enemyColor = brightColors[colorIndex];
-
-                        model.traverse((child) => {
-                            if (child.isMesh) {
-                                // Clone the material to avoid sharing across instances
-                                child.material = child.material.clone();
-
-                                // Only color the body material, not the eyes
-                                const isEyeMaterial = child.material.name &&
-                                    (child.material.name.toLowerCase().includes('eye') ||
-                                        child.material.name.toLowerCase().includes('pupil'));
-
-                                if (!isEyeMaterial) {
-                                    // Force set the color - ensure it's applied
-                                    child.material.color.setHex(enemyColor);
-                                    // Make sure the material is not transparent
-                                    child.material.transparent = false;
-                                    child.material.opacity = 1.0;
-                                    // Ensure the material is updated
-                                    child.material.needsUpdate = true;
-                                }
-
-                                // Enable shadows
-                                child.castShadow = true;
-                                child.receiveShadow = true;
+                            if (!isEyeMaterial) {
+                                // Force set the color - ensure it's applied
+                                child.material.color.setHex(enemyColor);
+                                // Make sure the material is not transparent
+                                child.material.transparent = false;
+                                child.material.opacity = 1.0;
+                                // Ensure the material is updated
+                                child.material.needsUpdate = true;
                             }
-                        });
 
-                        // Store the enemy color for projectiles to use
-                        this.color = enemyColor;
+                            // Enable shadows
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
 
-                        // Log the color used for debugging
-                        console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
+                    // Store the enemy color for projectiles to use
+                    this.color = enemyColor;
 
-                        // Set the model's position
-                        model.position.copy(this.position);
+                    // Log the color used for debugging
+                    console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
 
-                        // Rotate the model to face forward
-                        model.rotation.set(0, Math.PI, 0);
+                    // Set the model's position - IMPORTANT: We need to adjust the position to account 
+                    // for the offset that will be applied in the update method (-1.0 in Y)
+                    // The physics body will be at this.position.y + 1.0, and the mesh will be 
+                    // shown at physicsBody.y - 1.0, so we need to set the initial mesh position
+                    // at exactly this.position.y
+                    model.position.copy(this.position);
 
-                        // Set the new model as the mesh
-                        this.mesh = model;
+                    // Rotate the model to face forward
+                    model.rotation.set(0, Math.PI, 0);
 
-                        // Add the new model to the scene
-                        this.scene.add(this.mesh);
-                        this.modelLoaded = true;
-                        this.isModelLoading = false;
+                    // Set the new model as the mesh
+                    this.mesh = model;
 
-                        // Set up animations
-                        this.setupAnimations(gltf);
+                    // Add the new model to the scene
+                    this.scene.add(this.mesh);
+                    this.modelLoaded = true;
 
-                        console.log("Enemy model loaded successfully");
-                    },
-                    // Progress callback
-                    (xhr) => {
-                        console.log(`Enemy model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-                    },
-                    // Error callback
-                    (error) => {
-                        console.error(`Failed to load enemy model from ${modelPath}: ${error.message}`);
-                        // Try next path
-                        tryLoadModel(index + 1);
+                    // CRITICAL: Create physics AFTER model is loaded and positioned
+                    if (!this._physicsCreated) {
+                        this.createPhysics();
+                        this._physicsCreated = true;
                     }
-                );
-            };
 
-            // Start trying paths
-            tryLoadModel(pathIndex);
+                    // Set up animations
+                    this.setupAnimations(gltf);
+
+                    console.log("Enemy model loaded successfully");
+
+                    // Mark loading as complete
+                    this.isModelLoading = false;
+                },
+                // Progress callback
+                (xhr) => {
+                    console.log(`Enemy model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
+                },
+                // Error callback
+                (error) => {
+                    console.error(`Error loading enemy model: ${error.message || error}`);
+                    this.isModelLoading = false;
+                }
+            );
         } catch (err) {
-            console.error('Exception while loading enemy model:', err);
+            console.error(`Error in enemy loadModel: ${err.message || err}`);
             this.isModelLoading = false;
         }
     }
@@ -228,87 +208,87 @@ export class Enemy {
             return;
         }
 
-        // Create animation mixer
+        console.log(`Setting up ${gltf.animations.length} animations for enemy`);
+
+        // Create a new animation mixer
         this.mixer = new THREE.AnimationMixer(this.mesh);
 
-        console.log(`Enemy GLTF contains ${gltf.animations.length} animations:`);
-        gltf.animations.forEach((anim, index) => {
-            console.log(`Enemy animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
-        });
-
-        // Clear any existing animations
+        // Initialize collections
         this.animations = {};
         this.animationActions = {};
 
-        // Define the expected animation names
-        const animationNames = [
-            'strafeLeft',    // 0
-            'attack',        // 1
-            'idle',          // 2
-            'jump',          // 3
-            'strafeRight',   // 4
-            'walkBackward',  // 5
-            'walkForward'    // 6
-        ];
+        // Log available animations
+        gltf.animations.forEach((anim, index) => {
+            console.log(`Enemy animation ${index}: "${anim.name}"`);
+        });
 
-        // Map animations directly by index
-        for (let i = 0; i < Math.min(gltf.animations.length, animationNames.length); i++) {
-            const name = animationNames[i];
-            const clip = gltf.animations[i];
+        // Process all animations with proper normalization
+        gltf.animations.forEach(clip => {
+            // Store with original name
+            this.animations[clip.name] = clip;
+            this.animationActions[clip.name] = this.mixer.clipAction(clip);
 
-            if (clip) {
-                console.log(`Mapping enemy animation ${i}: ${clip.name} -> ${name}`);
-                this.animations[name] = clip;
-                this.animationActions[name] = this.mixer.clipAction(clip);
+            // Also store with lowercase name for case-insensitive lookup
+            const lowerName = clip.name.toLowerCase();
+            if (lowerName !== clip.name) {
+                this.animations[lowerName] = clip;
+                this.animationActions[lowerName] = this.mixer.clipAction(clip);
             }
-        }
+        });
 
-        // Start with idle animation
-        if (this.animations.idle && this.animationActions.idle) {
-            this.animationActions.idle.play();
-            this.currentAnimation = 'idle';
-            this.currentAction = this.animationActions.idle;
-        } else {
-            console.warn("No idle animation found for enemy");
+        // Try to play idle animation with different possible names
+        const idleAnimationNames = ['idle', 'Idle', 'IDLE'];
+        for (const name of idleAnimationNames) {
+            if (this.animations[name]) {
+                this.playAnimation(name);
+                console.log(`Started enemy animation: ${name}`);
+                break;
+            }
         }
     }
 
     playAnimation(name) {
-        // Skip if the model isn't loaded or we don't have a mixer or mesh
+        // Don't attempt to play animations until everything is loaded
         if (!this.modelLoaded || !this.mixer || !this.mesh) {
-            // Silently return until everything is ready
             return;
         }
 
-        // Skip if we're already playing this animation
-        if (this.currentAnimation === name) {
-            return;
+        // Try to find the animation with case-insensitive lookup
+        let animName = name;
+        if (!this.animations[name] || !this.animationActions[name]) {
+            // Try lowercase version
+            const lowerName = name.toLowerCase();
+            if (this.animations[lowerName] && this.animationActions[lowerName]) {
+                animName = lowerName;
+            } else {
+                // Only log once per enemy for better performance
+                console.warn(`Animation '${name}' not found for enemy. Available: ${Object.keys(this.animations).join(', ')}`);
+                return;
+            }
         }
 
-        // Get the action for this animation
-        const action = this.animationActions[name];
-
-        // If action doesn't exist, silently return
-        if (!action) {
-            return;
-        }
+        // Don't restart the same animation
+        if (this.currentAnimation === animName) return;
 
         try {
-            // If we were playing a different animation, stop it
+            // If we have a current action, fade it out
             if (this.currentAction) {
                 this.currentAction.fadeOut(0.2);
             }
 
-            // Play the new animation
+            // Get the new action
+            const action = this.animationActions[animName];
+
+            // Reset and play the new action
             action.reset();
             action.fadeIn(0.2);
             action.play();
 
-            // Update current animation tracking
+            // Update current animation and action
+            this.currentAnimation = animName;
             this.currentAction = action;
-            this.currentAnimation = name;
         } catch (err) {
-            console.error(`Error playing animation ${name}:`, err);
+            console.error(`Error playing enemy animation '${animName}':`, err);
         }
     }
 
@@ -358,51 +338,66 @@ export class Enemy {
 
     createPhysics() {
         try {
-            // Create physics shape
-            const shape = new Ammo.btCapsuleShape(0.5, 1);
+            console.log('Creating enemy physics');
 
-            // Create transform with proper position - adjust Y position to match player
+            // Create physics body for enemy with same approach as player
+            const shape = new Ammo.btCapsuleShape(0.5, 1);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
-            transform.setOrigin(new Ammo.btVector3(
-                this.position.x,
-                this.position.y + 1.0, // Add offset to match player physics body
-                this.position.z
-            ));
 
-            // Create motion state
-            const motionState = new Ammo.btDefaultMotionState(transform);
+            // Position the physics body to match the mesh
+            // IMPORTANT: The physics body needs to be offset by +1.0 in Y from the mesh
+            // because we'll apply a -1.0 offset when updating the mesh position from physics
+            const posX = this.mesh ? this.mesh.position.x : this.position.x;
+            const posY = this.mesh ? this.mesh.position.y : this.position.y;
+            const posZ = this.mesh ? this.mesh.position.z : this.position.z;
 
-            // Set mass and inertia
-            const mass = 70;
+            // Add height offset +1.0 to match the player's logic
+            transform.setOrigin(new Ammo.btVector3(posX, posY + 1.0, posZ));
+
+            // Log the actual positions for debugging
+            console.log(`Creating enemy physics - Mesh position: ${posX}, ${posY}, ${posZ}`);
+            console.log(`Creating enemy physics - Body position: ${posX}, ${posY + 1.0}, ${posZ}`);
+
+            // Use exactly same mass as player (1)
+            const mass = 1;
             const localInertia = new Ammo.btVector3(0, 0, 0);
             shape.calculateLocalInertia(mass, localInertia);
 
-            // Create rigid body
+            const motionState = new Ammo.btDefaultMotionState(transform);
             const rbInfo = new Ammo.btRigidBodyConstructionInfo(
                 mass, motionState, shape, localInertia
             );
-            const body = new Ammo.btRigidBody(rbInfo);
 
-            // Set friction and restitution
-            body.setFriction(0.5);
-            body.setRestitution(0);
+            this.body = new Ammo.btRigidBody(rbInfo);
+            this.body.setFriction(0.5);
+            this.body.setRestitution(0.2);
 
-            // Prevent tipping over - lock rotation like player
-            body.setAngularFactor(new Ammo.btVector3(0, 0, 0));
+            // Prevent enemy from tipping over (same as player)
+            this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0));
 
-            // Set linear damping to prevent excessive sliding
-            body.setDamping(0.1, 0.1);
+            // Set linear damping (same as player)
+            this.body.setDamping(0.1, 0.1);
 
-            // Add to physics world
-            this.physicsWorld.addRigidBody(body);
-            this.body = body;
+            // CRITICAL: Set same flags as player to ensure consistent physics behavior
+            this.body.setFlags(this.body.getFlags() | 2); // CF_CHARACTER_OBJECT flag
+
+            // Activate the body
+            this.body.activate(true);
+
+            // Initialize canJump as false until ground check is successful
+            this.canJump = false;
+
+            // Add the body to physics world
+            this.physicsWorld.addRigidBody(this.body);
+
+            console.log(`Enemy physics created successfully`);
 
             // Clean up Ammo.js objects
             Ammo.destroy(rbInfo);
             Ammo.destroy(localInertia);
         } catch (err) {
-            console.error('Error creating enemy physics', err);
+            console.error('Error creating enemy physics:', err);
         }
     }
 
@@ -496,36 +491,54 @@ export class Enemy {
         if (!this.mesh || !this.body) return;
 
         try {
-            // Update mesh position based on physics
             // Check if Ammo is available before proceeding
             if (typeof Ammo === 'undefined') {
                 console.warn("Ammo is not defined in Enemy update");
                 return;
             }
 
-            const ms = this.body.getMotionState();
-            if (ms) {
-                try {
+            // Update mesh position based on physics body position
+            try {
+                const ms = this.body.getMotionState();
+                if (ms) {
                     const transform = new Ammo.btTransform();
                     ms.getWorldTransform(transform);
 
-                    // Make sure transform is valid before using it
                     if (transform) {
                         const p = transform.getOrigin();
 
-                        // Safety check for position coordinates
-                        if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
-                            // Update mesh position with the offset for the model
-                            // Use the same offset as the player (-1.0)
-                            this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                        if (p && typeof p.x === 'function') {
+                            // Exactly match player's position update with the -1.0 Y offset
+                            const physX = p.x();
+                            const physY = p.y();
+                            const physZ = p.z();
+
+                            // Update mesh position with consistent offset
+                            this.mesh.position.set(physX, physY - 1.0, physZ);
+
+                            // Log position occasionally for debugging
+                            if (Math.random() < 0.002) {
+                                console.log(`Enemy physics body: x=${physX.toFixed(2)}, y=${physY.toFixed(2)}, z=${physZ.toFixed(2)}`);
+                                console.log(`Enemy mesh position: x=${this.mesh.position.x.toFixed(2)}, y=${this.mesh.position.y.toFixed(2)}, z=${this.mesh.position.z.toFixed(2)}`);
+                            }
                         }
                     }
-                } catch (physicsError) {
-                    console.error("Physics transform error in enemy update:", physicsError);
                 }
+            } catch (physicsError) {
+                console.error("Physics transform error in enemy update:", physicsError);
             }
 
-            // Update animation mixer
+            // Always keep the body active
+            this.body.activate(true);
+
+            // Check ground contact (update canJump)
+            try {
+                this.checkGroundContact();
+            } catch (groundError) {
+                console.error("Ground contact check error:", groundError);
+            }
+
+            // Update animation mixer if available
             if (this.mixer && deltaTime) {
                 try {
                     this.mixer.update(deltaTime);
@@ -534,8 +547,8 @@ export class Enemy {
                 }
             }
 
-            // Only update health bar if we have the necessary properties
-            if (this.healthBarContainer && this.healthBar && this.mesh) {
+            // Update health bar UI if needed
+            if (this.healthBarContainer && this.healthBar) {
                 try {
                     this.updateHealthBar();
                 } catch (uiError) {
@@ -543,14 +556,7 @@ export class Enemy {
                 }
             }
 
-            // Check if on ground before attempting to jump
-            try {
-                this.checkGroundContact();
-            } catch (groundError) {
-                console.error("Ground contact check error:", groundError);
-            }
-
-            // Update AI behavior
+            // Update AI behavior - this handles movements
             try {
                 this.updateAI(deltaTime);
             } catch (aiError) {
@@ -567,10 +573,17 @@ export class Enemy {
         // Track if we're moving this frame
         let isMoving = false;
 
+        // Apply gravity if enemy is not on ground
+        if (!this.canJump && this.body) {
+            const gravity = new Ammo.btVector3(0, -20, 0);
+            this.body.applyCentralForce(gravity);
+            Ammo.destroy(gravity);
+        }
+
         // Find all potential targets (player and other enemies)
         const targets = [];
 
-        // Add player if available (no special priority)
+        // Add player if available
         if (window.game && window.game.player && !window.game.player.isDead) {
             targets.push(window.game.player);
         }
@@ -584,7 +597,7 @@ export class Enemy {
             });
         }
 
-        // Find the closest target - no player preference
+        // Find the closest target
         let closestTarget = null;
         let closestDistance = Infinity;
 
@@ -619,6 +632,7 @@ export class Enemy {
 
                 // Occasionally jump to avoid shots - only if on ground
                 if (this.canJump && now - this.lastJumpTime > this.jumpCooldown && Math.random() < 0.05) {
+                    console.log("Enemy attempting jump during combat");
                     this.jump();
                     this.lastJumpTime = now;
                 }
@@ -631,6 +645,7 @@ export class Enemy {
                 // Occasionally jump while moving - only if on ground
                 const now = Date.now();
                 if (this.canJump && now - this.lastJumpTime > this.jumpCooldown && Math.random() < 0.02) {
+                    console.log("Enemy attempting jump while moving to target");
                     this.jump();
                     this.lastJumpTime = now;
                 }
@@ -653,37 +668,50 @@ export class Enemy {
     }
 
     jump() {
-        if (this.isJumping || !this.canJump) return;
-
-        this.isJumping = true;
-        this.playAnimation('jump');
-
-        // Set jump velocity directly instead of applying force
-        if (this.body) {
-            this.body.activate(true);
-
-            // Get current velocity to preserve horizontal components
-            const velocity = this.body.getLinearVelocity();
-            const currentVelX = velocity.x();
-            const currentVelZ = velocity.z();
-
-            // Set velocity directly for jumping
-            const jumpVelocity = new Ammo.btVector3(
-                currentVelX,
-                10.0, // Upward velocity for jump
-                currentVelZ
-            );
-
-            this.body.setLinearVelocity(jumpVelocity);
-            Ammo.destroy(jumpVelocity);
+        if (this.isJumping || !this.canJump) {
+            console.log('Jump requested but enemy already jumping or not on ground');
+            return;
         }
 
-        // Reset jump state after animation completes
-        const jumpDuration = this.animations.jump ?
-            (this.animations.jump.duration * 1000) : 833;
+        console.log('Enemy JUMP INITIATED - Playing jump animation');
+        this.isJumping = true;
 
+        // Play the jump animation first
+        this.playAnimation('jump');
+
+        // Apply physics for the jump with a slight delay to match animation
+        setTimeout(() => {
+            if (this.body) {
+                this.body.activate(true);
+
+                // Get current velocity to preserve horizontal components
+                const velocity = this.body.getLinearVelocity();
+                const currentVelX = velocity.x();
+                const currentVelZ = velocity.z();
+
+                // Set velocity directly instead of applying force
+                const jumpVelocity = new Ammo.btVector3(
+                    currentVelX,
+                    10.0, // Upward velocity for jump
+                    currentVelZ
+                );
+
+                this.body.setLinearVelocity(jumpVelocity);
+                Ammo.destroy(jumpVelocity);
+                console.log('Enemy jump velocity set: x=' + currentVelX.toFixed(2) + ', y=10.0, z=' + currentVelZ.toFixed(2));
+            }
+        }, 50); // Small delay to sync with animation start
+
+        // Get exact animation duration from the clip
+        const jumpDuration = this.animations.jump ?
+            (this.animations.jump.duration * 1000) : 833; // 0.833 seconds as fallback
+
+        console.log(`Enemy jump animation duration: ${jumpDuration}ms`);
+
+        // Reset jump state after animation completes
         setTimeout(() => {
             this.isJumping = false;
+            console.log('Enemy jump state reset - enemy can jump again');
         }, jumpDuration);
     }
 
@@ -1074,34 +1102,72 @@ export class Enemy {
 
     // Add ground contact check similar to player
     checkGroundContact() {
+        if (!this.body) return false;
+
         try {
-            // Check if we have a valid physics body and mesh
-            if (!this.body || !this.mesh) return false;
+            // Check if Ammo is defined
+            if (typeof Ammo === 'undefined') {
+                console.error('Ammo is not defined in checkGroundContact');
+                return false;
+            }
 
-            // Get the current position
+            // Make sure the body has getWorldTransform
+            if (typeof this.body.getWorldTransform !== 'function') {
+                console.error('Enemy body missing getWorldTransform method');
+                return false;
+            }
+
+            // Cast a ray downward from the enemy's position to check for ground
             const transform = this.body.getWorldTransform();
+            if (!transform) {
+                console.error('Invalid transform in checkGroundContact');
+                return false;
+            }
+
             const origin = transform.getOrigin();
-            const position = new THREE.Vector3(origin.x(), origin.y(), origin.z());
+            if (!origin || typeof origin.x !== 'function') {
+                console.error('Invalid origin in checkGroundContact');
+                return false;
+            }
 
-            // Create a ray cast from slightly above current position downward
-            const raySource = new Ammo.btVector3(position.x, position.y - 0.05, position.z);
-            const rayTarget = new Ammo.btVector3(position.x, position.y - 1.1, position.z);
-            const rayCallback = new Ammo.ClosestRayResultCallback(raySource, rayTarget);
+            // Use the same ray parameters as the player
+            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
+            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
 
-            // Perform the raycast
-            this.physicsWorld.rayTest(raySource, rayTarget, rayCallback);
+            const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
 
-            // Clean up Ammo.js objects
-            Ammo.destroy(raySource);
-            Ammo.destroy(rayTarget);
+            if (!this.physicsWorld || typeof this.physicsWorld.rayTest !== 'function') {
+                console.error('Invalid physicsWorld or missing rayTest method');
+                Ammo.destroy(rayStart);
+                Ammo.destroy(rayEnd);
+                Ammo.destroy(rayCallback);
+                return false;
+            }
 
-            // Check if the ray hit something
-            const hasContact = rayCallback.hasHit();
+            this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+
+            // If the ray hit something, the enemy is on the ground
+            const wasOnGround = this.canJump;
+            this.canJump = rayCallback.hasHit();
+
+            // Log when ground state changes
+            if (wasOnGround !== this.canJump) {
+                if (this.canJump) {
+                    console.log('Enemy touched ground');
+                } else {
+                    console.log('Enemy left ground');
+                }
+            }
+
+            // Clean up Ammo.js objects to prevent memory leaks
+            Ammo.destroy(rayStart);
+            Ammo.destroy(rayEnd);
             Ammo.destroy(rayCallback);
 
-            return hasContact;
+            return this.canJump;
         } catch (err) {
-            console.error('Error in checkGroundContact', err);
+            console.error('Error in checkGroundContact:', err);
+            return false;
         }
     }
 } 

@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { log, error } from '../debug.js';
+import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class Player {
-    constructor(scene, physicsWorld, position = { x: 0, y: 5, z: 0 }) {
+    constructor(scene, physicsWorld, position = GAME_CONFIG.playerStartPosition) {
         this.scene = scene;
         this.physicsWorld = physicsWorld;
         this.position = position;
@@ -22,6 +23,7 @@ export class Player {
         this.canJump = false;
         this.mixerEventAdded = false;
         this._loggedMissingIdle = false;
+        this._physicsCreated = false;
 
         // Create physics body
         this.createPhysics();
@@ -42,60 +44,101 @@ export class Player {
 
     loadModel() {
         try {
-            log('Loading player model');
+            // Create a GLTFLoader
             const loader = new GLTFLoader();
 
-            // Try multiple paths to handle both development and production builds
-            // Order matters - try the most likely paths first
-            const modelPaths = [
-                '/models/blobville-player.glb',  // Standard path
-                '/public/models/blobville-player.glb',  // With public prefix
-                '/dist/models/blobville-player.glb',  // From dist
-                '/dist/models/models/blobville-player.glb'  // Nested models folder
-            ];
+            // Use path from constants file that works in both dev and prod
+            const modelPath = ASSET_PATHS.models.player;
+            console.log(`Loading player model from path: ${modelPath}`);
 
-            let pathIndex = 0;
+            loader.load(
+                modelPath,
+                (gltf) => {
+                    console.log(`Player model loaded successfully from ${modelPath}!`);
+                    // Get the model from the loaded GLTF
+                    const model = gltf.scene;
 
-            const tryLoadModel = (index) => {
-                if (index >= modelPaths.length) {
-                    error('Failed to load player model after trying all paths');
-                    return;
-                }
+                    // Scale the model appropriately
+                    model.scale.set(0.35, 0.35, 0.35);
 
-                const modelPath = modelPaths[index];
-                log(`Trying to load player model from: ${modelPath}`);
+                    // Set the model's position
+                    model.position.copy(this.position);
 
-                loader.load(
-                    modelPath,
-                    (gltf) => {
-                        log(`Player model loaded successfully from ${modelPath}!`);
+                    // Rotate the model to face forward
+                    model.rotation.set(0, Math.PI, 0);
 
-                        // Log all animations in the GLTF file
-                        log(`Player GLTF contains ${gltf.animations.length} animations:`);
+                    // Ensure all meshes cast shadows
+                    model.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+
+                    // Set the new model as the mesh
+                    this.mesh = model;
+
+                    // Add the new model to the scene
+                    this.scene.add(this.mesh);
+                    this.modelLoaded = true;
+
+                    // Set up animations
+                    this.mixer = new THREE.AnimationMixer(model);
+
+                    // Process animations with proper name normalization
+                    if (gltf.animations && gltf.animations.length > 0) {
+                        console.log(`Player model has ${gltf.animations.length} animations:`);
                         gltf.animations.forEach((anim, index) => {
-                            log(`Player animation ${index}: "${anim.name}" (Duration: ${anim.duration}s)`);
+                            console.log(`Animation ${index}: "${anim.name}"`);
                         });
 
-                        this.setupModel(gltf);
-                    },
-                    (xhr) => {
-                        if (xhr.lengthComputable) {
-                            const percent = (xhr.loaded / xhr.total * 100).toFixed(2);
-                            log(`Loading player model: ${percent}%`);
-                        }
-                    },
-                    (err) => {
-                        error(`Failed to load player model from ${modelPath}: ${err.message}`);
-                        // Try next path
-                        tryLoadModel(index + 1);
-                    }
-                );
-            };
+                        // Create a normalized mapping of animations
+                        this.animations = {};
+                        this.animationActions = {};
 
-            // Start trying paths
-            tryLoadModel(pathIndex);
+                        gltf.animations.forEach(anim => {
+                            // Store with original name
+                            this.animations[anim.name] = anim;
+                            this.animationActions[anim.name] = this.mixer.clipAction(anim);
+
+                            // Also store with lowercase name for case-insensitive lookup
+                            const lowerName = anim.name.toLowerCase();
+                            if (lowerName !== anim.name) {
+                                this.animations[lowerName] = anim;
+                                this.animationActions[lowerName] = this.mixer.clipAction(anim);
+                            }
+                        });
+                    } else {
+                        console.warn('No animations found in the player model');
+                    }
+
+                    // Set the initial animation to idle (try multiple variants of the name)
+                    const idleAnimationNames = ['idle', 'Idle', 'IDLE'];
+                    for (const name of idleAnimationNames) {
+                        if (this.animations[name]) {
+                            this.playAnimation(name);
+                            console.log(`Started player animation: ${name}`);
+                            break;
+                        }
+                    }
+
+                    // Create physics only after model is loaded
+                    if (!this._physicsCreated) {
+                        this.createPhysics();
+                        this._physicsCreated = true;
+                    }
+                },
+                // Progress callback
+                (xhr) => {
+                    console.log(`Player model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
+                },
+                // Error callback
+                (error) => {
+                    console.error(`Failed to load player model: ${error.message}`);
+                }
+            );
         } catch (err) {
-            error('Error in loadModel', err);
+            console.error('Exception while loading player model:', err);
         }
     }
 
@@ -236,22 +279,29 @@ export class Player {
             return;
         }
 
-        // Only proceed with valid animation
+        // Try to find the animation with case-insensitive lookup
+        let animName = name;
         if (!this.animations[name] || !this.animationActions[name]) {
-            // Only log once for better performance
-            if (name === 'idle' && !this._loggedMissingIdle) {
-                console.warn('Idle animation not found, animations may not be properly loaded');
-                this._loggedMissingIdle = true;
+            // Try lowercase version
+            const lowerName = name.toLowerCase();
+            if (this.animations[lowerName] && this.animationActions[lowerName]) {
+                animName = lowerName;
+            } else {
+                // Only log once for better performance
+                if (name.toLowerCase() === 'idle' && !this._loggedMissingIdle) {
+                    console.warn(`Idle animation not found, animations may not be properly loaded. Available animations: ${Object.keys(this.animations).join(', ')}`);
+                    this._loggedMissingIdle = true;
+                }
+                return;
             }
-            return;
         }
 
         // Don't restart the same animation unless it's a jump or attack
-        if (this.currentAnimation === name && name !== 'jump' && name !== 'attack') return;
+        if (this.currentAnimation === animName && animName !== 'jump' && animName !== 'attack') return;
 
         try {
             // For attack and jump animations, we want to make sure they complete
-            const isOneShot = (name === 'attack' || name === 'jump');
+            const isOneShot = (animName === 'attack' || animName === 'jump');
 
             // If we have a current action, fade it out
             if (this.currentAction) {
@@ -259,7 +309,7 @@ export class Player {
             }
 
             // Get the new action
-            const action = this.animationActions[name];
+            const action = this.animationActions[animName];
 
             // Reset and play the new action
             action.reset();
@@ -267,10 +317,10 @@ export class Player {
             action.play();
 
             // Update current animation and action
-            this.currentAnimation = name;
+            this.currentAnimation = animName;
             this.currentAction = action;
         } catch (err) {
-            console.error(`Error playing animation '${name}':`, err);
+            console.error(`Error playing animation '${animName}':`, err);
         }
     }
 
