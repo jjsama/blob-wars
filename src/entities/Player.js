@@ -4,7 +4,7 @@ import { log, error } from '../debug.js';
 import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class Player {
-    constructor(scene, physicsWorld, position = GAME_CONFIG.playerStartPosition) {
+    constructor(scene, physicsWorld, position = GAME_CONFIG.playerStartPosition, playerId = null, playerColor = null) {
         this.scene = scene;
         this.physicsWorld = physicsWorld;
         this.position = position;
@@ -24,12 +24,15 @@ export class Player {
         this.mixerEventAdded = false;
         this._loggedMissingIdle = false;
         this._physicsCreated = false;
+        this.playerId = playerId || 'local';
 
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
 
-        // Set a consistent color for the local player (bright teal)
-        this.playerColor = 0x00ffff;
+        // Use the provided color or fallback to teal
+        this.playerColor = playerColor || 0x00d2d3; // Bright teal as default
+
+        log(`Player created with ID: ${this.playerId}, color: ${this.playerColor.toString(16)}`);
 
         // Create physics body
         this.createPhysics();

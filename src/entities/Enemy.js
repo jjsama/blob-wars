@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class Enemy {
-    constructor(scene, physicsWorld, position = null) {
+    constructor(scene, physicsWorld, position = null, color = null) {
         // First, check if scene and physicsWorld are valid
         if (!scene || !physicsWorld) {
             console.error("Enemy constructor called with invalid scene or physicsWorld");
@@ -44,6 +44,9 @@ export class Enemy {
             0, // Always start at ground level
             position.z || 0
         );
+
+        // Store provided color or null (will be assigned in loadModel if null)
+        this.color = color;
 
         // Log initial position for debugging
         console.log(`Enemy initialized at position: x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
@@ -109,27 +112,35 @@ export class Enemy {
                     model.scale.set(0.35, 0.35, 0.35);
 
                     // Apply distinct bright colors to enemies - NO WHITE/GRAY
-                    const brightColors = [
-                        0xff6b6b, // Bright red
-                        0x48dbfb, // Bright blue
-                        0x1dd1a1, // Bright green
-                        0xfeca57, // Bright yellow
-                        0xff9ff3, // Bright pink
-                        0x54a0ff, // Bright sky blue
-                        0x00d2d3, // Bright teal
-                        0xf368e0, // Bright magenta
-                        0xff9f43, // Bright orange
-                        0xee5253, // Bright crimson
-                        0xa29bfe  // Bright purple
-                    ];
+                    let enemyColor;
 
-                    // Use a hash of the position to get a consistent color for this enemy
-                    const colorIndex = Math.abs(
-                        Math.floor(
-                            (this.position.x * 13 + this.position.z * 17) % brightColors.length
-                        )
-                    );
-                    const enemyColor = brightColors[colorIndex];
+                    // Use provided color if available, otherwise generate one
+                    if (this.color) {
+                        enemyColor = this.color;
+                    } else {
+                        // Default color generation logic
+                        const brightColors = [
+                            0xff6b6b, // Bright red
+                            0x48dbfb, // Bright blue
+                            0x1dd1a1, // Bright green
+                            0xfeca57, // Bright yellow
+                            0xff9ff3, // Bright pink
+                            0x54a0ff, // Bright sky blue
+                            0x00d2d3, // Bright teal
+                            0xf368e0, // Bright magenta
+                            0xff9f43, // Bright orange
+                            0xee5253, // Bright crimson
+                            0xa29bfe  // Bright purple
+                        ];
+
+                        // Use a hash of the position to get a consistent color for this enemy
+                        const colorIndex = Math.abs(
+                            Math.floor(
+                                (this.position.x * 13 + this.position.z * 17) % brightColors.length
+                            )
+                        );
+                        enemyColor = brightColors[colorIndex];
+                    }
 
                     model.traverse((child) => {
                         if (child.isMesh) {

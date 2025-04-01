@@ -35,6 +35,9 @@ export class RemotePlayer extends THREE.Object3D {
         // Store the player's assigned color
         this.playerColor = color;
 
+        // Fixed Y-offset to match the physics body height in local player
+        this.modelYOffset = 0.0;
+
         // Load the model immediately
         this.loadModel();
 
@@ -61,8 +64,13 @@ export class RemotePlayer extends THREE.Object3D {
                     // Scale the model appropriately
                     model.scale.set(0.35, 0.35, 0.35);
 
-                    // Set the model's initial position
-                    model.position.copy(this.initialPosition);
+                    // Set the model's initial position with the Y-offset to fix floating issue
+                    const offsetPosition = new THREE.Vector3(
+                        this.initialPosition.x,
+                        this.initialPosition.y -1.0, // Apply -1.0 offset to match local player
+                        this.initialPosition.z
+                    );
+                    model.position.copy(offsetPosition);
 
                     // Rotate the model to face forward
                     model.rotation.set(0, Math.PI, 0);
@@ -243,9 +251,13 @@ export class RemotePlayer extends THREE.Object3D {
             return;
         }
 
-        // Update interpolation targets
+        // Update interpolation targets with y-offset to fix floating model
         this.previousPosition.copy(this.position);
-        this.targetPosition.set(position.x, position.y, position.z);
+        this.targetPosition.set(
+            position.x,
+            position.y - 1.0, // Apply -1.0 offset to match local player
+            position.z
+        );
         this.interpolationFactor = 0;
 
         // Only log position updates occasionally for debugging
@@ -340,6 +352,31 @@ export class RemotePlayer extends THREE.Object3D {
                 }
             }
         }
+
+        // Update nametag position if it exists
+        if (this.nameTag) {
+            this.updateNameTag();
+        }
+    }
+
+    // Update nametag position to follow the player
+    updateNameTag() {
+        if (!this.nameTag || !this.scene.camera) return;
+
+        // Convert 3D position to screen coordinates
+        const vector = new THREE.Vector3();
+        vector.setFromMatrixPosition(this.matrixWorld);
+
+        // Project to screen coordinates
+        vector.project(this.scene.camera);
+
+        // Convert to CSS coordinates
+        const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+        const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 50; // Position above player
+
+        // Update nametag position
+        this.nameTag.style.left = `${x - (this.nameTag.offsetWidth / 2)}px`;
+        this.nameTag.style.top = `${y}px`;
     }
 
     setAnimation(name) {

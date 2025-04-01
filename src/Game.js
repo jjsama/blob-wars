@@ -9,6 +9,7 @@ import { Projectile } from './entities/Projectile.js';
 import { Enemy } from './entities/Enemy.js';
 import { log, error } from './debug.js';
 import { NetworkManager } from './utils/NetworkManager.js';
+import { ColorManager } from './utils/ColorManager.js';
 import { GAME_CONFIG } from './utils/constants.js';
 
 export class Game {
@@ -23,6 +24,9 @@ export class Game {
         this.enemyProjectiles = [];
         this.enemies = [];
         this.previousTime = 0;
+
+        // Create a color manager to handle unique entity colors
+        this.colorManager = new ColorManager();
 
         // Network-related properties
         this.networkManager = new NetworkManager();
@@ -127,9 +131,19 @@ export class Game {
             log('Invisible walls added');
 
             log('Creating player');
-            this.player = new Player(this.scene.scene, this.physics.physicsWorld, { x: 0, y: 5, z: 0 });
+            // Use the network ID if available, otherwise create with default local ID
+            const playerId = this.networkManager.playerId || 'local-' + Math.random().toString(36).substring(2, 9);
+            // Get a unique color for this player
+            const playerColor = this.colorManager.getColorForId(playerId);
+            this.player = new Player(
+                this.scene.scene,
+                this.physics.physicsWorld,
+                { x: 0, y: 5, z: 0 },
+                playerId,
+                playerColor
+            );
             this.physics.registerRigidBody(this.player.mesh, this.player.body);
-            log('Player created');
+            log(`Player created with ID: ${playerId} and color: ${playerColor.toString(16)}`);
 
             // Set up input handlers
             log('Setting up input handlers');
@@ -142,16 +156,14 @@ export class Game {
             this.animate();
             log('Animation loop started');
 
-            // Spawn enemies for single-player mode, but only if not in multiplayer mode
-            if (!this.isMultiplayer) {
-                this.spawnEnemies(5);
-            }
-
             // Enable multiplayer and connect to server
             this.isMultiplayer = true;
             log('Enabling multiplayer mode');
             log('Initializing network connection (non-blocking)');
-            this.initNetworkAsync();
+            await this.initNetworkAsync();
+
+            // Initialize bots to fill up to 12 slots
+            this.adjustBotCount();
 
             log('Game initialization complete');
         } catch (err) {
@@ -206,6 +218,38 @@ export class Game {
             log(`Player connected: ${data.id}`);
             if (data.id === this.networkManager.playerId) {
                 log('Received our player ID from server');
+
+                // Update player color with the network ID if we have a player already created
+                if (this.player) {
+                    // If we already have a local player with a temporary ID
+                    if (this.player.playerId !== data.id) {
+                        // Release the old color associated with the temporary ID
+                        this.colorManager.releaseColor(this.player.playerId);
+
+                        // Update player ID
+                        this.player.playerId = data.id;
+
+                        // Always get a fresh new color for the real network ID
+                        const playerColor = this.colorManager.getNewColorForId(data.id);
+                        log(`Updating local player color to ${playerColor.toString(16)} based on ID: ${data.id}`);
+
+                        // Update player color and refresh the model
+                        this.player.playerColor = playerColor;
+                        if (this.player.mesh) {
+                            this.player.mesh.traverse((child) => {
+                                if (child.isMesh) {
+                                    // Skip eyes
+                                    if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
+                                        child.material.color.setHex(playerColor);
+                                        child.material.emissive = new THREE.Color(playerColor);
+                                        child.material.emissiveIntensity = 0.2;
+                                        child.material.needsUpdate = true;
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
             }
         });
 
@@ -394,22 +438,8 @@ export class Game {
             this.removeRemotePlayer(id);
         }
 
-        // Generate a distinct color for this remote player based on their ID
-        const colors = [
-            0xff0000, // Red
-            0x00ff00, // Green
-            0x0000ff, // Blue
-            0xffff00, // Yellow
-            0xff00ff, // Magenta
-            0x00ffff  // Cyan
-        ];
-
-        // Use a hash of the ID to get a consistent color
-        const colorIndex = Math.abs(id.split('').reduce(
-            (acc, char) => acc + char.charCodeAt(0), 0
-        ) % colors.length);
-
-        const playerColor = colors[colorIndex];
+        // Get a unique color for this remote player from the color manager
+        const playerColor = this.colorManager.getColorForId(id);
         log(`Assigning color ${playerColor.toString(16)} to remote player ${id}`);
 
         // Create a new RemotePlayer instance
@@ -427,6 +457,9 @@ export class Game {
         this.remotePlayers[id] = remotePlayer;
 
         log(`Remote player ${id} added successfully`);
+
+        // Adjust bot count when a new player joins
+        this.adjustBotCount();
 
         return remotePlayer;
     }
@@ -513,10 +546,16 @@ export class Game {
             // Use the RemotePlayer's built-in removal method
             remotePlayer.remove();
 
+            // Release the color so it can be reused
+            this.colorManager.releaseColor(id);
+
             // Remove from our tracking
             delete this.remotePlayers[id];
 
             log(`Remote player ${id} successfully removed`);
+
+            // Adjust bot count when a player leaves
+            this.adjustBotCount();
         }
     }
 
@@ -970,6 +1009,11 @@ export class Game {
 
                     // If enemy died, remove from array
                     if (isDead) {
+                        // Release the enemy's color back to the pool when it dies
+                        if (enemy.id) {
+                            this.colorManager.releaseColor(enemy.id);
+                            log(`Released color for enemy ${enemy.id}`);
+                        }
                         this.enemies.splice(j, 1);
                     }
 
@@ -1312,10 +1356,20 @@ export class Game {
                 // IMPORTANT: Start enemies at a higher position to ensure they have time to fall
                 const y = 15; // Increased from 5 to 15 to ensure they have time to fall and make ground contact
 
-                const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, { x, y, z });
+                // Generate a unique ID for this enemy and get a color from the color manager
+                const enemyId = `enemy-${i}-${Date.now().toString(36)}`;
+                const enemyColor = this.colorManager.getColorForId(enemyId);
+                log(`Assigning color ${enemyColor.toString(16)} to enemy ${i}`);
+
+                // Create enemy with the assigned color
+                const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, { x, y, z }, enemyColor);
+
+                // Store the ID for later reference (useful for color release when enemy dies)
+                enemy.id = enemyId;
+
                 this.enemies.push(enemy);
 
-                log(`Enemy ${i} spawned at position x=${x.toFixed(2)}, y=${y.toFixed(2)}, z=${z.toFixed(2)}`);
+                log(`Enemy ${i} (ID: ${enemyId}) spawned at position x=${x.toFixed(2)}, y=${y.toFixed(2)}, z=${z.toFixed(2)}`);
 
                 // Force immediate activation of physics bodies with stronger initial impulse
                 setTimeout(() => {
@@ -1372,6 +1426,62 @@ export class Game {
             log('Successfully spawned ' + count + ' enemies');
         } catch (err) {
             error('Error spawning enemies:', err);
+        }
+    }
+
+    /**
+     * Adjust the number of bots based on player count to maintain a total of 12 players
+     */
+    adjustBotCount() {
+        // Calculate how many bots we need
+        const totalPlayers = 12; // Target number for deathmatch
+        const connectedPlayerCount = Object.keys(this.remotePlayers).length + 1; // +1 for local player
+        const requiredBotCount = Math.max(0, totalPlayers - connectedPlayerCount);
+
+        // Current bot count
+        const currentBotCount = this.enemies.length;
+
+        log(`Adjusting bot count: ${currentBotCount} bots currently, need ${requiredBotCount} (${connectedPlayerCount} players connected)`);
+
+        // If we need more bots, spawn them
+        if (requiredBotCount > currentBotCount) {
+            const botsToSpawn = requiredBotCount - currentBotCount;
+            log(`Spawning ${botsToSpawn} more bots to reach required ${requiredBotCount}`);
+            this.spawnEnemies(botsToSpawn);
+        }
+        // If we need fewer bots, remove some
+        else if (requiredBotCount < currentBotCount) {
+            const botsToRemove = currentBotCount - requiredBotCount;
+            log(`Removing ${botsToRemove} bots to reach required ${requiredBotCount}`);
+
+            // Remove the oldest bots
+            for (let i = 0; i < botsToRemove; i++) {
+                if (this.enemies.length > 0) {
+                    const enemy = this.enemies.shift(); // Remove the first (oldest) enemy
+
+                    // Release its color
+                    if (enemy.id) {
+                        this.colorManager.releaseColor(enemy.id);
+                    }
+
+                    // Properly remove from scene and physics
+                    if (enemy.mesh) {
+                        this.scene.scene.remove(enemy.mesh);
+                    }
+                    if (enemy.body) {
+                        this.physics.physicsWorld.removeRigidBody(enemy.body);
+                    }
+
+                    // Make sure health bar is removed
+                    if (enemy.healthBarContainer) {
+                        document.body.removeChild(enemy.healthBarContainer);
+                    }
+
+                    log(`Removed bot ${enemy.id || 'unknown'}`);
+                }
+            }
+        } else {
+            log('Bot count is already correct');
         }
     }
 } 
