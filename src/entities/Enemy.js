@@ -76,6 +76,14 @@ export class Enemy {
                 console.error("Failed to create health bar:", error);
             }
         }, 100);
+
+        // Start a timer to ensure enemy starts patrolling even without targets
+        setTimeout(() => {
+            if (this.mesh && this.body && !this.isDead) {
+                console.log("Starting forced patrol behavior");
+                this.setRandomPatrolTarget();
+            }
+        }, 5000); // Start patrolling after 5 seconds
     }
 
     loadModel() {
@@ -179,6 +187,10 @@ export class Enemy {
                     // Set up animations
                     this.setupAnimations(gltf);
 
+                    // Initialize patrol target to start movement immediately
+                    this.setRandomPatrolTarget();
+                    console.log(`Initial patrol target set: x=${this.patrolTarget.x.toFixed(2)}, z=${this.patrolTarget.z.toFixed(2)}`);
+
                     console.log("Enemy model loaded successfully");
 
                     // Mark loading as complete
@@ -217,52 +229,204 @@ export class Enemy {
 
         // Log available animations
         gltf.animations.forEach((anim, index) => {
-            console.log(`Enemy animation ${index}: "${anim.name}"`);
+            // Trim animation names to handle any whitespace issues
+            const trimmedName = anim.name.trim();
+            console.log(`Enemy animation ${index}: "${anim.name}" (trimmed: "${trimmedName}") (duration: ${anim.duration.toFixed(2)}s)`);
         });
 
         // Process all animations with proper normalization
         gltf.animations.forEach(clip => {
-            // Store with original name
-            this.animations[clip.name] = clip;
-            this.animationActions[clip.name] = this.mixer.clipAction(clip);
+            // Trim the animation name to remove any whitespace
+            const trimmedName = clip.name.trim();
+
+            // Store with trimmed name
+            this.animations[trimmedName] = clip;
+            this.animationActions[trimmedName] = this.mixer.clipAction(clip);
+            console.log(`Added animation: "${trimmedName}" (original: "${clip.name}")`);
+
+            // Also store with original name (as a fallback)
+            if (trimmedName !== clip.name) {
+                this.animations[clip.name] = clip;
+                this.animationActions[clip.name] = this.mixer.clipAction(clip);
+                console.log(`Also added original name: "${clip.name}"`);
+            }
 
             // Also store with lowercase name for case-insensitive lookup
-            const lowerName = clip.name.toLowerCase();
-            if (lowerName !== clip.name) {
+            const lowerName = trimmedName.toLowerCase();
+            if (lowerName !== trimmedName) {
                 this.animations[lowerName] = clip;
                 this.animationActions[lowerName] = this.mixer.clipAction(clip);
+                console.log(`Also added lowercase variant: "${lowerName}"`);
             }
         });
 
+        // Define the expected animation names (in priority order)
+        const expectedAnimations = [
+            'idle',
+            'walkForward',
+            'walkBackward',
+            'strafeLeft',
+            'strafeRight',
+            'attack',
+            'jump'
+        ];
+
+        // Check which expected animations are missing
+        const missingAnimations = expectedAnimations.filter(name => {
+            // Check all possible variations of the name
+            return !this.animations[name] &&
+                !this.animations[name.toLowerCase()] &&
+                !this.animations[` ${name}`] && // Check with leading space
+                !this.animations[`${name} `];   // Check with trailing space
+        });
+
+        if (missingAnimations.length > 0) {
+            console.warn(`Missing expected animations: ${missingAnimations.join(', ')}`);
+
+            // Try to map missing animations to available ones based on partial name matching
+            const availableNames = Object.keys(this.animations);
+
+            missingAnimations.forEach(missingName => {
+                // Try to find a suitable replacement using more flexible matching
+                const replacement = availableNames.find(available => {
+                    const cleanAvailable = available.trim().toLowerCase();
+                    const cleanMissing = missingName.trim().toLowerCase();
+                    return cleanAvailable.includes(cleanMissing) || cleanMissing.includes(cleanAvailable);
+                });
+
+                if (replacement) {
+                    console.log(`Mapping missing animation "${missingName}" to available "${replacement}"`);
+                    this.animations[missingName] = this.animations[replacement];
+                    this.animationActions[missingName] = this.animationActions[replacement];
+                } else {
+                    // If no specific match found, use a default animation like walkForward
+                    // for leftward movement and walkBackward for rightward movement
+                    if (missingName.toLowerCase().includes('left') && this.animations['walkForward']) {
+                        console.log(`No match found for "${missingName}", defaulting to walkForward`);
+                        this.animations[missingName] = this.animations['walkForward'];
+                        this.animationActions[missingName] = this.animationActions['walkForward'];
+                    } else if (missingName.toLowerCase().includes('right') && this.animations['walkBackward']) {
+                        console.log(`No match found for "${missingName}", defaulting to walkBackward`);
+                        this.animations[missingName] = this.animations['walkBackward'];
+                        this.animationActions[missingName] = this.animationActions['walkBackward'];
+                    } else if (this.animations['idle']) {
+                        // Last resort: use idle animation
+                        console.log(`No match found for "${missingName}", defaulting to idle`);
+                        this.animations[missingName] = this.animations['idle'];
+                        this.animationActions[missingName] = this.animationActions['idle'];
+                    }
+                }
+            });
+        }
+
         // Try to play idle animation with different possible names
-        const idleAnimationNames = ['idle', 'Idle', 'IDLE'];
+        const idleAnimationNames = ['idle', 'Idle', 'IDLE', 'idle '.trim(), ' idle'.trim()];
+        let idleStarted = false;
+
         for (const name of idleAnimationNames) {
             if (this.animations[name]) {
                 this.playAnimation(name);
                 console.log(`Started enemy animation: ${name}`);
+                idleStarted = true;
                 break;
             }
+        }
+
+        // If no idle animation was found, try to use the first available animation
+        if (!idleStarted && Object.keys(this.animations).length > 0) {
+            const firstAnim = Object.keys(this.animations)[0];
+            console.log(`No idle animation found, using first available animation: ${firstAnim}`);
+            this.playAnimation(firstAnim);
         }
     }
 
     playAnimation(name) {
         // Don't attempt to play animations until everything is loaded
         if (!this.modelLoaded || !this.mixer || !this.mesh) {
+            console.log(`Cannot play animation '${name}': model not fully loaded`);
             return;
         }
 
         // Try to find the animation with case-insensitive lookup
         let animName = name;
-        if (!this.animations[name] || !this.animationActions[name]) {
-            // Try lowercase version
-            const lowerName = name.toLowerCase();
-            if (this.animations[lowerName] && this.animationActions[lowerName]) {
-                animName = lowerName;
-            } else {
-                // Only log once per enemy for better performance
-                console.warn(`Animation '${name}' not found for enemy. Available: ${Object.keys(this.animations).join(', ')}`);
-                return;
+        let animation = null;
+        let action = null;
+
+        // First check exact match
+        if (this.animations[name] && this.animationActions[name]) {
+            animation = this.animations[name];
+            action = this.animationActions[name];
+        }
+        // Then try lowercase
+        else if (this.animations[name.toLowerCase()] && this.animationActions[name.toLowerCase()]) {
+            animName = name.toLowerCase();
+            animation = this.animations[animName];
+            action = this.animationActions[animName];
+            console.log(`Found animation using lowercase name: '${animName}'`);
+        }
+        // Then try trimmed version
+        else if (this.animations[name.trim()] && this.animationActions[name.trim()]) {
+            animName = name.trim();
+            animation = this.animations[animName];
+            action = this.animationActions[animName];
+            console.log(`Found animation using trimmed name: '${animName}'`);
+        }
+        // Then try trimmed lowercase
+        else if (this.animations[name.trim().toLowerCase()] && this.animationActions[name.trim().toLowerCase()]) {
+            animName = name.trim().toLowerCase();
+            animation = this.animations[animName];
+            action = this.animationActions[animName];
+            console.log(`Found animation using trimmed lowercase name: '${animName}'`);
+        }
+        // Fallback to similar animation name
+        else {
+            // Check if there's any animation containing the requested name
+            const animKeys = Object.keys(this.animations);
+            const foundKey = animKeys.find(key =>
+                key.toLowerCase().includes(name.toLowerCase()) ||
+                name.toLowerCase().includes(key.toLowerCase())
+            );
+
+            if (foundKey) {
+                animName = foundKey;
+                animation = this.animations[foundKey];
+                action = this.animationActions[foundKey];
+                console.log(`Found similar animation: '${foundKey}' for requested '${name}'`);
             }
+            // Last resort - try to use a default
+            else {
+                // Use appropriate defaults based on animation type
+                if (name.toLowerCase().includes('idle') && this.animations['idle']) {
+                    animName = 'idle';
+                } else if ((name.toLowerCase().includes('walk') || name.toLowerCase().includes('forward')) && this.animations['walkForward']) {
+                    animName = 'walkForward';
+                } else if (name.toLowerCase().includes('back') && this.animations['walkBackward']) {
+                    animName = 'walkBackward';
+                } else if (name.toLowerCase().includes('left') && this.animations['strafeLeft']) {
+                    animName = 'strafeLeft';
+                } else if (name.toLowerCase().includes('right') && this.animations['strafeRight']) {
+                    animName = 'strafeRight';
+                } else if (name.toLowerCase().includes('attack') && this.animations['attack']) {
+                    animName = 'attack';
+                } else if (name.toLowerCase().includes('jump') && this.animations['jump']) {
+                    animName = 'jump';
+                } else if (animKeys.length > 0) {
+                    // Use first available as last resort
+                    animName = animKeys[0];
+                } else {
+                    console.error(`No animations available for enemy`);
+                    return;
+                }
+
+                animation = this.animations[animName];
+                action = this.animationActions[animName];
+                console.log(`Using fallback animation '${animName}' for requested '${name}'`);
+            }
+        }
+
+        if (!animation || !action) {
+            console.error(`Failed to find animation '${name}' or create action`);
+            return;
         }
 
         // Don't restart the same animation
@@ -274,13 +438,12 @@ export class Enemy {
                 this.currentAction.fadeOut(0.2);
             }
 
-            // Get the new action
-            const action = this.animationActions[animName];
-
             // Reset and play the new action
             action.reset();
             action.fadeIn(0.2);
             action.play();
+
+            console.log(`Successfully playing animation '${animName}'`);
 
             // Update current animation and action
             this.currentAnimation = animName;
@@ -306,27 +469,32 @@ export class Enemy {
             strafeDir.multiplyScalar(-1);
         }
 
-        // Set velocity directly instead of applying force
-        this.body.activate(true);
+        // Log strafing info
+        console.log(`Enemy strafing around target: dir=(${strafeDir.x.toFixed(2)}, ${strafeDir.z.toFixed(2)})`);
 
         // Get current velocity to preserve Y component
         const velocity = this.body.getLinearVelocity();
         const currentVelY = velocity.y();
 
-        // Set constant velocity directly
+        // Use a fixed speed for consistency
+        const STRAFE_SPEED = 8;
+
+        // Set velocity directly
         const newVelocity = new Ammo.btVector3(
-            strafeDir.x * this.maxVelocity,
+            strafeDir.x * STRAFE_SPEED,
             currentVelY,
-            strafeDir.z * this.maxVelocity
+            strafeDir.z * STRAFE_SPEED
         );
 
+        // Apply the velocity and activate the body
         this.body.setLinearVelocity(newVelocity);
+        this.body.activate(true);
         Ammo.destroy(newVelocity);
 
         // Face the target while strafing
         this.lookAt(targetPos);
 
-        // Play appropriate strafe animation
+        // Play appropriate strafe animation based on direction
         if (strafeDir.x > 0) {
             this.playAnimation('strafeRight');
         } else {
@@ -343,7 +511,7 @@ export class Enemy {
             const transform = new Ammo.btTransform();
             transform.setIdentity();
 
-            // Position the physics body directly above the mesh (at mesh position + 1.0 in Y)
+            // Position the physics body directly above the mesh
             const posX = this.mesh ? this.mesh.position.x : this.position.x;
             const posY = this.mesh ? this.mesh.position.y : 0; // Default to ground level
             const posZ = this.mesh ? this.mesh.position.z : this.position.z;
@@ -368,11 +536,11 @@ export class Enemy {
 
             this.body = new Ammo.btRigidBody(rbInfo);
 
-            // Match player physics properties exactly
-            this.body.setFriction(0.5);
+            // CRITICAL: Reduce friction and damping even more to ensure smooth movement
+            this.body.setFriction(0.05);       // Reduced from 0.1
             this.body.setRestitution(0.2);
             this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0)); // No rotation
-            this.body.setDamping(0.1, 0.1); // Same damping as player
+            this.body.setDamping(0.0, 0.0);    // No damping
             this.body.setFlags(this.body.getFlags() | 2); // CF_CHARACTER_OBJECT flag
 
             // Apply initial downward impulse to help it settle
@@ -394,6 +562,21 @@ export class Enemy {
             // Clean up Ammo.js objects
             Ammo.destroy(rbInfo);
             Ammo.destroy(localInertia);
+
+            // Apply a larger initial force in a random direction to start movement immediately
+            setTimeout(() => {
+                if (this.body) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const startImpulse = new Ammo.btVector3(
+                        Math.cos(angle) * 30, // Increased from 10 to 30
+                        0,
+                        Math.sin(angle) * 30  // Increased from 10 to 30
+                    );
+                    this.body.applyCentralImpulse(startImpulse);
+                    Ammo.destroy(startImpulse);
+                    console.log(`Applied initial impulse to start enemy movement`);
+                }
+            }, 500);
         } catch (err) {
             console.error('Error creating enemy physics:', err);
         }
@@ -526,10 +709,8 @@ export class Enemy {
                 console.error("Physics transform error in enemy update:", physicsError);
             }
 
-            // Always keep the body active when above ground level
-            if (this.mesh.position.y > 0.1) {
-                this.body.activate(true);
-            }
+            // Always keep the body active 
+            this.body.activate(true);
 
             // Check ground contact (update canJump)
             try {
@@ -538,12 +719,10 @@ export class Enemy {
                 console.error("Ground contact check error:", groundError);
             }
 
-            // Apply stronger gravity if needed
-            if (this.mesh.position.y > 0.5) {
-                const gravity = new Ammo.btVector3(0, -80, 0); // Increased gravity
-                this.body.applyCentralForce(gravity);
-                Ammo.destroy(gravity);
-            }
+            // Apply constant gravity for consistent behavior
+            const gravity = new Ammo.btVector3(0, -60, 0);
+            this.body.applyCentralForce(gravity);
+            Ammo.destroy(gravity);
 
             // Update animation mixer if available
             if (this.mixer && deltaTime) {
@@ -577,105 +756,48 @@ export class Enemy {
     updateAI(deltaTime) {
         if (this.isDead) return;
 
+        // Don't attempt to run AI if the mesh or body aren't ready
+        if (!this.mesh || !this.body) {
+            return;
+        }
+
         // Track if we're moving this frame
         let isMoving = false;
 
-        // Apply gravity regardless of ground contact initially
-        // until the enemy has touched the ground at least once
-        const shouldApplyGravity = !this.canJump || this.mesh.position.y > 0.5;
-
+        // Always apply gravity
         if (this.body) {
-            // Always apply gravity
             const gravity = new Ammo.btVector3(0, -60, 0);
             this.body.applyCentralForce(gravity);
             Ammo.destroy(gravity);
         }
 
-        // Find all potential targets (player and other enemies)
-        const targets = [];
-
-        // Add player if available
-        if (window.game && window.game.player && !window.game.player.isDead) {
-            targets.push(window.game.player);
+        // CRITICAL: Make sure we have a valid patrol target
+        if (!this.patrolTarget || !(this.patrolTarget instanceof THREE.Vector3) ||
+            (this.patrolTarget.x === 0 && this.patrolTarget.z === 0)) {
+            this.setRandomPatrolTarget();
         }
 
-        // Add other enemies
-        if (window.game && window.game.enemies) {
-            window.game.enemies.forEach(enemy => {
-                if (enemy !== this && !enemy.isDead) {
-                    targets.push(enemy);
-                }
-            });
+        // Force patrol logging to debug
+        if (Math.random() < 0.2) { // Increased from 0.1 to 0.2
+            const distToTarget = this.mesh.position.distanceTo(this.patrolTarget);
+            console.log(`Patrol info: distance to target=${distToTarget.toFixed(2)}, target pos=(${this.patrolTarget.x.toFixed(2)}, ${this.patrolTarget.z.toFixed(2)})`);
         }
 
-        // Find the closest target
-        let closestTarget = null;
-        let closestDistance = Infinity;
+        // CRITICAL: Always move toward patrol target
+        this.moveTowardWithForce(this.patrolTarget, 5);
+        isMoving = true;
 
-        targets.forEach(target => {
-            if (!target.getPosition) return;
-
-            const targetPos = target.getPosition();
-            const distance = this.mesh.position.distanceTo(targetPos);
-
-            if (distance < closestDistance && distance < this.detectionRange) {
-                closestTarget = target;
-                closestDistance = distance;
-            }
-        });
-
-        // If we have a target in range
-        if (closestTarget) {
-            const targetPos = closestTarget.getPosition();
-
-            // If in attack range, attack and strafe
-            if (closestDistance < this.attackRange) {
-                // Attack if cooldown has passed
-                const now = Date.now();
-                if (now - this.lastAttackTime > this.attackCooldown) {
-                    this.attack(targetPos);
-                    this.lastAttackTime = now;
-                }
-
-                // Strafe around target
-                this.strafeAroundTarget(targetPos);
-                isMoving = true;
-
-                // Occasionally jump to avoid shots - only if on ground
-                if (this.canJump && now - this.lastJumpTime > this.jumpCooldown && Math.random() < 0.05) {
-                    console.log("Enemy attempting jump during combat");
-                    this.jump();
-                    this.lastJumpTime = now;
-                }
-            }
-            // If target is in sight but not in attack range, move toward it
-            else {
-                this.moveTowardWithForce(targetPos, this.moveSpeed);
-                isMoving = true;
-
-                // Occasionally jump while moving - only if on ground
-                const now = Date.now();
-                if (this.canJump && now - this.lastJumpTime > this.jumpCooldown && Math.random() < 0.02) {
-                    console.log("Enemy attempting jump while moving to target");
-                    this.jump();
-                    this.lastJumpTime = now;
-                }
-            }
-        }
-        // No target in range, patrol randomly
-        else {
-            // Check if we need a new patrol target
-            if (!this.patrolTarget || this.mesh.position.distanceTo(this.patrolTarget) < 2 || Math.random() < 0.01) {
-                this.setRandomPatrolTarget();
-            }
-
-            // Move toward patrol target
-            this.moveTowardWithForce(this.patrolTarget, this.moveSpeed * 0.7); // Move slower when patrolling
-            isMoving = true;
+        // Check if we need a new patrol target (more frequently)
+        if (!this.patrolTarget ||
+            this.mesh.position.distanceTo(this.patrolTarget) < 2 ||
+            Math.random() < 0.05) { // Increased from 0.01 to 0.05
+            this.setRandomPatrolTarget();
         }
 
-        // Update animation based on movement
-        this.updateAnimation(isMoving);
+        // Simplified: just play idle animation when not moving
+        if (!isMoving) {
+            this.playAnimation('idle');
+        }
     }
 
     jump() {
@@ -728,13 +850,22 @@ export class Enemy {
 
     setRandomPatrolTarget() {
         // Set a random patrol target within a reasonable range
+        // First make sure the patrolTarget is a valid Vector3
+        if (!this.patrolTarget || !(this.patrolTarget instanceof THREE.Vector3)) {
+            this.patrolTarget = new THREE.Vector3();
+        }
+
+        // Make sure we have a valid mesh position as reference
+        const startPos = this.mesh ? this.mesh.position : this.position;
+
+        // Get random angle and distance for patrol
         const angle = Math.random() * Math.PI * 2;
         const distance = 10 + Math.random() * 30; // 10-40 units away
 
         this.patrolTarget.set(
-            this.mesh.position.x + Math.cos(angle) * distance,
-            this.mesh.position.y,
-            this.mesh.position.z + Math.sin(angle) * distance
+            startPos.x + Math.cos(angle) * distance,
+            startPos.y,
+            startPos.z + Math.sin(angle) * distance
         );
 
         // Ensure the target is within map bounds
@@ -743,6 +874,8 @@ export class Enemy {
 
         this.patrolTarget.x = Math.max(-halfMap, Math.min(halfMap, this.patrolTarget.x));
         this.patrolTarget.z = Math.max(-halfMap, Math.min(halfMap, this.patrolTarget.z));
+
+        console.log(`New patrol target set: x=${this.patrolTarget.x.toFixed(2)}, y=${this.patrolTarget.y.toFixed(2)}, z=${this.patrolTarget.z.toFixed(2)}`);
     }
 
     attack(targetPos) {
@@ -1007,108 +1140,52 @@ export class Enemy {
         }
     }
 
-    // Update the moveToward method to use the lookAt method
-    moveToward(targetPosition) {
-        if (!this.body || !this.mesh) return;
-
-        // Calculate direction to target
-        const direction = new THREE.Vector3()
-            .subVectors(targetPosition, this.mesh.position)
-            .normalize();
-
-        // Look at the target
-        this.lookAt(targetPosition);
-
-        // Apply movement force
-        const moveForce = new Ammo.btVector3(
-            direction.x * this.moveSpeed,
-            0,
-            direction.z * this.moveSpeed
-        );
-
-        this.body.activate(true);
-        this.body.applyCentralForce(moveForce);
-        Ammo.destroy(moveForce);
-
-        // Update animation based on movement direction
-        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
-        const dot = direction.dot(forward);
-
-        if (dot > 0.7) {
-            this.playAnimation('walkForward');
-        } else if (dot < -0.7) {
-            this.playAnimation('walkBackward');
-        } else {
-            const cross = new THREE.Vector3().crossVectors(forward, direction);
-            if (cross.y > 0) {
-                this.playAnimation('strafeLeft');
-            } else {
-                this.playAnimation('strafeRight');
-            }
-        }
-    }
-
-    // Improve the updateAnimation method to better handle movement states
-    updateAnimation(isMoving) {
-        // Don't change animations during attack or jump
-        if (this.isAttacking || this.isJumping) return;
-
-        // If not moving, play idle animation
-        if (!isMoving) {
-            this.playAnimation('idle');
-        }
-        // Otherwise, animation is handled in the movement methods
-    }
-
-    // Update the moveTowardWithForce method to use constant velocity
+    // Simplify the moveTowardWithForce method to guarantee movement
     moveTowardWithForce(targetPosition, speed) {
-        if (!this.body || !this.mesh) return;
+        if (!this.body || !this.mesh) {
+            console.log('moveTowardWithForce: Missing body or mesh');
+            return;
+        }
 
         // Calculate direction vector
         const direction = new THREE.Vector3()
             .subVectors(targetPosition, this.mesh.position)
             .normalize();
 
+        // Log the target and current position 
+        if (Math.random() < 0.1) {
+            console.log(`Moving toward target: current=(${this.mesh.position.x.toFixed(2)}, ${this.mesh.position.z.toFixed(2)}), target=(${targetPosition.x.toFixed(2)}, ${targetPosition.z.toFixed(2)})`);
+        }
+
         // Look at the target
         this.lookAt(targetPosition);
 
-        // Get the forward direction of the enemy
-        const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(this.mesh.quaternion);
-
-        // Calculate dot product to determine if moving forward or backward
-        const dot = direction.dot(forward);
-
-        // Set velocity directly - use constant speed
-        this.body.activate(true);
+        // Use a fixed speed value to guarantee movement
+        const FIXED_SPEED = 10;
 
         // Get current velocity to preserve Y component
         const velocity = this.body.getLinearVelocity();
         const currentVelY = velocity.y();
 
-        // Set constant velocity directly
+        // Create velocity vector with explicit values to ensure movement
         const newVelocity = new Ammo.btVector3(
-            direction.x * this.maxVelocity,
+            direction.x * FIXED_SPEED,
             currentVelY,
-            direction.z * this.maxVelocity
+            direction.z * FIXED_SPEED
         );
 
+        // Log velocity info (occasionally)
+        if (Math.random() < 0.05) {
+            console.log(`Setting enemy velocity: x=${(direction.x * FIXED_SPEED).toFixed(2)}, z=${(direction.z * FIXED_SPEED).toFixed(2)}`);
+        }
+
+        // Directly set the velocity
         this.body.setLinearVelocity(newVelocity);
+        this.body.activate(true); // Ensure the body is active
         Ammo.destroy(newVelocity);
 
-        // Play appropriate animation based on movement direction
-        if (dot > 0.7) {
-            this.playAnimation('walkForward');
-        } else if (dot < -0.7) {
-            this.playAnimation('walkBackward');
-        } else {
-            // For strafing, handled in strafeAroundTarget method
-            const cross = new THREE.Vector3().crossVectors(forward, direction);
-            if (cross.y > 0) {
-                this.playAnimation('strafeLeft');
-            } else {
-                this.playAnimation('strafeRight');
-            }
-        }
+        // Simply play walkForward animation while moving
+        this.playAnimation('walkForward');
     }
 
     // Add ground contact check similar to player

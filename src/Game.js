@@ -26,7 +26,7 @@ export class Game {
         // Network-related properties
         this.networkManager = new NetworkManager();
         this.remotePlayers = {}; // Track other players in the game
-        this.isMultiplayer = true; // Flag to enable multiplayer features
+        this.isMultiplayer = false; // Flag to enable multiplayer features - set to false by default
         this.lastNetworkUpdateTime = 0;
         this.networkUpdateInterval = 50; // Send updates every 50ms (20 times per second)
 
@@ -142,10 +142,11 @@ export class Game {
             this.spawnEnemies(5);
 
             // Attempt to connect to server for multiplayer (non-blocking)
-            if (this.isMultiplayer) {
+            // Disabled for now to ensure enemies move properly in single player mode
+            /*if (this.isMultiplayer) {
                 log('Initializing network connection (non-blocking)');
                 this.initNetworkAsync();
-            }
+            }*/
 
             log('Game initialization complete');
         } catch (err) {
