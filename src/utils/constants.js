@@ -25,7 +25,7 @@ export const ASSET_PATHS = {
 // Game configuration
 export const GAME_CONFIG = {
     playerStartPosition: { x: 0, y: 5, z: 0 },
-    enemySpawnHeight: 5,
+    enemySpawnHeight: 2,
     physics: {
         gravity: -20
     }

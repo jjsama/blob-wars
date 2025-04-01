@@ -32,20 +32,21 @@ export class Enemy {
         if (!position) {
             position = {
                 x: (Math.random() - 0.5) * 40,
-                y: GAME_CONFIG.enemySpawnHeight,
+                y: 0, // Start at ground level
                 z: (Math.random() - 0.5) * 40
             };
         }
 
         // IMPORTANT: Store position as a THREE.Vector3
+        // Set Y to 0 to ensure enemies start on the ground
         this.position = new THREE.Vector3(
             position.x || 0,
-            position.y || 2,
+            0, // Always start at ground level
             position.z || 0
         );
 
         // Log initial position for debugging
-        console.log(`Enemy initialized at position: ${this.position.x}, ${this.position.y}, ${this.position.z}`);
+        console.log(`Enemy initialized at position: x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
 
         // Initialize other properties
         this.patrolTarget = new THREE.Vector3();
@@ -155,12 +156,9 @@ export class Enemy {
                     // Log the color used for debugging
                     console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
 
-                    // Set the model's position - IMPORTANT: We need to adjust the position to account 
-                    // for the offset that will be applied in the update method (-1.0 in Y)
-                    // The physics body will be at this.position.y + 1.0, and the mesh will be 
-                    // shown at physicsBody.y - 1.0, so we need to set the initial mesh position
-                    // at exactly this.position.y
-                    model.position.copy(this.position);
+                    // Set the model's position directly on the ground
+                    // IMPORTANT: Set Y to 0 to ensure it starts on the ground
+                    model.position.set(this.position.x, 0, this.position.z);
 
                     // Rotate the model to face forward
                     model.rotation.set(0, Math.PI, 0);
@@ -345,21 +343,20 @@ export class Enemy {
             const transform = new Ammo.btTransform();
             transform.setIdentity();
 
-            // Position the physics body to match the mesh
-            // IMPORTANT: The physics body needs to be offset by +1.0 in Y from the mesh
-            // because we'll apply a -1.0 offset when updating the mesh position from physics
+            // Position the physics body directly above the mesh (at mesh position + 1.0 in Y)
             const posX = this.mesh ? this.mesh.position.x : this.position.x;
-            const posY = this.mesh ? this.mesh.position.y : this.position.y;
+            const posY = this.mesh ? this.mesh.position.y : 0; // Default to ground level
             const posZ = this.mesh ? this.mesh.position.z : this.position.z;
 
-            // Add height offset +1.0 to match the player's logic
+            // Set the origin for the physics body with the +1.0 Y offset from mesh
             transform.setOrigin(new Ammo.btVector3(posX, posY + 1.0, posZ));
 
-            // Log the actual positions for debugging
-            console.log(`Creating enemy physics - Mesh position: ${posX}, ${posY}, ${posZ}`);
-            console.log(`Creating enemy physics - Body position: ${posX}, ${posY + 1.0}, ${posZ}`);
+            // Detailed logging for debugging physics body creation
+            console.log(`Enemy physics creation details:`);
+            console.log(`- Original position: x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
+            console.log(`- Mesh position: x=${posX.toFixed(2)}, y=${posY.toFixed(2)}, z=${posZ.toFixed(2)}`);
+            console.log(`- Physics body position: x=${posX.toFixed(2)}, y=${(posY + 1.0).toFixed(2)}, z=${posZ.toFixed(2)}`);
 
-            // Use exactly same mass as player (1)
             const mass = 1;
             const localInertia = new Ammo.btVector3(0, 0, 0);
             shape.calculateLocalInertia(mass, localInertia);
@@ -370,19 +367,20 @@ export class Enemy {
             );
 
             this.body = new Ammo.btRigidBody(rbInfo);
+
+            // Match player physics properties exactly
             this.body.setFriction(0.5);
             this.body.setRestitution(0.2);
-
-            // Prevent enemy from tipping over (same as player)
-            this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0));
-
-            // Set linear damping (same as player)
-            this.body.setDamping(0.1, 0.1);
-
-            // CRITICAL: Set same flags as player to ensure consistent physics behavior
+            this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0)); // No rotation
+            this.body.setDamping(0.1, 0.1); // Same damping as player
             this.body.setFlags(this.body.getFlags() | 2); // CF_CHARACTER_OBJECT flag
 
-            // Activate the body
+            // Apply initial downward impulse to help it settle
+            const initialForce = new Ammo.btVector3(0, -100, 0);
+            this.body.applyCentralImpulse(initialForce);
+            Ammo.destroy(initialForce);
+
+            // Ensure the body starts active
             this.body.activate(true);
 
             // Initialize canJump as false until ground check is successful
@@ -391,7 +389,7 @@ export class Enemy {
             // Add the body to physics world
             this.physicsWorld.addRigidBody(this.body);
 
-            console.log(`Enemy physics created successfully`);
+            console.log(`Enemy physics body created successfully`);
 
             // Clean up Ammo.js objects
             Ammo.destroy(rbInfo);
@@ -508,12 +506,12 @@ export class Enemy {
                         const p = transform.getOrigin();
 
                         if (p && typeof p.x === 'function') {
-                            // Exactly match player's position update with the -1.0 Y offset
+                            // Get physics body position
                             const physX = p.x();
                             const physY = p.y();
                             const physZ = p.z();
 
-                            // Update mesh position with consistent offset
+                            // Apply the consistent Y offset (physics body is 1.0 units above mesh)
                             this.mesh.position.set(physX, physY - 1.0, physZ);
 
                             // Log position occasionally for debugging
@@ -528,14 +526,23 @@ export class Enemy {
                 console.error("Physics transform error in enemy update:", physicsError);
             }
 
-            // Always keep the body active
-            this.body.activate(true);
+            // Always keep the body active when above ground level
+            if (this.mesh.position.y > 0.1) {
+                this.body.activate(true);
+            }
 
             // Check ground contact (update canJump)
             try {
                 this.checkGroundContact();
             } catch (groundError) {
                 console.error("Ground contact check error:", groundError);
+            }
+
+            // Apply stronger gravity if needed
+            if (this.mesh.position.y > 0.5) {
+                const gravity = new Ammo.btVector3(0, -80, 0); // Increased gravity
+                this.body.applyCentralForce(gravity);
+                Ammo.destroy(gravity);
             }
 
             // Update animation mixer if available
@@ -573,9 +580,13 @@ export class Enemy {
         // Track if we're moving this frame
         let isMoving = false;
 
-        // Apply gravity if enemy is not on ground
-        if (!this.canJump && this.body) {
-            const gravity = new Ammo.btVector3(0, -20, 0);
+        // Apply gravity regardless of ground contact initially
+        // until the enemy has touched the ground at least once
+        const shouldApplyGravity = !this.canJump || this.mesh.position.y > 0.5;
+
+        if (this.body) {
+            // Always apply gravity
+            const gravity = new Ammo.btVector3(0, -60, 0);
             this.body.applyCentralForce(gravity);
             Ammo.destroy(gravity);
         }
@@ -1130,9 +1141,11 @@ export class Enemy {
                 return false;
             }
 
-            // Use the same ray parameters as the player
+            // CRITICAL: Start ray at physics body position but with adjusted offset to account for model offset
+            // Start ray at the base of the capsule shape (0.5 units down from center)
+            // And ensure we're checking far enough (8.0 units) to detect ground reliably
             const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
-            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
+            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 8.0, origin.z());
 
             const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
 
@@ -1150,13 +1163,22 @@ export class Enemy {
             const wasOnGround = this.canJump;
             this.canJump = rayCallback.hasHit();
 
+            // More frequent logging for debugging (every ~50 frames instead of ~500)
+            if (Math.random() < 0.02) {
+                const distanceToGround = rayCallback.hasHit() ?
+                    origin.y() - rayCallback.get_m_hitPointWorld().y() :
+                    "more than 8.0 units";
+
+                console.log(`Enemy ground check details:`);
+                console.log(`- Physics Y: ${origin.y().toFixed(2)}, Mesh Y: ${this.mesh.position.y.toFixed(2)}`);
+                console.log(`- Ground status: ${this.canJump ? 'ON GROUND' : 'IN AIR'}`);
+                console.log(`- Distance to ground: ${typeof distanceToGround === 'number' ? distanceToGround.toFixed(2) : distanceToGround}`);
+            }
+
             // Log when ground state changes
             if (wasOnGround !== this.canJump) {
-                if (this.canJump) {
-                    console.log('Enemy touched ground');
-                } else {
-                    console.log('Enemy left ground');
-                }
+                const stateChange = this.canJump ? 'LANDED ON GROUND' : 'LEFT GROUND';
+                console.log(`Enemy ground contact changed: ${stateChange} at y=${this.mesh.position.y.toFixed(2)}`);
             }
 
             // Clean up Ammo.js objects to prevent memory leaks

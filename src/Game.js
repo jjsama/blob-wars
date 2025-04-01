@@ -465,6 +465,10 @@ export class Game {
     isPlayerOnGround() {
         if (!this.player) return false;
 
+        // Use the player's canJump property which is updated by checkGroundContact
+        return this.player.canJump;
+
+        /* Original implementation using manual ray test
         const playerPos = this.player.getPosition();
         const rayStart = new Ammo.btVector3(
             playerPos.x,
@@ -479,6 +483,7 @@ export class Game {
 
         const rayCallback = this.physics.rayTest(rayStart, rayEnd);
         return rayCallback.hasHit();
+        */
     }
 
     initCrosshair() {
@@ -1054,14 +1059,64 @@ export class Game {
                 const x = Math.random() * 80 - 40;
                 const z = Math.random() * 80 - 40;
 
-                // IMPORTANT: Set y to a consistent value slightly above ground
-                // This ensures enemies start above ground and fall naturally
-                const y = 5; // Start 5 units above ground, matching player's default height
+                // IMPORTANT: Start enemies at a higher position to ensure they have time to fall
+                const y = 15; // Increased from 5 to 15 to ensure they have time to fall and make ground contact
 
                 const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, { x, y, z });
                 this.enemies.push(enemy);
 
                 log(`Enemy ${i} spawned at position x=${x.toFixed(2)}, y=${y.toFixed(2)}, z=${z.toFixed(2)}`);
+
+                // Force immediate activation of physics bodies with stronger initial impulse
+                setTimeout(() => {
+                    if (enemy.body) {
+                        // Ensure the body is active
+                        enemy.body.activate(true);
+
+                        // Apply a very strong initial downward impulse to start falling immediately
+                        const impulse = new Ammo.btVector3(0, -50, 0); // Increased from -30 to -50
+                        enemy.body.applyCentralImpulse(impulse);
+                        Ammo.destroy(impulse);
+
+                        log(`Applied strong initial impulse to enemy ${i}`);
+
+                        // Log initial physics position
+                        const transform = enemy.body.getWorldTransform();
+                        const origin = transform.getOrigin();
+                        log(`Enemy ${i} initial physics position: x=${origin.x().toFixed(2)}, y=${origin.y().toFixed(2)}, z=${origin.z().toFixed(2)}`);
+
+                        // Set up periodic checks to ensure enemy reaches the ground
+                        const checkInterval = setInterval(() => {
+                            if (!enemy.body || enemy.isDead) {
+                                clearInterval(checkInterval);
+                                return;
+                            }
+
+                            // Get current position
+                            const transform = enemy.body.getWorldTransform();
+                            const origin = transform.getOrigin();
+                            const y = origin.y();
+
+                            // Check if enemy is grounded
+                            const isGrounded = enemy.checkGroundContact();
+                            log(`Enemy ${i} at y=${y.toFixed(2)}, grounded: ${isGrounded}`);
+
+                            // If enemy is grounded, stop checking
+                            if (isGrounded) {
+                                log(`Enemy ${i} has reached the ground!`);
+                                clearInterval(checkInterval);
+                            }
+
+                            // If enemy is stuck in air, apply an additional impulse
+                            if (!isGrounded && y > 2) {
+                                const newImpulse = new Ammo.btVector3(0, -30, 0);
+                                enemy.body.applyCentralImpulse(newImpulse);
+                                Ammo.destroy(newImpulse);
+                                log(`Applied additional impulse to enemy ${i} at height ${y.toFixed(2)}`);
+                            }
+                        }, 1000); // Check every second
+                    }
+                }, 100);
             }
 
             log('Successfully spawned ' + count + ' enemies');
