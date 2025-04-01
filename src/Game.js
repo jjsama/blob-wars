@@ -3,6 +3,7 @@ import { PhysicsWorld } from './physics/PhysicsWorld.js';
 import { GameScene } from './rendering/Scene.js';
 import { InputHandler } from './input/InputHandler.js';
 import { Player } from './entities/Player.js';
+import { RemotePlayer } from './entities/RemotePlayer.js';
 import { Ground } from './entities/Ground.js';
 import { Projectile } from './entities/Projectile.js';
 import { Enemy } from './entities/Enemy.js';
@@ -50,6 +51,9 @@ export class Game {
 
         // Initialize UI
         this.initUI();
+
+        // Initialize console system
+        this.initConsole();
     }
 
     initUI() {
@@ -138,15 +142,16 @@ export class Game {
             this.animate();
             log('Animation loop started');
 
-            // Spawn enemies for single-player mode
-            this.spawnEnemies(5);
+            // Spawn enemies for single-player mode, but only if not in multiplayer mode
+            if (!this.isMultiplayer) {
+                this.spawnEnemies(5);
+            }
 
-            // Attempt to connect to server for multiplayer (non-blocking)
-            // Disabled for now to ensure enemies move properly in single player mode
-            /*if (this.isMultiplayer) {
-                log('Initializing network connection (non-blocking)');
-                this.initNetworkAsync();
-            }*/
+            // Enable multiplayer and connect to server
+            this.isMultiplayer = true;
+            log('Enabling multiplayer mode');
+            log('Initializing network connection (non-blocking)');
+            this.initNetworkAsync();
 
             log('Game initialization complete');
         } catch (err) {
@@ -173,6 +178,9 @@ export class Game {
             setTimeout(() => {
                 document.getElementById('connection-status')?.remove();
             }, 3000);
+
+            // Start sending position updates to server
+            this._startPositionUpdates();
         });
 
         this.networkManager.on('disconnect', () => {
@@ -198,39 +206,29 @@ export class Game {
             log(`Player connected: ${data.id}`);
             if (data.id === this.networkManager.playerId) {
                 log('Received our player ID from server');
-                return;
             }
-            this.addRemotePlayer(data.id, data.position);
         });
 
+        // Register event handler for game state updates
         this.networkManager.on('gameStateUpdate', (gameState) => {
             this.handleGameStateUpdate(gameState);
         });
 
-        // Use localhost explicitly for development
-        const serverUrl = `ws://localhost:3000/ws`;
-        log(`Attempting to connect to server at ${serverUrl}`);
+        // Connect to server
+        this.networkManager.connect()
+            .then(() => {
+                log('Connected to server successfully');
+            })
+            .catch((error) => {
+                error('Failed to connect to server:', error);
+                this.showConnectionStatus('Connection failed. Running in single player mode.');
+                this.isMultiplayer = false;
 
-        // Connect to the server (non-blocking)
-        this.networkManager.connect(serverUrl).then(() => {
-            log('Network connection established successfully');
-            this.isMultiplayer = true;
-
-            // Start sending periodic position updates to server
-            this._startPositionUpdates();
-        }).catch(err => {
-            error('Failed to establish network connection:', err);
-            log('Running in single player mode');
-            this.isMultiplayer = false;
-
-            // After max retries, show a persistent message
-            this.showConnectionStatus('Server connection failed. Running in single player mode.');
-
-            // Hide message after 5 seconds
-            setTimeout(() => {
-                document.getElementById('connection-status')?.remove();
-            }, 5000);
-        });
+                // Hide message after 5 seconds
+                setTimeout(() => {
+                    document.getElementById('connection-status')?.remove();
+                }, 5000);
+            });
     }
 
     /**
@@ -287,43 +285,101 @@ export class Game {
         }
 
         try {
+            // Debug: log game state update details occasionally
+            if (Math.random() < 0.05) {
+                console.log(`Game state update received with ${Object.keys(gameState.players).length} players`);
+            }
+
+            // Create a set to track which player IDs we've seen
+            const seenPlayerIds = new Set();
+
             // Update remote players
             for (const id in gameState.players) {
                 // Skip our own player
                 if (id === this.networkManager.playerId) continue;
 
+                // Mark this player ID as seen
+                seenPlayerIds.add(id);
+
                 const playerData = gameState.players[id];
 
                 // Validate player data
                 if (!playerData || !playerData.position) {
-                    console.error('Received invalid player data:', playerData);
+                    console.warn('Received invalid player data:', playerData);
                     continue;
                 }
 
                 // If player exists, update it
                 if (this.remotePlayers[id]) {
-                    this.remotePlayers[id].setPosition(playerData.position);
+                    // Debug: log position update occasionally
+                    if (Math.random() < 0.01) {
+                        console.log(`Updating remote player ${id} position: x=${playerData.position.x.toFixed(2)}, y=${playerData.position.y.toFixed(2)}, z=${playerData.position.z.toFixed(2)}`);
+                    }
+
+                    const remotePlayer = this.remotePlayers[id];
+
+                    // Store previous position for movement detection
+                    const prevPos = remotePlayer.getPosition();
+
+                    // Update position with smooth interpolation
+                    remotePlayer.setPosition(playerData.position);
+
+                    // Update rotation if available
                     if (playerData.rotation) {
-                        this.remotePlayers[id].setRotation(playerData.rotation);
+                        remotePlayer.setRotation(playerData.rotation);
+                    }
+
+                    // Determine animation based on movement
+                    if (playerData.animation) {
+                        // If server directly provides animation state, use it
+                        remotePlayer.setAnimation(playerData.animation);
+                    } else {
+                        // Otherwise detect movement and set appropriate animation
+                        const isMoving = this.detectRemotePlayerMovement(prevPos, playerData.position);
+
+                        if (isMoving) {
+                            // Use walkForward animation when moving
+                            remotePlayer.setAnimation('walkForward');
+                        } else {
+                            // Use idle animation when not moving
+                            remotePlayer.setAnimation('idle');
+                        }
                     }
                 } else {
                     // New player joined, create it
+                    console.log(`Creating new remote player ${id}`);
                     this.addRemotePlayer(id, playerData.position);
                 }
             }
 
-            // Remove disconnected players
+            // Remove disconnected players (those not in the current game state)
             for (const id in this.remotePlayers) {
-                if (!gameState.players[id]) {
+                if (!seenPlayerIds.has(id)) {
+                    console.log(`Remote player ${id} not in game state, removing`);
                     this.removeRemotePlayer(id);
                 }
             }
-
-            // Update projectiles and enemies if needed
-            // Will be implemented later
         } catch (err) {
             console.error('Error processing game state update:', err);
         }
+    }
+
+    /**
+     * Detect if a remote player is moving by comparing positions
+     */
+    detectRemotePlayerMovement(prevPos, newPos) {
+        if (!prevPos || !newPos) return false;
+
+        // Calculate distance between positions
+        const dx = prevPos.x - newPos.x;
+        const dz = prevPos.z - newPos.z;
+        const distanceSquared = dx * dx + dz * dz;
+
+        // Consider the player moving if they've moved more than a small threshold
+        // Using squared distance for efficiency (avoiding square root)
+        const MOVEMENT_THRESHOLD_SQUARED = 0.0001; // ~0.01 units of movement
+
+        return distanceSquared > MOVEMENT_THRESHOLD_SQUARED;
     }
 
     /**
@@ -332,13 +388,110 @@ export class Game {
     addRemotePlayer(id, position) {
         log(`Adding remote player: ${id}`);
 
-        // Create a new player instance for the remote player
-        const remotePlayer = new Player(this.scene.scene, this.physics.physicsWorld, position);
-        remotePlayer.isRemote = true; // Mark as remote player
-        remotePlayer.loadModel();
+        // First, check if a player with this ID already exists and remove it
+        if (this.remotePlayers[id]) {
+            log(`Remote player ${id} already exists, removing old instance first`);
+            this.removeRemotePlayer(id);
+        }
+
+        // Generate a distinct color for this remote player based on their ID
+        const colors = [
+            0xff0000, // Red
+            0x00ff00, // Green
+            0x0000ff, // Blue
+            0xffff00, // Yellow
+            0xff00ff, // Magenta
+            0x00ffff  // Cyan
+        ];
+
+        // Use a hash of the ID to get a consistent color
+        const colorIndex = Math.abs(id.split('').reduce(
+            (acc, char) => acc + char.charCodeAt(0), 0
+        ) % colors.length);
+
+        const playerColor = colors[colorIndex];
+        log(`Assigning color ${playerColor.toString(16)} to remote player ${id}`);
+
+        // Create a new RemotePlayer instance
+        const remotePlayer = new RemotePlayer(
+            this.scene.scene,  // scene
+            id,                // player ID
+            position,          // initial position
+            playerColor        // player color
+        );
+
+        // Create a nametag for the remote player
+        this.addNameTag(remotePlayer, id);
 
         // Store the remote player
         this.remotePlayers[id] = remotePlayer;
+
+        log(`Remote player ${id} added successfully`);
+
+        return remotePlayer;
+    }
+
+    /**
+     * Add a name tag above a player
+     */
+    addNameTag(player, name) {
+        // Create a div for the name tag
+        const nameTag = document.createElement('div');
+        nameTag.className = 'player-nametag';
+        nameTag.textContent = `Player ${name.substring(0, 4)}`;
+        nameTag.style.position = 'absolute';
+        nameTag.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+        nameTag.style.color = 'white';
+        nameTag.style.padding = '2px 6px';
+        nameTag.style.borderRadius = '4px';
+        nameTag.style.fontSize = '12px';
+        nameTag.style.fontFamily = 'Arial, sans-serif';
+        nameTag.style.textAlign = 'center';
+        nameTag.style.pointerEvents = 'none'; // Don't block mouse events
+        nameTag.style.zIndex = '1000';
+        nameTag.style.fontWeight = 'bold';
+        nameTag.style.textShadow = '1px 1px 2px black';
+
+        document.body.appendChild(nameTag);
+
+        // Store a reference to the name tag in the player object
+        player.nameTag = nameTag;
+
+        // Update the name tag position in the update loop
+        const updateNameTag = () => {
+            if (!player.nameTag) return;
+
+            // Get the correct mesh reference based on player type
+            const playerMesh = player.model || player.mesh;
+            if (!playerMesh) return;
+
+            // Convert 3D position to screen coordinates
+            const playerPos = new THREE.Vector3();
+            playerPos.setFromMatrixPosition(playerMesh.matrixWorld);
+
+            const screenPos = playerPos.clone();
+            screenPos.project(this.scene.camera);
+
+            const x = (screenPos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = -(screenPos.y * 0.5 - 0.5) * window.innerHeight;
+
+            // Position name tag above player's head
+            nameTag.style.left = `${x - nameTag.offsetWidth / 2}px`;
+            nameTag.style.top = `${y - 50}px`; // Offset above the player
+
+            // Only show if in front of camera
+            if (screenPos.z > 1) {
+                nameTag.style.display = 'none';
+            } else {
+                nameTag.style.display = 'block';
+            }
+
+            // Queue next update
+            requestAnimationFrame(updateNameTag);
+        };
+
+        // Start updating the name tag
+        updateNameTag();
     }
 
     /**
@@ -348,16 +501,22 @@ export class Game {
         log(`Removing remote player: ${id}`);
 
         if (this.remotePlayers[id]) {
-            // Remove from scene
-            this.scene.scene.remove(this.remotePlayers[id].mesh);
+            // Get reference to the remote player
+            const remotePlayer = this.remotePlayers[id];
 
-            // Remove from physics world if applicable
-            if (this.remotePlayers[id].body) {
-                this.physics.physicsWorld.removeRigidBody(this.remotePlayers[id].body);
+            // Remove nametag if it exists
+            if (remotePlayer.nameTag) {
+                document.body.removeChild(remotePlayer.nameTag);
+                remotePlayer.nameTag = null;
             }
+
+            // Use the RemotePlayer's built-in removal method
+            remotePlayer.remove();
 
             // Remove from our tracking
             delete this.remotePlayers[id];
+
+            log(`Remote player ${id} successfully removed`);
         }
     }
 
@@ -556,6 +715,96 @@ export class Game {
 
         // Make sure the crosshair is visible
         crosshair.style.display = 'block';
+
+        // Remove the floating controls UI - we don't need it
+        const existingControls = document.getElementById('game-controls');
+        if (existingControls) {
+            existingControls.remove();
+        }
+    }
+
+    // Add this method to initialize the console
+    initConsole() {
+        // Create a console element
+        const consoleContainer = document.createElement('div');
+        consoleContainer.id = 'game-console';
+        consoleContainer.style.position = 'fixed';
+        consoleContainer.style.top = '0';
+        consoleContainer.style.left = '0';
+        consoleContainer.style.width = '100%';
+        consoleContainer.style.height = '200px';
+        consoleContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        consoleContainer.style.color = '#fff';
+        consoleContainer.style.fontFamily = 'monospace';
+        consoleContainer.style.fontSize = '12px';
+        consoleContainer.style.padding = '10px';
+        consoleContainer.style.overflow = 'auto';
+        consoleContainer.style.zIndex = '1000';
+        consoleContainer.style.display = 'none'; // Hidden by default
+
+        document.body.appendChild(consoleContainer);
+
+        // Override console.log to capture messages
+        const originalLog = console.log;
+        const originalError = console.error;
+        const originalWarn = console.warn;
+
+        // Keep track of console state
+        this.consoleVisible = false;
+
+        // Add console toggle with ~ key
+        window.addEventListener('keydown', (event) => {
+            if (event.key === '`' || event.key === '~') {
+                this.consoleVisible = !this.consoleVisible;
+                consoleContainer.style.display = this.consoleVisible ? 'block' : 'none';
+                event.preventDefault();
+            }
+        });
+
+        // Override console methods to write to our game console
+        console.log = function () {
+            // Call original console.log
+            originalLog.apply(console, arguments);
+
+            // Add to game console
+            const msg = Array.from(arguments).join(' ');
+            const logEntry = document.createElement('div');
+            logEntry.textContent = msg;
+            consoleContainer.appendChild(logEntry);
+
+            // Auto-scroll to bottom
+            consoleContainer.scrollTop = consoleContainer.scrollHeight;
+        };
+
+        console.error = function () {
+            // Call original console.error
+            originalError.apply(console, arguments);
+
+            // Add to game console with error styling
+            const msg = Array.from(arguments).join(' ');
+            const logEntry = document.createElement('div');
+            logEntry.textContent = msg;
+            logEntry.style.color = '#ff5555';
+            consoleContainer.appendChild(logEntry);
+
+            // Auto-scroll to bottom
+            consoleContainer.scrollTop = consoleContainer.scrollHeight;
+        };
+
+        console.warn = function () {
+            // Call original console.warn
+            originalWarn.apply(console, arguments);
+
+            // Add to game console with warning styling
+            const msg = Array.from(arguments).join(' ');
+            const logEntry = document.createElement('div');
+            logEntry.textContent = msg;
+            logEntry.style.color = '#ffff55';
+            consoleContainer.appendChild(logEntry);
+
+            // Auto-scroll to bottom
+            consoleContainer.scrollTop = consoleContainer.scrollHeight;
+        };
     }
 
     shootProjectile() {

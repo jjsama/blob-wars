@@ -41,10 +41,10 @@ export class NetworkManager {
 
             // Use explicit protocol and host for local development
             if (isLocalhost) {
-                serverUrl = `ws://localhost:3001/ws`;
+                serverUrl = `ws://localhost:3000/ws`;
             } else {
                 // For production/deployed environments, use relative path with current hostname
-                serverUrl = `ws://${window.location.hostname}:3001/ws`;
+                serverUrl = `ws://${window.location.hostname}:3000/ws`;
             }
         }
 
@@ -291,29 +291,24 @@ export class NetworkManager {
     }
 
     /**
-     * Update player position and rotation
-     * @param {Object} position - { x, y, z }
-     * @param {Object} rotation - { x, y, z }
+     * Update player state on the server
+     * @param {Object} position - Player position
+     * @param {Object} rotation - Player rotation
      */
     updatePlayerState(position, rotation) {
-        if (!this.playerId) return;
-        
-        // Validate position and rotation data before sending
-        const validPosition = position && typeof position === 'object' ? {
-            x: typeof position.x === 'number' ? position.x : 0,
-            y: typeof position.y === 'number' ? position.y : 5,
-            z: typeof position.z === 'number' ? position.z : 0
-        } : { x: 0, y: 5, z: 0 };
-        
-        const validRotation = rotation && typeof rotation === 'object' ? {
-            x: typeof rotation.x === 'number' ? rotation.x : 0,
-            y: typeof rotation.y === 'number' ? rotation.y : 0,
-            z: typeof rotation.z === 'number' ? rotation.z : 0
-        } : { x: 0, y: 0, z: 0 };
+        if (!this.connected || !this.playerId) {
+            return;
+        }
+
+        // Log position updates occasionally for debugging
+        if (Math.random() < 0.05) {
+            console.log(`Sending position update: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
+        }
 
         this.send('PLAYER_UPDATE', {
-            position: validPosition,
-            rotation: validRotation
+            position,
+            rotation,
+            timestamp: Date.now()
         });
     }
 
@@ -377,43 +372,69 @@ export class NetworkManager {
     }
 
     /**
-     * Handle incoming WebSocket messages
-     * @param {String} data - Message data as JSON string
+     * Handle a message from the server
+     * @param {String} data - The message data
      * @private
      */
     _handleMessage(data) {
         try {
             const message = JSON.parse(data);
 
-            // Update server time offset for time synchronization
-            if (message.timestamp) {
-                const now = Date.now();
-                const latency = (now - message.timestamp) / 2;
-                this.serverTimeOffset = message.timestamp + latency - now;
+            if (!message.type) {
+                console.error('Received message without type:', message);
+                return;
             }
+
+            // Log message reception
+            console.log(`Received message: ${message.type}`);
 
             switch (message.type) {
                 case 'PLAYER_CONNECTED':
-                    this.playerId = message.data.id;
-                    console.log(`Connected as player ${this.playerId}`);
-                    this._emitEvent('playerConnected', message.data);
+                    if (message.data && message.data.id) {
+                        console.log(`Connected as player: ${message.data.id}`);
+                        this.playerId = message.data.id;
+                        this._emitEvent('playerConnected', message.data);
+                    }
                     break;
 
-                case 'GAME_STATE_UPDATE':
-                    this._emitEvent('gameStateUpdate', message.data);
+                case 'GAME_STATE':
+                    // Process game state update - the most important message type for sync
+                    if (message.data) {
+                        console.log('Received game state update with player data:', Object.keys(message.data.players).length);
+
+                        // Debug: log player positions from game state
+                        if (message.data.players) {
+                            for (const playerId in message.data.players) {
+                                const player = message.data.players[playerId];
+                                if (player && player.position && playerId !== this.playerId) {
+                                    console.log(`Remote player ${playerId} position: x=${player.position.x.toFixed(2)}, y=${player.position.y.toFixed(2)}, z=${player.position.z.toFixed(2)}`);
+                                }
+                            }
+                        }
+
+                        this._emitEvent('gameStateUpdate', message.data);
+                    }
                     break;
 
                 case 'PONG':
-                    // Handle pong response (server heartbeat)
-                    console.log('Received PONG from server');
-                    // We could calculate and track latency here if needed
+                    // Update server time offset for syncing
+                    if (message.timestamp && message.serverTime) {
+                        const now = Date.now();
+                        const roundTripTime = now - message.timestamp;
+                        const serverTime = message.serverTime;
+
+                        // Calculate time offset between client and server
+                        this.serverTimeOffset = serverTime - (now - roundTripTime / 2);
+
+                        console.log(`Ping response received. Round trip time: ${roundTripTime}ms, Server time offset: ${this.serverTimeOffset}ms`);
+                    }
                     break;
 
                 default:
-                    console.log(`Unknown message type: ${message.type}`);
+                    console.log(`Unhandled message type: ${message.type}`);
             }
         } catch (error) {
-            console.error('Error parsing message:', error);
+            console.error('Error handling message:', error, data);
         }
     }
 

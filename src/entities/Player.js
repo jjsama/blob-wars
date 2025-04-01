@@ -25,6 +25,12 @@ export class Player {
         this._loggedMissingIdle = false;
         this._physicsCreated = false;
 
+        // Queue for storing position updates that arrive before model is loaded
+        this.positionQueue = [];
+
+        // Set a consistent color for the local player (bright teal)
+        this.playerColor = 0x00ffff;
+
         // Create physics body
         this.createPhysics();
 
@@ -72,6 +78,30 @@ export class Player {
                         if (child.isMesh) {
                             child.castShadow = true;
                             child.receiveShadow = true;
+
+                            // Apply player color if defined
+                            if (this.playerColor && !this.isRemote) {
+                                // Clone the material to avoid affecting other instances
+                                if (Array.isArray(child.material)) {
+                                    child.material = child.material.map(m => m.clone());
+                                    child.material.forEach(m => {
+                                        // Skip eyes
+                                        if (!m.name || !m.name.toLowerCase().includes('eye')) {
+                                            m.color.setHex(this.playerColor);
+                                            m.emissive = new THREE.Color(this.playerColor);
+                                            m.emissiveIntensity = 0.2; // Add glow
+                                        }
+                                    });
+                                } else {
+                                    child.material = child.material.clone();
+                                    // Skip eyes
+                                    if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
+                                        child.material.color.setHex(this.playerColor);
+                                        child.material.emissive = new THREE.Color(this.playerColor);
+                                        child.material.emissiveIntensity = 0.2; // Add glow
+                                    }
+                                }
+                            }
                         }
                     });
 
@@ -81,6 +111,22 @@ export class Player {
                     // Add the new model to the scene
                     this.scene.add(this.mesh);
                     this.modelLoaded = true;
+
+                    // Call the onModelLoaded callback if defined (for remote players)
+                    if (typeof this.onModelLoaded === 'function') {
+                        this.onModelLoaded(model);
+                    }
+
+                    // Process any queued position updates for remote players
+                    if (this.isRemote && this.positionQueue.length > 0) {
+                        console.log(`Processing ${this.positionQueue.length} queued positions for remote player`);
+                        // Use the most recent position
+                        const latestPosition = this.positionQueue.pop();
+                        this.mesh.position.set(latestPosition.x, latestPosition.y, latestPosition.z);
+                        console.log(`Applied queued position: x=${latestPosition.x.toFixed(2)}, y=${latestPosition.y.toFixed(2)}, z=${latestPosition.z.toFixed(2)}`);
+                        // Clear the queue
+                        this.positionQueue = [];
+                    }
 
                     // Set up animations
                     this.mixer = new THREE.AnimationMixer(model);
@@ -126,6 +172,12 @@ export class Player {
                     if (!this._physicsCreated) {
                         this.createPhysics();
                         this._physicsCreated = true;
+                    }
+
+                    // Apply queued position updates
+                    if (this.positionQueue.length > 0) {
+                        const queuedPosition = this.positionQueue.pop();
+                        this.setPosition(queuedPosition);
                     }
                 },
                 // Progress callback
@@ -629,11 +681,31 @@ export class Player {
      * @param {Object} position - Position object with x, y, z coordinates
      */
     setPosition(position) {
-        if (!position) return;
+        if (!position) {
+            console.error('setPosition called with invalid position:', position);
+            return;
+        }
+
+        // Debug logging
+        console.log(`setPosition called${this.isRemote ? ' (remote)' : ''}: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
+
+        // If mesh isn't loaded yet, queue the position update for remote players
+        if (!this.mesh && this.isRemote) {
+            // Store the position update in the queue (keep only the most recent 5)
+            this.positionQueue.push({ ...position });
+            if (this.positionQueue.length > 5) {
+                this.positionQueue.shift(); // Remove oldest position
+            }
+            console.log(`Model not loaded yet, queued position update. Queue size: ${this.positionQueue.length}`);
+            return;
+        }
 
         // Update the mesh position
         if (this.mesh) {
             this.mesh.position.set(position.x, position.y, position.z);
+            console.log(`Mesh position updated to: x=${this.mesh.position.x.toFixed(2)}, y=${this.mesh.position.y.toFixed(2)}, z=${this.mesh.position.z.toFixed(2)}`);
+        } else {
+            console.warn('setPosition: mesh is not available yet, position update skipped');
         }
 
         // If this is a remote player, we don't need to update physics

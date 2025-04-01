@@ -315,7 +315,7 @@ function broadcastGameState() {
         }
 
         const payload = JSON.stringify({
-            type: 'GAME_STATE_UPDATE',
+            type: 'GAME_STATE',
             data: {
                 players: sanitizedPlayers,
                 projectiles: gameState.projectiles,
