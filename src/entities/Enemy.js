@@ -593,398 +593,342 @@ export class Enemy {
     }
 
     createHealthBar() {
-        // Create a health bar that follows the enemy
+        // Create a health bar element
         const healthBarContainer = document.createElement('div');
-        healthBarContainer.className = 'enemy-health-container';
+        healthBarContainer.className = 'enemy-health-bar-container';
         healthBarContainer.style.position = 'absolute';
-        healthBarContainer.style.width = '60px';
-        healthBarContainer.style.height = '8px';
+        healthBarContainer.style.width = '40px';
+        healthBarContainer.style.height = '5px';
         healthBarContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        healthBarContainer.style.border = '1px solid white';
-        healthBarContainer.style.borderRadius = '4px';
-        healthBarContainer.style.pointerEvents = 'none';
-        healthBarContainer.style.display = 'none'; // Initially hidden
+        healthBarContainer.style.borderRadius = '2px';
+        healthBarContainer.style.overflow = 'hidden';
+        healthBarContainer.style.zIndex = '999';
+        healthBarContainer.style.pointerEvents = 'none'; // Don't block mouse events
 
-        const healthBar = document.createElement('div');
-        healthBar.className = 'enemy-health-bar';
-        healthBar.style.width = '100%';
-        healthBar.style.height = '100%';
-        healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
-        healthBar.style.transition = 'width 0.3s, background-color 0.3s';
+        const healthBarFill = document.createElement('div');
+        healthBarFill.className = 'enemy-health-bar-fill';
+        healthBarFill.style.width = '100%';
+        healthBarFill.style.height = '100%';
+        healthBarFill.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
+        healthBarFill.style.transition = 'width 0.2s ease-in-out';
 
-        healthBarContainer.appendChild(healthBar);
+        healthBarContainer.appendChild(healthBarFill);
         document.body.appendChild(healthBarContainer);
 
-        this.healthBarContainer = healthBarContainer;
-        this.healthBar = healthBar;
+        this.healthBar = {
+            container: healthBarContainer,
+            fill: healthBarFill
+        };
+
+        // Update health bar with initial health
+        this.updateHealthBar();
     }
 
     updateHealthBar() {
-        // Comprehensive null check
-        if (!this.healthBarContainer || !this.healthBar || !this.mesh) {
-            return;
-        }
+        if (!this.healthBar) return;
 
-        // Only show health bar if damaged
-        if (this.health < 100) {
-            this.healthBarContainer.style.display = 'block';
+        // Update fill width based on current health percentage
+        const healthPercent = (this.health / this.maxHealth) * 100;
+        this.healthBar.fill.style.width = `${healthPercent}%`;
 
-            try {
-                // Convert 3D position to screen position
-                const vector = new THREE.Vector3();
+        // Position the health bar above the enemy
+        if (this.mesh) {
+            const meshPosition = new THREE.Vector3();
+            this.mesh.getWorldPosition(meshPosition);
 
-                // Double-check that mesh and matrixWorld exist
-                if (!this.mesh || !this.mesh.matrixWorld) {
-                    return;
-                }
+            // Project to screen space
+            const vector = meshPosition.clone();
+            vector.y += 2.5; // Position above the enemy's head
 
-                vector.setFromMatrixPosition(this.mesh.matrixWorld);
-
-                // Verify game and camera exist
-                if (!window.game || !window.game.scene || !window.game.scene.camera) {
-                    return;
-                }
-
-                // Project to screen coordinates
+            // Convert to screen coordinates
+            if (window.game && window.game.scene && window.game.scene.camera) {
                 vector.project(window.game.scene.camera);
 
-                // Convert to CSS coordinates
-                const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-                const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 50; // Position above enemy
+                // Convert to pixel coordinates
+                const widthHalf = window.innerWidth / 2;
+                const heightHalf = window.innerHeight / 2;
+                const x = (vector.x * widthHalf) + widthHalf;
+                const y = -(vector.y * heightHalf) + heightHalf;
 
-                // Update health bar position
-                this.healthBarContainer.style.left = `${x - 30}px`; // Center the bar
-                this.healthBarContainer.style.top = `${y}px`;
+                // Position the health bar
+                this.healthBar.container.style.left = `${x - 20}px`; // Center the 40px bar
+                this.healthBar.container.style.top = `${y - 10}px`;
 
-                // Update health bar width
-                this.healthBar.style.width = `${this.health}%`;
-
-                // Update health bar color
-                if (this.health > 70) {
-                    this.healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
-                } else if (this.health > 30) {
-                    this.healthBar.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+                // Only show health bar if enemy is in front of camera and not at full health
+                if (vector.z > 1 || this.health >= this.maxHealth) {
+                    this.healthBar.container.style.display = 'none';
                 } else {
-                    this.healthBar.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+                    this.healthBar.container.style.display = 'block';
                 }
-            } catch (error) {
-                console.error("Error in updateHealthBar:", error);
             }
-        } else if (this.healthBarContainer) {
-            this.healthBarContainer.style.display = 'none';
         }
     }
 
     update(deltaTime) {
-        if (this.isDead) return;
-
-        // Don't do anything until both mesh and body are created
-        if (!this.mesh || !this.body) return;
-
-        try {
-            // Check if Ammo is available before proceeding
-            if (typeof Ammo === 'undefined') {
-                console.warn("Ammo is not defined in Enemy update");
-                return;
-            }
-
-            // Update mesh position based on physics body position
-            try {
-                const ms = this.body.getMotionState();
-                if (ms) {
-                    const transform = new Ammo.btTransform();
-                    ms.getWorldTransform(transform);
-
-                    if (transform) {
-                        const p = transform.getOrigin();
-
-                        if (p && typeof p.x === 'function') {
-                            // Get physics body position
-                            const physX = p.x();
-                            const physY = p.y();
-                            const physZ = p.z();
-
-                            // Apply the consistent Y offset (physics body is 1.0 units above mesh)
-                            this.mesh.position.set(physX, physY - 1.0, physZ);
-
-                            // Log position occasionally for debugging
-                            if (Math.random() < 0.002) {
-                                console.log(`Enemy physics body: x=${physX.toFixed(2)}, y=${physY.toFixed(2)}, z=${physZ.toFixed(2)}`);
-                                console.log(`Enemy mesh position: x=${this.mesh.position.x.toFixed(2)}, y=${this.mesh.position.y.toFixed(2)}, z=${this.mesh.position.z.toFixed(2)}`);
-                            }
-                        }
-                    }
-                }
-            } catch (physicsError) {
-                console.error("Physics transform error in enemy update:", physicsError);
-            }
-
-            // Always keep the body active 
-            this.body.activate(true);
-
-            // Check ground contact (update canJump)
-            try {
-                this.checkGroundContact();
-            } catch (groundError) {
-                console.error("Ground contact check error:", groundError);
-            }
-
-            // Apply constant gravity for consistent behavior
-            const gravity = new Ammo.btVector3(0, -60, 0);
-            this.body.applyCentralForce(gravity);
-            Ammo.destroy(gravity);
-
-            // Update animation mixer if available
-            if (this.mixer && deltaTime) {
-                try {
-                    this.mixer.update(deltaTime);
-                } catch (animError) {
-                    console.error("Animation error in enemy update:", animError);
-                }
-            }
-
-            // Update health bar UI if needed
-            if (this.healthBarContainer && this.healthBar) {
-                try {
-                    this.updateHealthBar();
-                } catch (uiError) {
-                    console.error("Health bar update error:", uiError);
-                }
-            }
-
-            // Update AI behavior - this handles movements
-            try {
-                this.updateAI(deltaTime);
-            } catch (aiError) {
-                console.error("AI update error:", aiError);
-            }
-        } catch (error) {
-            console.error("Error in enemy update:", error);
-        }
-    }
-
-    updateAI(deltaTime) {
-        if (this.isDead) return;
-
-        // Don't attempt to run AI if the mesh or body aren't ready
         if (!this.mesh || !this.body) {
             return;
         }
 
-        // Track if we're moving this frame
-        let isMoving = false;
+        try {
+            // Skip updates if enemy is dead (but still process fade-out effect)
+            if (this.isDead) {
+                // Continue fade-out if we've started it
+                if (this.fadingOut && this.mesh) {
+                    this.fadeOutTimer += deltaTime;
 
-        // Always apply gravity
-        if (this.body) {
-            const gravity = new Ammo.btVector3(0, -60, 0);
-            this.body.applyCentralForce(gravity);
-            Ammo.destroy(gravity);
-        }
+                    // Calculate opacity - linear fade over 2 seconds
+                    const fadeProgress = Math.min(this.fadeOutTimer / 2, 1.0);
+                    const opacity = 1.0 - fadeProgress;
 
-        // CRITICAL: Make sure we have a valid patrol target
-        if (!this.patrolTarget || !(this.patrolTarget instanceof THREE.Vector3) ||
-            (this.patrolTarget.x === 0 && this.patrolTarget.z === 0)) {
-            this.setRandomPatrolTarget();
-        }
-
-        // Store the last target for persistence in combat
-        if (!this.lastTarget) {
-            this.lastTarget = null;
-            this.lastTargetTime = 0;
-            this.targetPersistenceTime = 7000; // Keep pursuing the same target for 7 seconds
-        }
-
-        // Check for targets to attack - prioritize attacking over patrolling
-        const currentTime = Date.now();
-        let shouldAttackTarget = false;
-        let targetPosition = null;
-        let closestTargetDistance = Infinity;
-        let closestTargetPosition = null;
-        let foundTarget = false;
-
-        // If we have a recent target, prefer that one for persistence
-        if (this.lastTarget && currentTime - this.lastTargetTime < this.targetPersistenceTime) {
-            // Verify the target still exists and isn't dead
-            let targetExists = false;
-
-            // Check if lastTarget is the player
-            if (window.game && window.game.player && !window.game.player.isDead &&
-                this.lastTarget.isPlayer) {
-                targetExists = true;
-                const playerPos = window.game.player.getPosition();
-                targetPosition = new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z);
-                closestTargetPosition = targetPosition;
-                closestTargetDistance = this.mesh.position.distanceTo(targetPosition);
-                foundTarget = true;
-            }
-
-            // Check if lastTarget is a remote player
-            else if (this.lastTarget.id && window.game && window.game.remotePlayers &&
-                window.game.remotePlayers[this.lastTarget.id] &&
-                !window.game.remotePlayers[this.lastTarget.id].isDead) {
-                targetExists = true;
-                const remotePos = window.game.remotePlayers[this.lastTarget.id].getPosition();
-                targetPosition = new THREE.Vector3(remotePos.x, remotePos.y, remotePos.z);
-                closestTargetPosition = targetPosition;
-                closestTargetDistance = this.mesh.position.distanceTo(targetPosition);
-                foundTarget = true;
-            }
-
-            // Check if lastTarget is another enemy
-            else if (this.lastTarget.enemyIndex !== undefined &&
-                window.game && window.game.enemies &&
-                window.game.enemies[this.lastTarget.enemyIndex] &&
-                window.game.enemies[this.lastTarget.enemyIndex] !== this &&
-                !window.game.enemies[this.lastTarget.enemyIndex].isDead) {
-                targetExists = true;
-                const enemyPos = window.game.enemies[this.lastTarget.enemyIndex].mesh.position;
-                targetPosition = enemyPos.clone();
-                closestTargetPosition = targetPosition;
-                closestTargetDistance = this.mesh.position.distanceTo(targetPosition);
-                foundTarget = true;
-            }
-
-            // If target no longer exists or is out of detection range (much farther), forget it
-            if (!targetExists || closestTargetDistance > this.detectionRange * 1.5) {
-                this.lastTarget = null;
-                foundTarget = false;
-            }
-        }
-
-        // Only look for new targets if we don't have a valid persistent one
-        if (!foundTarget) {
-            // Find the closest valid target (any player or other enemy)
-
-            // Check local player first
-            if (window.game && window.game.player && !window.game.player.isDead) {
-                const playerPos = window.game.player.getPosition();
-                const playerVector = new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z);
-                const distanceToPlayer = this.mesh.position.distanceTo(playerVector);
-
-                if (distanceToPlayer < this.detectionRange && distanceToPlayer < closestTargetDistance) {
-                    closestTargetDistance = distanceToPlayer;
-                    closestTargetPosition = playerVector;
-                    // Remember this target for persistence
-                    this.lastTarget = { isPlayer: true };
-                    this.lastTargetTime = currentTime;
-                    foundTarget = true;
-                }
-            }
-
-            // Check remote players if in multiplayer mode
-            if (window.game && window.game.remotePlayers) {
-                for (const id in window.game.remotePlayers) {
-                    const remotePlayer = window.game.remotePlayers[id];
-                    if (remotePlayer && !remotePlayer.isDead) {
-                        const remotePos = remotePlayer.getPosition();
-                        const remoteVector = new THREE.Vector3(remotePos.x, remotePos.y, remotePos.z);
-                        const distanceToRemote = this.mesh.position.distanceTo(remoteVector);
-
-                        if (distanceToRemote < this.detectionRange && distanceToRemote < closestTargetDistance) {
-                            closestTargetDistance = distanceToRemote;
-                            closestTargetPosition = remoteVector;
-                            // Remember this target for persistence
-                            this.lastTarget = { id: id };
-                            this.lastTargetTime = currentTime;
-                            foundTarget = true;
+                    // Apply fade to all materials
+                    this.mesh.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            // Handle materials array or single material
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(mat => {
+                                    if (mat.opacity !== undefined) {
+                                        mat.opacity = opacity;
+                                    }
+                                });
+                            } else if (child.material.opacity !== undefined) {
+                                child.material.opacity = opacity;
+                            }
                         }
+                    });
+
+                    // When the fade is complete, remove the enemy
+                    if (fadeProgress >= 1.0) {
+                        this.remove();
                     }
                 }
+                return;
             }
 
-            // Check other enemies too - true free-for-all!
-            if (window.game && window.game.enemies) {
-                for (let i = 0; i < window.game.enemies.length; i++) {
-                    const otherEnemy = window.game.enemies[i];
-                    // Skip self and dead enemies
-                    if (otherEnemy === this || otherEnemy.isDead || !otherEnemy.mesh) continue;
+            // Update animation mixer
+            if (this.mixer) {
+                this.mixer.update(deltaTime);
+            }
 
-                    const enemyPos = otherEnemy.mesh.position;
-                    const distanceToEnemy = this.mesh.position.distanceTo(enemyPos);
+            // Update physics position to follow the mesh
+            if (this.body) {
+                const ms = this.body.getMotionState();
+                if (ms) {
+                    const transform = new Ammo.btTransform();
+                    ms.getWorldTransform(transform);
+                    const origin = transform.getOrigin();
 
-                    if (distanceToEnemy < this.detectionRange && distanceToEnemy < closestTargetDistance) {
-                        closestTargetDistance = distanceToEnemy;
-                        closestTargetPosition = enemyPos.clone();
+                    // Update mesh position from physics
+                    this.mesh.position.set(origin.x(), origin.y() - 1.0, origin.z());
+                }
+            }
+
+            // Check if we should update AI
+            const currentTime = Date.now();
+            const timeSinceLastUpdate = currentTime - this.lastAIUpdate;
+
+            if (timeSinceLastUpdate >= this.aiUpdateInterval) {
+                this.updateAI(timeSinceLastUpdate / 1000); // Convert to seconds
+                this.lastAIUpdate = currentTime;
+            }
+
+            // Always update the health bar position
+            this.updateHealthBar();
+
+            // Handle strafing movement
+            if (this.isStrafing && this.strafeDirection && this.currentTarget) {
+                const speed = deltaTime * 3; // 3 units per second
+
+                // Get perpendicular direction to target
+                const toTarget = new THREE.Vector3(
+                    this.currentTarget.x - this.mesh.position.x,
+                    0,
+                    this.currentTarget.z - this.mesh.position.z
+                ).normalize();
+
+                // Get perpendicular direction (right vector)
+                const perpendicular = new THREE.Vector3(
+                    -toTarget.z,
+                    0,
+                    toTarget.x
+                );
+
+                // Scale by direction (-1 left, 1 right)
+                perpendicular.multiplyScalar(this.strafeDirection * speed);
+
+                // Apply movement
+                this.mesh.position.add(perpendicular);
+
+                // Update physics body to match
+                const transform = new Ammo.btTransform();
+                transform.setIdentity();
+                transform.setOrigin(new Ammo.btVector3(
+                    this.mesh.position.x,
+                    this.mesh.position.y + 1.0, // Physics body is offset
+                    this.mesh.position.z
+                ));
+
+                this.body.setWorldTransform(transform);
+                this.body.activate();
+            }
+        } catch (err) {
+            console.error("Error updating enemy:", err);
+        }
+    }
+
+    updateAI(deltaTime) {
+        try {
+            // Skip AI if enemy is dead
+            if (this.isDead) return;
+
+            // Never run AI if we don't have a mesh yet
+            if (!this.mesh) return;
+
+            const currentTime = Date.now();
+            const game = window.game;
+
+            // Skip if game isn't available
+            if (!game) return;
+
+            // Function to handle target acquisition
+            const findBestTarget = () => {
+                let closestTargetDistance = Infinity;
+                let closestTargetPosition = null;
+                let foundTarget = false;
+
+                // Always check local player first
+                if (game.player && !game.player.isDead) {
+                    const playerPos = game.player.getPosition();
+                    const playerVector = new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z);
+                    const distanceToPlayer = this.mesh.position.distanceTo(playerVector);
+
+                    if (distanceToPlayer < this.detectionRange) {
+                        closestTargetDistance = distanceToPlayer;
+                        closestTargetPosition = playerVector;
                         // Remember this target for persistence
-                        this.lastTarget = { enemyIndex: i };
+                        this.lastTarget = { id: 'local' };
                         this.lastTargetTime = currentTime;
                         foundTarget = true;
                     }
                 }
-            }
-        }
 
-        // If we found a target within range, attack or pursue
-        if (closestTargetPosition) {
-            // If within attack range, attack immediately
-            if (closestTargetDistance < this.attackRange) {
-                console.log(`Enemy attacking target at distance: ${closestTargetDistance.toFixed(2)}`);
+                // Check remote players in multiplayer mode
+                if (game.isMultiplayer && game.remotePlayers) {
+                    for (const id in game.remotePlayers) {
+                        const remotePlayer = game.remotePlayers[id];
+                        if (remotePlayer && !remotePlayer.isDead) {
+                            const remotePos = remotePlayer.getPosition();
+                            const remoteVector = new THREE.Vector3(remotePos.x, remotePos.y, remotePos.z);
+                            const distanceToRemote = this.mesh.position.distanceTo(remoteVector);
 
-                // Attack if cooldown has elapsed
-                if (currentTime - this.lastAttackTime > this.attackCooldown) {
-                    this.attack(closestTargetPosition);
-                    this.lastAttackTime = currentTime;
+                            if (distanceToRemote < this.detectionRange && distanceToRemote < closestTargetDistance) {
+                                closestTargetDistance = distanceToRemote;
+                                closestTargetPosition = remoteVector;
+                                // Remember this target for persistence
+                                this.lastTarget = { id: id };
+                                this.lastTargetTime = currentTime;
+                                foundTarget = true;
+                            }
+                        }
+                    }
                 }
 
-                shouldAttackTarget = true;
+                return {
+                    position: closestTargetPosition,
+                    distance: closestTargetDistance,
+                    found: foundTarget
+                };
+            };
 
-                // Always look at target regardless of attack cooldown
-                this.lookAt(closestTargetPosition);
+            // Find the best target
+            const targetInfo = findBestTarget();
 
-                // Strafe while in combat instead of standing still
-                // This makes enemies harder to hit while they're attacking
-                this.strafeAroundTarget(closestTargetPosition);
-                isMoving = true;
+            // If we have a target, engage it
+            if (targetInfo.found && targetInfo.position) {
+                // Set current target position
+                this.currentTarget = targetInfo.position;
 
-                // Occasionally jump during combat to dodge projectiles
-                if (this.canJump && !this.isJumping && Math.random() < 0.05) {
-                    this.jump();
+                // Enemy is within attack range of target
+                if (targetInfo.distance < this.attackRange) {
+                    // Play attack animation and handle attack logic
+                    if (currentTime - this.lastAttackTime > this.attackCooldown) {
+                        this.attack(targetInfo.position);
+                        this.lastAttackTime = currentTime;
+                    }
+
+                    // Look at target while attacking
+                    this.lookAt(targetInfo.position);
+                }
+                // Enemy is within movement range but outside attack range
+                else if (targetInfo.distance < this.detectionRange) {
+                    // Decide if we should strafe
+                    if (Math.random() < 0.01) {
+                        // 50% chance to strafe left or right
+                        this.isStrafing = true;
+                        this.strafeDirection = Math.random() < 0.5 ? -1 : 1;
+                        this.playAnimation('walkForward'); // Use walk animation for strafing
+
+                        // Stop strafing after a random time (1-3 seconds)
+                        setTimeout(() => {
+                            this.isStrafing = false;
+                        }, 1000 + Math.random() * 2000);
+                    } else {
+                        this.isStrafing = false;
+                    }
+
+                    // Move toward the target
+                    if (!this.isStrafing) {
+                        this.moveTowardWithForce(targetInfo.position, this.movementSpeed);
+                        this.playAnimation('walkForward');
+                    }
+
+                    // Always look at target
+                    this.lookAt(targetInfo.position);
                 }
             }
-            // Otherwise, move toward target to get in attack range
+            // No target found, patrol randomly
             else {
-                console.log(`Enemy pursuing target at distance: ${closestTargetDistance.toFixed(2)}`);
-                // Set target as the movement target instead of patrol point
-                targetPosition = closestTargetPosition;
-                this.moveTowardWithForce(targetPosition, 10); // Move faster toward target
-                isMoving = true;
+                // Check if we should stop pursuing the last target
+                const targetPersistenceTime = 3000; // Continue pursuing last target for 3 seconds
+                if (this.lastTarget && currentTime - this.lastTargetTime < targetPersistenceTime) {
+                    // Try to find the last target again
+                    let lastTargetPosition = null;
 
-                // Occasionally jump while pursuing to be more unpredictable
-                if (closestTargetDistance < this.attackRange * 1.5 &&
-                    this.canJump && !this.isJumping && Math.random() < 0.02) {
-                    this.jump();
+                    if (this.lastTarget.id === 'local' && game.player && !game.player.isDead) {
+                        lastTargetPosition = game.player.getPosition();
+                    } else if (game.isMultiplayer && game.remotePlayers && game.remotePlayers[this.lastTarget.id]) {
+                        const remotePlayer = game.remotePlayers[this.lastTarget.id];
+                        if (!remotePlayer.isDead) {
+                            lastTargetPosition = remotePlayer.getPosition();
+                        }
+                    }
+
+                    if (lastTargetPosition) {
+                        // Move toward last known position
+                        this.moveTowardWithForce(lastTargetPosition, this.movementSpeed);
+                        this.playAnimation('walkForward');
+                        this.lookAt(lastTargetPosition);
+                        return;
+                    }
+                }
+
+                // Random patrol behavior
+                if (!this.patrolTarget || this.mesh.position.distanceTo(this.patrolTarget) < 2 || Math.random() < 0.01) {
+                    this.setRandomPatrolTarget();
+                }
+
+                if (this.patrolTarget) {
+                    // Move toward patrol target
+                    this.moveTowardWithForce(this.patrolTarget, this.patrolSpeed);
+
+                    // Use walk animation during patrol
+                    this.playAnimation('walkForward');
+
+                    // Look toward patrol target
+                    this.lookAt(this.patrolTarget);
                 }
             }
-        }
-
-        // If we're not attacking or pursuing a target, continue with patrol behavior
-        if (!shouldAttackTarget && !targetPosition) {
-            // Force patrol logging to debug (less frequent)
-            if (Math.random() < 0.05) {
-                const distToTarget = this.mesh.position.distanceTo(this.patrolTarget);
-                console.log(`Patrol info: distance to target=${distToTarget.toFixed(2)}, target pos=(${this.patrolTarget.x.toFixed(2)}, ${this.patrolTarget.z.toFixed(2)})`);
-            }
-
-            // Move toward patrol target
-            this.moveTowardWithForce(this.patrolTarget, 5);
-            isMoving = true;
-
-            // Check if we need a new patrol target
-            if (!this.patrolTarget ||
-                this.mesh.position.distanceTo(this.patrolTarget) < 2 ||
-                Math.random() < 0.01) {
-                this.setRandomPatrolTarget();
-            }
-
-            // Occasionally jump while patrolling for more dynamic movement
-            if (this.canJump && !this.isJumping && Math.random() < 0.001) {
-                this.jump();
-            }
-        }
-
-        // If we're not moving or attacking, play idle animation
-        if (!isMoving && !this.isAttacking) {
-            this.playAnimation('idle');
+        } catch (err) {
+            console.error("Error in enemy AI update:", err);
         }
     }
 

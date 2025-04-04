@@ -17,7 +17,11 @@ export class RemotePlayer extends THREE.Object3D {
         this.mixer = null;
         this.currentAction = null;
         this.nameTag = null;
+        this.healthBar = null;
         this.isDead = false;
+        this.isAttacking = false;
+        this.isJumping = false;
+        this.health = 100;
 
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
@@ -26,7 +30,13 @@ export class RemotePlayer extends THREE.Object3D {
         this.targetPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.previousPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.interpolationFactor = 0;
-        this.INTERPOLATION_SPEED = 10; // Higher = faster interpolation
+
+        // Dynamic interpolation settings
+        this.BASE_INTERPOLATION_SPEED = 10;
+        this.interpolationSpeed = this.BASE_INTERPOLATION_SPEED;
+        this.lastUpdateTime = Date.now();
+        this.updateInterval = 100; // assume 100ms update interval initially
+        this.updateIntervals = []; // store recent update intervals for averaging
 
         // For rotation interpolation
         this.targetRotation = new THREE.Euler(0, 0, 0);
@@ -40,6 +50,9 @@ export class RemotePlayer extends THREE.Object3D {
 
         // Load the model immediately
         this.loadModel();
+
+        // Create health bar
+        this.createHealthBar();
 
         log(`Remote player ${id} created at position x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
     }
@@ -67,7 +80,7 @@ export class RemotePlayer extends THREE.Object3D {
                     // Set the model's initial position with the Y-offset to fix floating issue
                     const offsetPosition = new THREE.Vector3(
                         this.initialPosition.x,
-                        this.initialPosition.y -1.0, // Apply -1.0 offset to match local player
+                        this.initialPosition.y - 1.0, // Apply -1.0 offset to match local player
                         this.initialPosition.z
                     );
                     model.position.copy(offsetPosition);
@@ -251,18 +264,49 @@ export class RemotePlayer extends THREE.Object3D {
             return;
         }
 
+        // Define a consistent Y-offset for all player models
+        const MODEL_Y_OFFSET = -1.0;
+
+        // Calculate time since last update to adjust interpolation speed
+        const now = Date.now();
+        const timeSinceLastUpdate = now - this.lastUpdateTime;
+        this.lastUpdateTime = now;
+
+        // Only update if reasonable time has passed (ignore duplicate/batched updates)
+        if (timeSinceLastUpdate > 10) {
+            // Track update intervals for averaging (keep last 5)
+            this.updateIntervals.push(timeSinceLastUpdate);
+            if (this.updateIntervals.length > 5) {
+                this.updateIntervals.shift();
+            }
+
+            // Calculate average update interval
+            if (this.updateIntervals.length > 0) {
+                this.updateInterval = this.updateIntervals.reduce((sum, val) => sum + val, 0) / this.updateIntervals.length;
+
+                // Adjust interpolation speed based on update frequency
+                // Faster updates -> slower interpolation (smoother movement)
+                // Slower updates -> faster interpolation (catch up quicker)
+                const idealUpdateRate = 50; // 50ms = 20 updates per second is ideal
+                const updateRatio = this.updateInterval / idealUpdateRate;
+
+                // Clamp to reasonable range: between 0.5x and 3x base speed
+                this.interpolationSpeed = Math.max(0.5, Math.min(3.0, updateRatio)) * this.BASE_INTERPOLATION_SPEED;
+            }
+        }
+
         // Update interpolation targets with y-offset to fix floating model
         this.previousPosition.copy(this.position);
         this.targetPosition.set(
             position.x,
-            position.y - 1.0, // Apply -1.0 offset to match local player
+            position.y + MODEL_Y_OFFSET, // Apply offset consistently
             position.z
         );
         this.interpolationFactor = 0;
 
         // Only log position updates occasionally for debugging
         if (Math.random() < 0.05) {
-            console.log(`Remote player ${this.remoteId} target position set: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
+            console.log(`Remote player ${this.remoteId} target position set: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}, interpolation speed: ${this.interpolationSpeed.toFixed(2)}`);
         }
     }
 
@@ -315,7 +359,7 @@ export class RemotePlayer extends THREE.Object3D {
 
         // Smooth position interpolation
         if (this.interpolationFactor < 1) {
-            this.interpolationFactor += deltaTime * this.INTERPOLATION_SPEED;
+            this.interpolationFactor += deltaTime * this.interpolationSpeed;
             if (this.interpolationFactor > 1) this.interpolationFactor = 1;
 
             // Interpolate position
@@ -357,26 +401,56 @@ export class RemotePlayer extends THREE.Object3D {
         if (this.nameTag) {
             this.updateNameTag();
         }
+
+        // Update health bar position if it exists
+        if (this.healthBar) {
+            this.updateHealthBar();
+        }
     }
 
     // Update nametag position to follow the player
     updateNameTag() {
         if (!this.nameTag || !this.scene.camera) return;
 
-        // Convert 3D position to screen coordinates
-        const vector = new THREE.Vector3();
-        vector.setFromMatrixPosition(this.matrixWorld);
+        try {
+            // Convert 3D position to screen coordinates
+            const vector = new THREE.Vector3();
+            vector.setFromMatrixPosition(this.matrixWorld);
 
-        // Project to screen coordinates
-        vector.project(this.scene.camera);
+            // Check if player is behind camera
+            const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
+            const playerDirection = new THREE.Vector3().subVectors(vector, this.scene.camera.position).normalize();
+            const dotProduct = cameraDirection.dot(playerDirection);
 
-        // Convert to CSS coordinates
-        const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-        const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 50; // Position above player
+            // Hide tag if player is behind camera (dot product < 0)
+            if (dotProduct < 0) {
+                this.nameTag.style.display = 'none';
+                return;
+            }
 
-        // Update nametag position
-        this.nameTag.style.left = `${x - (this.nameTag.offsetWidth / 2)}px`;
-        this.nameTag.style.top = `${y}px`;
+            // Show tag if player is visible
+            this.nameTag.style.display = 'block';
+
+            // Project to screen coordinates
+            vector.project(this.scene.camera);
+
+            // Convert to CSS coordinates
+            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 50; // Position above player
+
+            // Update nametag position
+            this.nameTag.style.left = `${x - (this.nameTag.offsetWidth / 2)}px`;
+            this.nameTag.style.top = `${y}px`;
+
+            // Add distance fade effect - farther players have more transparent tags
+            const distance = this.position.distanceTo(this.scene.camera.position);
+            const maxDistance = 50; // Maximum distance at which tag is visible
+            const opacity = Math.max(0.2, 1 - (distance / maxDistance));
+
+            this.nameTag.style.opacity = opacity.toString();
+        } catch (err) {
+            console.error('Error updating nametag:', err);
+        }
     }
 
     setAnimation(name) {
@@ -392,6 +466,20 @@ export class RemotePlayer extends THREE.Object3D {
         // Clean up mixer
         if (this.mixer) {
             this.mixer.stopAllAction();
+        }
+
+        // Remove health bar if it exists
+        if (this.healthBar) {
+            if (this.healthBar.container && this.healthBar.container.parentNode) {
+                this.healthBar.container.parentNode.removeChild(this.healthBar.container);
+            }
+            this.healthBar = null;
+        }
+
+        // Remove name tag if it exists
+        if (this.nameTag && this.nameTag.parentNode) {
+            this.nameTag.parentNode.removeChild(this.nameTag);
+            this.nameTag = null;
         }
 
         // Remove model
@@ -418,5 +506,217 @@ export class RemotePlayer extends THREE.Object3D {
         }
 
         console.log(`Remote player ${this.remoteId} removed from scene`);
+    }
+
+    attack() {
+        if (this.isAttacking) return;
+
+        this.isAttacking = true;
+        this.playAnimation('attack');
+
+        // Reset attack state after a fixed time
+        setTimeout(() => {
+            this.isAttacking = false;
+
+            // If we're still in attack animation, switch back to idle
+            if (this.currentAnimation === 'attack' && !this.isDead) {
+                this.playAnimation('idle');
+            }
+        }, 800); // Fixed time for attack animation
+    }
+
+    takeDamage(amount) {
+        if (!this.health) this.health = 100; // Initialize health if it doesn't exist
+
+        this.health = Math.max(0, this.health - amount);
+
+        console.log(`Remote player ${this.remoteId} took ${amount} damage, health: ${this.health}`);
+
+        // Update health bar
+        this.updateHealthBar();
+
+        // Add damage indicator
+        this.showDamageIndicator();
+
+        if (this.health <= 0 && !this.isDead) {
+            this.die();
+        }
+    }
+
+    die() {
+        if (this.isDead) return;
+
+        this.isDead = true;
+        console.log(`Remote player ${this.remoteId} died`);
+
+        // Play death animation if available
+        this.playAnimation('death');
+    }
+
+    respawn(position) {
+        this.isDead = false;
+        this.health = 100;
+
+        // Update position if provided
+        if (position) {
+            this.setPosition(position);
+        }
+
+        // Reset to idle animation
+        this.playAnimation('idle');
+
+        console.log(`Remote player ${this.remoteId} respawned`);
+    }
+
+    showDamageIndicator() {
+        // Create a floating damage indicator
+        const indicator = document.createElement('div');
+        indicator.className = 'damage-indicator';
+        indicator.textContent = '!';
+        indicator.style.position = 'absolute';
+        indicator.style.color = 'red';
+        indicator.style.fontWeight = 'bold';
+        indicator.style.fontSize = '24px';
+        indicator.style.textShadow = '0 0 3px black';
+        indicator.style.zIndex = '1000';
+        indicator.style.pointerEvents = 'none';
+
+        document.body.appendChild(indicator);
+
+        // Position the indicator over the player
+        const updatePosition = () => {
+            if (!this.model) {
+                indicator.remove();
+                return;
+            }
+
+            // Convert 3D position to screen coordinates
+            const vector = new THREE.Vector3();
+            vector.setFromMatrixPosition(this.matrixWorld);
+
+            // Project to screen coordinates
+            vector.project(this.scene.camera);
+
+            // Convert to CSS coordinates
+            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 30;
+
+            indicator.style.left = `${x}px`;
+            indicator.style.top = `${y}px`;
+        };
+
+        // Animate and remove the indicator
+        let opacity = 1;
+        const animate = () => {
+            opacity -= 0.02;
+            indicator.style.opacity = opacity;
+            updatePosition();
+
+            if (opacity > 0) {
+                requestAnimationFrame(animate);
+            } else {
+                indicator.remove();
+            }
+        };
+
+        updatePosition();
+        animate();
+    }
+
+    createHealthBar() {
+        // Create a health bar element
+        const healthBarContainer = document.createElement('div');
+        healthBarContainer.className = 'remote-health-bar-container';
+        healthBarContainer.style.position = 'absolute';
+        healthBarContainer.style.width = '50px';
+        healthBarContainer.style.height = '6px';
+        healthBarContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+        healthBarContainer.style.borderRadius = '3px';
+        healthBarContainer.style.overflow = 'hidden';
+        healthBarContainer.style.pointerEvents = 'none';
+        healthBarContainer.style.zIndex = '999';
+
+        const healthBarFill = document.createElement('div');
+        healthBarFill.className = 'remote-health-bar-fill';
+        healthBarFill.style.width = '100%'; // Start at full health
+        healthBarFill.style.height = '100%';
+        healthBarFill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green for full health
+        healthBarFill.style.transition = 'width 0.3s ease-in-out, background-color 0.3s ease-in-out';
+
+        healthBarContainer.appendChild(healthBarFill);
+        document.body.appendChild(healthBarContainer);
+
+        this.healthBar = {
+            container: healthBarContainer,
+            fill: healthBarFill
+        };
+
+        // Initialize health bar with current health
+        this.updateHealthBar();
+    }
+
+    updateHealthBar() {
+        if (!this.healthBar) return;
+
+        // Update health bar width
+        const healthPercent = Math.max(0, Math.min(100, this.health));
+        this.healthBar.fill.style.width = `${healthPercent}%`;
+
+        // Change color based on health
+        if (healthPercent > 70) {
+            this.healthBar.fill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
+        } else if (healthPercent > 30) {
+            this.healthBar.fill.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+        } else {
+            this.healthBar.fill.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+        }
+
+        // Position the health bar above the name tag
+        this.updateHealthBarPosition();
+    }
+
+    updateHealthBarPosition() {
+        if (!this.healthBar || !this.scene.camera) return;
+
+        try {
+            // Convert 3D position to screen coordinates
+            const vector = new THREE.Vector3();
+            vector.setFromMatrixPosition(this.matrixWorld);
+
+            // Check if player is behind camera
+            const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
+            const playerDirection = new THREE.Vector3().subVectors(vector, this.scene.camera.position).normalize();
+            const dotProduct = cameraDirection.dot(playerDirection);
+
+            // Hide health bar if player is behind camera or dead
+            if (dotProduct < 0 || this.isDead) {
+                this.healthBar.container.style.display = 'none';
+                return;
+            }
+
+            // Only show health bar if not full health
+            const healthPercent = Math.max(0, Math.min(100, this.health));
+            this.healthBar.container.style.display = healthPercent < 100 ? 'block' : 'none';
+
+            // Project to screen coordinates
+            vector.project(this.scene.camera);
+
+            // Convert to CSS coordinates
+            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 65; // Position above nametag
+
+            // Update health bar position
+            this.healthBar.container.style.left = `${x - 25}px`; // Center the 50px wide bar
+            this.healthBar.container.style.top = `${y}px`;
+
+            // Adjust opacity based on distance like the nametag
+            const distance = this.position.distanceTo(this.scene.camera.position);
+            const maxDistance = 50;
+            const opacity = Math.max(0.2, 1 - (distance / maxDistance));
+
+            this.healthBar.container.style.opacity = opacity.toString();
+        } catch (err) {
+            console.error('Error updating health bar position:', err);
+        }
     }
 } 

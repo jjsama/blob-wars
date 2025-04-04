@@ -11,6 +11,7 @@ import { log, error } from './debug.js';
 import { NetworkManager } from './utils/NetworkManager.js';
 import { ColorManager } from './utils/ColorManager.js';
 import { GAME_CONFIG } from './utils/constants.js';
+import { PredictionSystem } from './physics/PredictionSystem.js';
 
 export class Game {
     constructor() {
@@ -34,6 +35,9 @@ export class Game {
         this.isMultiplayer = false; // Flag to enable multiplayer features - set to false by default
         this.lastNetworkUpdateTime = 0;
         this.networkUpdateInterval = 50; // Send updates every 50ms (20 times per second)
+
+        // Initialize prediction system for client-side prediction and server reconciliation
+        this.predictionSystem = new PredictionSystem(this);
 
         // Reduce movement speed for better gameplay
         this.moveForce = 15; // Reduced from 20
@@ -150,6 +154,24 @@ export class Game {
             this.setupInputHandlers();
             log('Input handlers set up');
 
+            // Register debug keyboard commands for prediction system
+            document.addEventListener('keydown', (event) => {
+                // J key - toggle prediction (changed from P)
+                if (event.key === 'j') {
+                    this.predictionSystem.togglePrediction();
+                }
+                // K key - toggle reconciliation (changed from R)
+                if (event.key === 'k') {
+                    this.predictionSystem.toggleReconciliation();
+                }
+                // L key - toggle debug display (changed from D)
+                if (event.key === 'l') {
+                    this.predictionSystem.toggleDebugMode();
+                    log('Debug display toggled');
+                }
+            });
+            log('Debug commands registered (J: toggle prediction, K: toggle reconciliation, L: toggle debug display)');
+
             // Start the game loop before attempting to connect
             // This ensures the game is playable even if connection fails
             log('Starting animation loop');
@@ -258,6 +280,91 @@ export class Game {
             this.handleGameStateUpdate(gameState);
         });
 
+        // Register event handler for player damage
+        this.networkManager.on('playerDamage', (data) => {
+            // Check if the damage is for our local player
+            if (data.targetId === this.networkManager.playerId && this.player) {
+                log(`Local player took ${data.amount} damage`);
+
+                // Apply damage to local player
+                this.player.takeDamage(data.amount, data.attackerId);
+            }
+            // Check if it's a remote player we have
+            else if (this.remotePlayers[data.targetId]) {
+                log(`Remote player ${data.targetId} took ${data.amount} damage`);
+
+                // Apply damage to remote player
+                this.remotePlayers[data.targetId].takeDamage(data.amount);
+            }
+        });
+
+        // Register event handler for player death
+        this.networkManager.on('playerDeath', (data) => {
+            log(`Player death event for ${data.playerId}`);
+
+            // If it's our player, handle local death
+            if (data.playerId === this.networkManager.playerId && this.player) {
+                log('Local player died');
+
+                // Only update local player if not already dead
+                if (!this.player.isDead) {
+                    this.player.isDead = true;
+                    this.player.health = 0;
+                    this.player.die();
+                }
+            }
+            // If it's a remote player, handle remote death
+            else if (this.remotePlayers[data.playerId]) {
+                log(`Remote player ${data.playerId} died`);
+
+                // Only update remote player if not already dead
+                if (!this.remotePlayers[data.playerId].isDead) {
+                    this.remotePlayers[data.playerId].isDead = true;
+                    this.remotePlayers[data.playerId].health = 0;
+                    this.remotePlayers[data.playerId].die();
+                }
+            }
+        });
+
+        // Register event handler for player respawn
+        this.networkManager.on('playerRespawn', (data) => {
+            log(`Player respawn event for ${data.playerId}`);
+
+            // If it's our player, handle local respawn
+            if (data.playerId === this.networkManager.playerId && this.player) {
+                log('Local player respawned');
+
+                // Apply respawn to local player
+                this.player.health = 100;
+                this.player.isDead = false;
+
+                // Use server position if provided
+                if (data.position) {
+                    this.player.setPosition(data.position);
+                }
+
+                // Reset to idle animation
+                this.player.playAnimation('idle');
+            }
+            // If it's a remote player, handle remote respawn
+            else if (this.remotePlayers[data.playerId]) {
+                log(`Remote player ${data.playerId} respawned`);
+
+                // Apply respawn to remote player
+                const remotePlayer = this.remotePlayers[data.playerId];
+                remotePlayer.health = 100;
+                remotePlayer.isDead = false;
+
+                // Use server position if provided
+                if (data.position) {
+                    remotePlayer.setPosition(data.position);
+                }
+
+                // Reset to idle animation
+                remotePlayer.playAnimation('idle');
+            }
+        });
+
         // Connect to server
         this.networkManager.connect()
             .then(() => {
@@ -320,29 +427,59 @@ export class Game {
     }
 
     /**
-     * Handle game state updates from the server
+     * Handle a game state update from the server
+     * @param {Object} gameState - The game state
      */
     handleGameStateUpdate(gameState) {
-        if (!gameState || !gameState.players) {
-            console.error('Received invalid game state update:', gameState);
-            return;
-        }
-
         try {
-            // Debug: log game state update details occasionally
-            if (Math.random() < 0.05) {
-                console.log(`Game state update received with ${Object.keys(gameState.players).length} players`);
+            if (!gameState.players) {
+                console.warn('Received gameState without players property');
+                return;
             }
 
-            // Create a set to track which player IDs we've seen
+            // Process local player state if it exists in the update
+            const localPlayerId = this.networkManager.playerId;
+            if (localPlayerId && gameState.players[localPlayerId] && this.player) {
+                const localPlayerData = gameState.players[localPlayerId];
+
+                // Process server update through prediction system for smooth reconciliation
+                if (this.predictionSystem) {
+                    this.predictionSystem.processServerUpdate(gameState);
+                } else {
+                    // If no prediction system, directly update the position
+                    this.player.setPosition(localPlayerData.position);
+                }
+
+                // Update health if server says it has changed and client-side prediction didn't catch it
+                if (localPlayerData.health !== undefined && this.player.health !== localPlayerData.health) {
+                    this.player.health = localPlayerData.health;
+                    this.player.updateHealthUI();
+                }
+
+                // Update death state if server says it has changed
+                if (localPlayerData.isDead !== undefined && this.player.isDead !== localPlayerData.isDead) {
+                    this.player.isDead = localPlayerData.isDead;
+
+                    // If newly dead according to server, trigger death if we didn't already
+                    if (localPlayerData.isDead && !this.player.isDead) {
+                        this.player.die();
+                    } else if (!localPlayerData.isDead && this.player.isDead) {
+                        // If server says we're alive but we think we're dead, respawn
+                        this.player.respawn();
+                    }
+                }
+            }
+
             const seenPlayerIds = new Set();
 
-            // Update remote players
+            // Process remote players
             for (const id in gameState.players) {
-                // Skip our own player
-                if (id === this.networkManager.playerId) continue;
+                // Skip local player (already processed above)
+                if (id === this.networkManager.playerId) {
+                    seenPlayerIds.add(id);
+                    continue;
+                }
 
-                // Mark this player ID as seen
                 seenPlayerIds.add(id);
 
                 const playerData = gameState.players[id];
@@ -373,26 +510,80 @@ export class Game {
                         remotePlayer.setRotation(playerData.rotation);
                     }
 
-                    // Determine animation based on movement
-                    if (playerData.animation) {
-                        // If server directly provides animation state, use it
-                        remotePlayer.setAnimation(playerData.animation);
-                    } else {
-                        // Otherwise detect movement and set appropriate animation
-                        const isMoving = this.detectRemotePlayerMovement(prevPos, playerData.position);
+                    // Handle health updates
+                    if (playerData.health !== undefined && remotePlayer.health !== playerData.health) {
+                        remotePlayer.health = playerData.health;
+                        remotePlayer.updateHealthBar(); // Ensure health bar is updated
+                    }
 
-                        if (isMoving) {
-                            // Use walkForward animation when moving
-                            remotePlayer.setAnimation('walkForward');
-                        } else {
-                            // Use idle animation when not moving
+                    // Handle death state
+                    if (playerData.isDead !== undefined) {
+                        if (playerData.isDead && !remotePlayer.isDead) {
+                            // Player just died
+                            remotePlayer.isDead = true;
+                            remotePlayer.setAnimation('death');
+                            console.log(`Remote player ${id} died`);
+                        } else if (!playerData.isDead && remotePlayer.isDead) {
+                            // Player respawned
+                            remotePlayer.isDead = false;
                             remotePlayer.setAnimation('idle');
+                            console.log(`Remote player ${id} respawned`);
                         }
+                    }
+
+                    // Handle attack state
+                    if (playerData.isAttacking && !remotePlayer.isAttacking) {
+                        remotePlayer.attack();
+                        console.log(`Remote player ${id} attacked`);
+                    }
+
+                    // Handle jumping state
+                    if (playerData.isJumping && !remotePlayer.isJumping) {
+                        remotePlayer.setAnimation('jump');
+                        remotePlayer.isJumping = true;
+
+                        // Reset jumping state after a fixed time
+                        setTimeout(() => {
+                            remotePlayer.isJumping = false;
+                            if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
+                                remotePlayer.setAnimation('idle');
+                            }
+                        }, 1000);
+
+                        console.log(`Remote player ${id} jumped`);
+                    }
+
+                    // Handle movement animation based on position changes
+                    if (!remotePlayer.isDead && !remotePlayer.isAttacking && !remotePlayer.isJumping) {
+                        this.detectRemotePlayerMovement(prevPos, playerData.position, remotePlayer);
                     }
                 } else {
                     // New player joined, create it
                     console.log(`Creating new remote player ${id}`);
                     this.addRemotePlayer(id, playerData.position);
+
+                    // Set initial state if provided
+                    const remotePlayer = this.remotePlayers[id];
+                    if (remotePlayer) {
+                        if (playerData.health !== undefined) {
+                            remotePlayer.health = playerData.health;
+                        }
+
+                        if (playerData.isDead) {
+                            remotePlayer.isDead = true;
+                            remotePlayer.setAnimation('death');
+                        }
+
+                        if (playerData.isAttacking) {
+                            remotePlayer.isAttacking = true;
+                            remotePlayer.setAnimation('attack');
+
+                            // Reset attack state after animation duration
+                            setTimeout(() => {
+                                remotePlayer.isAttacking = false;
+                            }, 800);
+                        }
+                    }
                 }
             }
 
@@ -403,16 +594,187 @@ export class Game {
                     this.removeRemotePlayer(id);
                 }
             }
+
+            // Handle projectiles from server
+            if (gameState.projectiles && Array.isArray(gameState.projectiles)) {
+                // Process server-side projectiles
+                this.syncServerProjectiles(gameState.projectiles);
+            }
+
+            // Handle enemies from server
+            if (gameState.enemies && Array.isArray(gameState.enemies)) {
+                // Process server-side enemies
+                this.syncServerEnemies(gameState.enemies);
+            }
         } catch (err) {
             console.error('Error processing game state update:', err);
         }
     }
 
     /**
+     * Synchronize projectiles from server
+     * @param {Array} serverProjectiles - Projectiles from server state
+     */
+    syncServerProjectiles(serverProjectiles) {
+        try {
+            // Skip if running single-player
+            if (!this.isMultiplayer) return;
+
+            // Get local player ID for reference
+            const localPlayerId = this.networkManager.playerId;
+
+            // Track which local projectiles have been confirmed by the server
+            const confirmedProjectileIds = new Set();
+
+            // Process each server projectile
+            for (const serverProjectile of serverProjectiles) {
+                // Track server-confirmed projectiles by ID
+                if (serverProjectile.id) {
+                    confirmedProjectileIds.add(serverProjectile.id);
+                }
+
+                // Handle projectiles from other players by creating visual representations
+                if (serverProjectile.ownerId !== localPlayerId && serverProjectile.active && serverProjectile.position) {
+                    // Visualize remote player projectiles
+                    this.visualizeRemoteProjectile(serverProjectile);
+                }
+                // For local player projectiles, reconcile with server state
+                else if (serverProjectile.ownerId === localPlayerId && serverProjectile.id) {
+                    // Find matching local projectile
+                    const localProjectile = this.projectiles.find(p => p.id === serverProjectile.id);
+
+                    if (localProjectile) {
+                        // If server says projectile is inactive but client shows active, deactivate it
+                        if (!serverProjectile.active && localProjectile.active) {
+                            console.log(`Server marked projectile ${serverProjectile.id} as inactive`);
+                            localProjectile.active = false;
+
+                            // If this projectile has a mesh, remove it
+                            if (localProjectile.mesh) {
+                                this.scene.scene.remove(localProjectile.mesh);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remove local projectiles that weren't confirmed by the server (if they're older than reconciliation window)
+            if (this.isMultiplayer && this.networkManager.connected) {
+                // Only enforce this for older projectiles (200ms or older) to account for network delay
+                const reconciliationTime = Date.now() - 200;
+
+                for (let i = this.projectiles.length - 1; i >= 0; i--) {
+                    const projectile = this.projectiles[i];
+
+                    // If this projectile is from the local player, has an ID, was created before our window,
+                    // and is not confirmed by the server, remove it
+                    if (projectile.ownerId === localPlayerId &&
+                        projectile.id &&
+                        projectile.creationTime < reconciliationTime &&
+                        !confirmedProjectileIds.has(projectile.id)) {
+
+                        console.log(`Removing unconfirmed projectile ${projectile.id}`);
+
+                        // Remove mesh from scene
+                        if (projectile.mesh) {
+                            this.scene.scene.remove(projectile.mesh);
+                        }
+
+                        // Remove from array
+                        this.projectiles.splice(i, 1);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Error syncing server projectiles:', err);
+        }
+    }
+
+    /**
+     * Visualize a remote projectile
+     * @param {Object} projectile - Server projectile data
+     */
+    visualizeRemoteProjectile(projectile) {
+        // This is a simplified visualization - in a full implementation,
+        // you would track these by ID and update their positions
+
+        // Create a simple sphere to represent the projectile
+        const geometry = new THREE.SphereGeometry(0.2, 8, 8);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xff0000, // Red for remote projectiles
+            emissive: 0xff0000,
+            emissiveIntensity: 0.5
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(
+            projectile.position.x,
+            projectile.position.y,
+            projectile.position.z
+        );
+
+        // Add to scene
+        this.scene.scene.add(mesh);
+
+        // Remove after a short time
+        setTimeout(() => {
+            this.scene.scene.remove(mesh);
+            geometry.dispose();
+            material.dispose();
+        }, 100); // Quick flash to indicate projectile position
+    }
+
+    /**
+     * Synchronize enemies from server
+     * @param {Array} serverEnemies - Enemies from server state
+     */
+    syncServerEnemies(serverEnemies) {
+        // In multiplayer mode, we use server-provided enemies
+        if (!this.isMultiplayer) return;
+
+        try {
+            // For simplicity in this implementation, we just handle basic enemy visualization
+            // A full implementation would track enemies by ID, interpolate positions, etc.
+
+            // For now, we just update existing enemies or create new ones if needed
+            for (const serverEnemy of serverEnemies) {
+                // Find if we have this enemy locally
+                const existingEnemy = this.enemies.find(e => e.id === serverEnemy.id);
+
+                if (existingEnemy) {
+                    // Update existing enemy
+                    existingEnemy.setPosition(serverEnemy.position);
+
+                    if (serverEnemy.rotation) {
+                        existingEnemy.setRotation(serverEnemy.rotation.y);
+                    }
+
+                    // Update health and state
+                    if (typeof serverEnemy.health === 'number') {
+                        existingEnemy.health = serverEnemy.health;
+                    }
+
+                    if (serverEnemy.isDead) {
+                        existingEnemy.die();
+                    }
+
+                    if (serverEnemy.isAttacking) {
+                        existingEnemy.attack();
+                    }
+                }
+                // We will rely on the server to manage enemy creation/destruction
+                // The local adjustBotCount method handles this separately
+            }
+        } catch (err) {
+            console.error('Error syncing server enemies:', err);
+        }
+    }
+
+    /**
      * Detect if a remote player is moving by comparing positions
      */
-    detectRemotePlayerMovement(prevPos, newPos) {
-        if (!prevPos || !newPos) return false;
+    detectRemotePlayerMovement(prevPos, newPos, remotePlayer) {
+        if (!prevPos || !newPos) return;
 
         // Calculate distance between positions
         const dx = prevPos.x - newPos.x;
@@ -423,7 +785,13 @@ export class Game {
         // Using squared distance for efficiency (avoiding square root)
         const MOVEMENT_THRESHOLD_SQUARED = 0.0001; // ~0.01 units of movement
 
-        return distanceSquared > MOVEMENT_THRESHOLD_SQUARED;
+        if (distanceSquared > MOVEMENT_THRESHOLD_SQUARED) {
+            // Use walkForward animation when moving
+            remotePlayer.setAnimation('walkForward');
+        } else {
+            // Use idle animation when not moving
+            remotePlayer.setAnimation('idle');
+        }
     }
 
     /**
@@ -442,26 +810,29 @@ export class Game {
         const playerColor = this.colorManager.getColorForId(id);
         log(`Assigning color ${playerColor.toString(16)} to remote player ${id}`);
 
-        // Create a new RemotePlayer instance
-        const remotePlayer = new RemotePlayer(
-            this.scene.scene,  // scene
-            id,                // player ID
-            position,          // initial position
-            playerColor        // player color
-        );
+        // Add random offset to prevent players from spawning on top of each other
+        const spawnOffset = {
+            x: (Math.random() - 0.5) * 5,
+            y: 0,
+            z: (Math.random() - 0.5) * 5
+        };
 
-        // Create a nametag for the remote player
-        this.addNameTag(remotePlayer, id);
+        // Create new position with offset
+        const offsetPosition = {
+            x: position.x + spawnOffset.x,
+            y: position.y,
+            z: position.z + spawnOffset.z
+        };
 
-        // Store the remote player
-        this.remotePlayers[id] = remotePlayer;
+        // Create a new remote player
+        this.remotePlayers[id] = new RemotePlayer(this.scene, id, offsetPosition, playerColor);
 
-        log(`Remote player ${id} added successfully`);
+        // Add name tag
+        this.addNameTag(this.remotePlayers[id], id);
 
-        // Adjust bot count when a new player joins
-        this.adjustBotCount();
+        log(`Remote player ${id} created at position: x=${offsetPosition.x.toFixed(2)}, y=${offsetPosition.y.toFixed(2)}, z=${offsetPosition.z.toFixed(2)}`);
 
-        return remotePlayer;
+        return this.remotePlayers[id];
     }
 
     /**
@@ -583,7 +954,15 @@ export class Game {
         const position = this.player.getPosition();
         const rotation = this.player.getRotation();
 
-        this.networkManager.updatePlayerState(position, rotation);
+        // Include player status information
+        const playerState = {
+            health: this.player.health,
+            isAttacking: this.player.isAttacking,
+            isDead: this.player.isDead,
+            animation: this.player.currentAnimation
+        };
+
+        this.networkManager.updatePlayerState(position, rotation, playerState);
     }
 
     // Modify setupInputHandlers to include network events
@@ -849,74 +1228,272 @@ export class Game {
     shootProjectile() {
         if (!this.player) return;
 
-        // Trigger attack animation
-        this.player.attack();
+        // Don't allow shooting while dead
+        if (this.player.isDead) return;
 
-        // Get camera position and direction
-        const cameraPosition = this.scene.camera.position.clone();
+        // Apply a cooldown to prevent rapid-fire
+        const now = Date.now();
+        if (this.lastShootTime && now - this.lastShootTime < 200) {
+            return; // Still in cooldown
+        }
+        this.lastShootTime = now;
 
-        // Create a raycaster from the camera through the center of the screen (crosshair)
-        const raycaster = new THREE.Raycaster();
-        // Use the camera's view direction
-        const direction = new THREE.Vector3(0, 0, -1);
-        direction.unproject(this.scene.camera).sub(cameraPosition).normalize();
+        // Get the direction the player is facing (camera forward vector)
+        const direction = new THREE.Vector3();
+        this.scene.camera.getWorldDirection(direction);
 
-        raycaster.set(cameraPosition, direction);
-
-        // Calculate a target point far in the distance
-        const targetPoint = cameraPosition.clone().add(direction.clone().multiplyScalar(1000));
-
-        // Calculate weapon position (offset from player)
+        // Get the position to spawn the projectile (slightly in front of player)
         const playerPos = this.player.getPosition();
-        const rightVector = new THREE.Vector3().crossVectors(direction, new THREE.Vector3(0, 1, 0)).normalize();
-
-        // Position the weapon to the right side of the player at shoulder height
-        const weaponOffset = new THREE.Vector3(
-            rightVector.x * 0.5,
-            1.5, // Shoulder height
-            rightVector.z * 0.5
+        const spawnPos = new THREE.Vector3(
+            playerPos.x + direction.x * 1.5,
+            playerPos.y + 1.7, // Adjust for height
+            playerPos.z + direction.z * 1.5
         );
 
-        // Start position is from this weapon position
-        const position = new THREE.Vector3(
-            playerPos.x + weaponOffset.x,
-            playerPos.y + weaponOffset.y,
-            playerPos.z + weaponOffset.z
-        );
+        // Generate a unique ID for this projectile
+        const projectileId = `proj_${this.networkManager.playerId || 'local'}_${now}_${Math.floor(Math.random() * 1000)}`;
 
-        // Calculate the EXACT direction from the weapon position to the target point
-        // This is the key to accurate aiming
-        const exactDirection = new THREE.Vector3();
-        exactDirection.subVectors(targetPoint, position).normalize();
+        // Create a new projectile immediately for client-side prediction
+        const projectile = {
+            id: projectileId,
+            position: spawnPos.clone(),
+            velocity: direction.clone().multiplyScalar(40), // Speed: 40 units per second
+            mesh: null,
+            ownerId: this.networkManager.playerId || 'local',
+            creationTime: now,
+            active: true,
+            update: function (deltaTime) {
+                if (!this.active) return false;
 
-        // Create the projectile with the exact direction
-        const projectile = new Projectile(
-            this.scene.scene,
-            this.physics.physicsWorld,
-            position,
-            exactDirection
-        );
+                // Update position
+                this.position.x += this.velocity.x * deltaTime;
+                this.position.y += this.velocity.y * deltaTime;
+                this.position.z += this.velocity.z * deltaTime;
 
+                // Update mesh position
+                if (this.mesh) {
+                    this.mesh.position.copy(this.position);
+                }
+
+                // Auto-deactivate old projectiles
+                if (Date.now() - this.creationTime > 3000) {
+                    this.active = false;
+                    return false;
+                }
+
+                return true;
+            }
+        };
+
+        // Create a sphere mesh for the projectile
+        const geometry = new THREE.SphereGeometry(0.2, 8, 8);
+        const material = new THREE.MeshBasicMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.5
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(spawnPos);
+
+        // Add to scene
+        this.scene.scene.add(mesh);
+        projectile.mesh = mesh;
+
+        // Add to projectiles array
         this.projectiles.push(projectile);
 
-        // Debug visualization (optional)
-        // this.drawDebugLine(position, targetPoint);
+        // Set player as attacking - do this before sending to server for faster local feedback
+        this.player.attack();
+
+        // Add muzzle flash immediately for visual feedback
+        this.addMuzzleFlash(spawnPos, direction);
+
+        // Send shoot event to server in multiplayer
+        if (this.isMultiplayer && this.networkManager.connected) {
+            this.networkManager.sendShoot(direction, spawnPos, projectileId);
+        }
+
+        // Debug info
+        console.log(`Projectile ${projectileId} fired at position: ${spawnPos.x.toFixed(2)}, ${spawnPos.y.toFixed(2)}, ${spawnPos.z.toFixed(2)}`);
     }
 
-    // Optional debug method to visualize the projectile path
-    drawDebugLine(start, end) {
-        const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
-        const points = [];
-        points.push(start);
-        points.push(end);
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const line = new THREE.Line(geometry, material);
-        this.scene.scene.add(line);
+    addMuzzleFlash(position, direction) {
+        // Create a point light for muzzle flash
+        const light = new THREE.PointLight(0x00ffff, 5, 3);
+        light.position.copy(position);
+        this.scene.scene.add(light);
 
-        // Remove the line after 1 second
+        // Remove after a short time
         setTimeout(() => {
-            this.scene.scene.remove(line);
-        }, 1000);
+            this.scene.scene.remove(light);
+        }, 100);
+    }
+
+    /**
+     * Check for projectile collisions with remote players
+     */
+    checkProjectileRemotePlayerCollisions() {
+        // Skip if no projectiles or no remote players
+        if (!this.projectiles || this.projectiles.length === 0) return;
+        if (!this.remotePlayers || Object.keys(this.remotePlayers).length === 0) return;
+
+        // Check each projectile against each remote player
+        for (let i = this.projectiles.length - 1; i >= 0; i--) {
+            const projectile = this.projectiles[i];
+
+            // Skip inactive projectiles
+            if (!projectile.active) continue;
+
+            // Get projectile position
+            const projPos = projectile.mesh ? projectile.mesh.position : projectile.position;
+            if (!projPos) continue;
+
+            // Check against each remote player
+            for (const id in this.remotePlayers) {
+                const remotePlayer = this.remotePlayers[id];
+
+                // Skip dead players
+                if (remotePlayer.isDead) continue;
+
+                // Get player position
+                const playerPos = remotePlayer.getPosition();
+                if (!playerPos) continue;
+
+                // Calculate distance between projectile and player
+                const dx = projPos.x - playerPos.x;
+                const dy = projPos.y - playerPos.y;
+                const dz = projPos.z - playerPos.z;
+                const distSquared = dx * dx + dy * dy + dz * dz;
+
+                // Hit detection radius (1.5 units squared)
+                const hitRadiusSquared = 2.25;
+
+                if (distSquared < hitRadiusSquared) {
+                    // Hit detected! Handle damage
+                    console.log(`Projectile hit remote player ${id}`);
+
+                    // Deactivate projectile
+                    projectile.active = false;
+
+                    // Remove projectile mesh
+                    if (projectile.mesh) {
+                        this.scene.scene.remove(projectile.mesh);
+                        // Clean up resources
+                        if (projectile.mesh.geometry) projectile.mesh.geometry.dispose();
+                        if (projectile.mesh.material) {
+                            if (Array.isArray(projectile.mesh.material)) {
+                                projectile.mesh.material.forEach(m => m.dispose());
+                            } else {
+                                projectile.mesh.material.dispose();
+                            }
+                        }
+                    }
+
+                    // Set damage amount based on projectile type
+                    const damageAmount = projectile.damage || 20;
+
+                    // Send damage event to server if connected
+                    if (this.isMultiplayer && this.networkManager.connected) {
+                        this.networkManager.sendDamage(id, damageAmount);
+                        console.log(`Sent damage event to server: player ${id} took ${damageAmount} damage`);
+                    } else {
+                        // In single player or when server connection is not available,
+                        // apply damage directly
+                        remotePlayer.takeDamage(damageAmount);
+                    }
+
+                    // Create hit effect at point of impact
+                    this.createHitEffect(projPos);
+
+                    // Remove from projectiles array
+                    this.projectiles.splice(i, 1);
+
+                    // Break the loop since this projectile is now inactive
+                    break;
+                }
+            }
+        }
+    }
+
+    /**
+     * Check for enemy projectile collisions with local player
+     */
+    checkEnemyProjectilePlayerCollisions() {
+        // Skip if no projectiles or player is dead
+        if (!this.enemyProjectiles || this.enemyProjectiles.length === 0) return;
+        if (!this.player || this.player.isDead) return;
+
+        // Get player position
+        const playerPos = this.player.getPosition();
+        if (!playerPos) return;
+
+        // Check each enemy projectile against local player
+        for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
+            const projectile = this.enemyProjectiles[i];
+
+            // Skip inactive projectiles
+            if (!projectile.active) continue;
+
+            // Get projectile position
+            const projPos = projectile.mesh ? projectile.mesh.position : projectile.position;
+            if (!projPos) continue;
+
+            // Calculate distance between projectile and player
+            const dx = projPos.x - playerPos.x;
+            const dy = projPos.y - playerPos.y;
+            const dz = projPos.z - playerPos.z;
+            const distSquared = dx * dx + dy * dy + dz * dz;
+
+            // Hit detection radius (1.5 units squared)
+            const hitRadiusSquared = 2.25;
+
+            if (distSquared < hitRadiusSquared) {
+                // Hit detected! Handle damage
+                console.log(`Enemy projectile hit local player`);
+
+                // Deactivate projectile
+                projectile.active = false;
+
+                // Remove projectile mesh
+                if (projectile.mesh) {
+                    this.scene.scene.remove(projectile.mesh);
+                    // Clean up resources
+                    if (projectile.mesh.geometry) projectile.mesh.geometry.dispose();
+                    if (projectile.mesh.material) {
+                        if (Array.isArray(projectile.mesh.material)) {
+                            projectile.mesh.material.forEach(m => m.dispose());
+                        } else {
+                            projectile.mesh.material.dispose();
+                        }
+                    }
+                }
+
+                // Set damage amount based on projectile type
+                const damageAmount = projectile.damage || 10;
+
+                // Apply damage to local player
+                this.player.takeDamage(damageAmount);
+
+                // Create hit effect at point of impact
+                this.createHitEffect(projPos);
+
+                // Remove from projectiles array
+                this.enemyProjectiles.splice(i, 1);
+            }
+        }
+    }
+
+    createHitEffect(position) {
+        // Create a point light for hit effect
+        const light = new THREE.PointLight(0xff0000, 3, 2);
+        light.position.copy(position);
+        this.scene.scene.add(light);
+
+        // Remove after a short time
+        setTimeout(() => {
+            this.scene.scene.remove(light);
+        }, 200);
     }
 
     updateMovement() {
@@ -926,11 +1503,41 @@ export class Game {
                 return;
             }
 
+            // Don't allow movement if player is dead
+            if (this.player.isDead) {
+                return;
+            }
+
             // Get movement input
             const moveDirection = this.input.getMovementDirection();
+            const movementState = this.input.getMovementState();
+
+            // Check for jump input
+            const isJumping = this.input.keys.space && this.canJump;
+
+            // If in multiplayer mode, use prediction system
+            if (this.isMultiplayer && this.predictionSystem) {
+                // Create an input packet
+                const input = {
+                    movement: movementState,
+                    jump: isJumping
+                };
+
+                // Process input through prediction system
+                this.predictionSystem.processInput(input, 1 / 60); // Using fixed timestep for prediction
+
+                // Update animation separately from physics
+                if (this.player) {
+                    this.player.updateMovementAnimation(movementState);
+                }
+
+                return; // Exit early - prediction system handles the actual movement
+            }
+
+            // Single player mode - direct movement application
 
             // If no movement, explicitly stop the player by setting velocity to zero
-            if (!moveDirection) {
+            if (!moveDirection || (!moveDirection.x && !moveDirection.z)) {
                 // Only preserve vertical velocity (for jumps/gravity)
                 if (this.player.body) {
                     const velocity = this.player.body.getLinearVelocity();
@@ -946,6 +1553,16 @@ export class Game {
             // Apply movement force with defensive checks
             if (typeof this.player.applyMovementForce === 'function') {
                 this.player.applyMovementForce(moveDirection, this.moveForce, this.maxVelocity);
+
+                // Update animation based on movement
+                if (this.player && this.input) {
+                    this.player.updateMovementAnimation(movementState);
+                }
+            }
+
+            // Handle jumping in single player mode
+            if (isJumping) {
+                this.handleJump();
             }
         } catch (err) {
             error('Error in updateMovement:', err);
@@ -1023,30 +1640,6 @@ export class Game {
         }
     }
 
-    checkEnemyProjectilePlayerCollisions() {
-        if (!this.player || this.player.isDead) return;
-
-        const playerPos = this.player.getPosition();
-
-        for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
-            const projectile = this.enemyProjectiles[i];
-            if (!projectile.mesh) continue;
-
-            const projectilePos = projectile.mesh.position;
-            const distance = projectilePos.distanceTo(playerPos);
-
-            // If projectile is close enough to player
-            if (distance < 2) {
-                // Player takes damage
-                this.player.takeDamage(10); // Enemy projectiles do less damage
-
-                // Remove projectile
-                projectile.remove();
-                this.enemyProjectiles.splice(i, 1);
-            }
-        }
-    }
-
     updateEnemyProjectiles(deltaTime) {
         // Update and clean up enemy projectiles
         for (let i = this.enemyProjectiles.length - 1; i >= 0; i--) {
@@ -1064,99 +1657,384 @@ export class Game {
         }
     }
 
+    /**
+     * Create or update a debug display for multiplayer information
+     */
+    updateDebugDisplay() {
+        // Completely disable debug display to avoid interfering with gameplay
+        return;
+
+        // Only create/update when debug mode is enabled
+        if (!this.isMultiplayer || !this.predictionSystem || !this.predictionSystem.debugMode) {
+            // If debug display exists but should be hidden, remove it
+            if (this.debugDisplay && this.debugDisplay.container) {
+                this.debugDisplay.container.style.display = 'none';
+            }
+            return;
+        }
+
+        // Create debug display if it doesn't exist
+        if (!this.debugDisplay) {
+            this.debugDisplay = {
+                container: document.createElement('div'),
+                stats: document.createElement('div'),
+                positions: document.createElement('div'),
+                prediction: document.createElement('div'),
+                network: document.createElement('div'),
+                lastUpdateTime: 0
+            };
+
+            // Style the container
+            const container = this.debugDisplay.container;
+            container.style.position = 'fixed';
+            container.style.top = '10px';
+            container.style.right = '10px';
+            container.style.width = '300px';
+            container.style.padding = '10px';
+            container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+            container.style.color = '#fff';
+            container.style.fontFamily = 'monospace';
+            container.style.fontSize = '12px';
+            container.style.borderRadius = '5px';
+            container.style.zIndex = '1000';
+            container.style.pointerEvents = 'none'; // Don't block mouse clicks
+
+            // Add sections
+            container.appendChild(this.debugDisplay.stats);
+            container.appendChild(this.debugDisplay.positions);
+            container.appendChild(this.debugDisplay.prediction);
+            container.appendChild(this.debugDisplay.network);
+
+            // Add container to document
+            document.body.appendChild(container);
+        }
+
+        // Only update every 200ms for performance
+        const now = Date.now();
+        if (now - this.debugDisplay.lastUpdateTime < 200) {
+            return;
+        }
+        this.debugDisplay.lastUpdateTime = now;
+
+        // Make sure display is visible
+        this.debugDisplay.container.style.display = 'block';
+
+        // Update information
+
+        // 1. General statistics
+        this.debugDisplay.stats.innerHTML = `
+            <h3 style="margin: 0 0 5px 0; color: #4fc3f7;">Multiplayer Stats</h3>
+            <p>Connected: ${this.networkManager.connected ? '✓' : '✘'}</p>
+            <p>Player ID: ${this.networkManager.playerId || 'Unknown'}</p>
+            <p>Remote Players: ${Object.keys(this.remotePlayers).length}</p>
+            <p>Projectiles: ${this.projectiles.length}</p>
+        `;
+
+        // 2. Position information
+        const playerPos = this.player ? this.player.getPosition() : { x: 0, y: 0, z: 0 };
+        this.debugDisplay.positions.innerHTML = `
+            <h3 style="margin: 10px 0 5px 0; color: #4fc3f7;">Position</h3>
+            <p>Local: x=${playerPos.x.toFixed(2)}, y=${playerPos.y.toFixed(2)}, z=${playerPos.z.toFixed(2)}</p>
+        `;
+
+        // 3. Prediction system info
+        if (this.predictionSystem) {
+            const stats = this.predictionSystem.getStats();
+            this.debugDisplay.prediction.innerHTML = `
+                <h3 style="margin: 10px 0 5px 0; color: #4fc3f7;">Prediction</h3>
+                <p>Enabled: ${stats.enabled.prediction ? '✓' : '✘'}</p>
+                <p>Reconciliation: ${stats.enabled.reconciliation ? '✓' : '✘'}</p>
+                <p>Pending Inputs: ${stats.pendingInputCount}</p>
+                <p>Corrections: ${stats.reconciliationCount}</p>
+                <p>Last Correction: ${stats.timeSinceLastReconciliation}ms ago</p>
+                <p>Avg Correction: x=${stats.averageCorrection.x.toFixed(2)}, y=${stats.averageCorrection.y.toFixed(2)}, z=${stats.averageCorrection.z.toFixed(2)}</p>
+                <p>Is Jumping: ${stats.isJumping ? '✓' : '✘'}</p>
+            `;
+        }
+    }
+
+    /**
+     * Adjust the number of bots based on player count to maintain a total of 12 players
+     */
+    adjustBotCount() {
+        // Calculate how many bots we need
+        const totalPlayers = 12; // Target number for deathmatch
+        const connectedPlayerCount = Object.keys(this.remotePlayers).length + 1; // +1 for local player
+        const requiredBotCount = Math.max(0, totalPlayers - connectedPlayerCount);
+
+        // Current bot count
+        const currentBotCount = this.enemies.length;
+
+        log(`Adjusting bot count: ${currentBotCount} bots currently, need ${requiredBotCount} (${connectedPlayerCount} players connected)`);
+
+        // If we need more bots, spawn them
+        if (requiredBotCount > currentBotCount) {
+            const botsToSpawn = requiredBotCount - currentBotCount;
+            log(`Spawning ${botsToSpawn} more bots to reach required ${requiredBotCount}`);
+            this.spawnEnemies(botsToSpawn);
+        }
+        // If we need fewer bots, remove some
+        else if (requiredBotCount < currentBotCount) {
+            const botsToRemove = currentBotCount - requiredBotCount;
+            log(`Removing ${botsToRemove} bots to reach required ${requiredBotCount}`);
+
+            // Remove the oldest bots
+            for (let i = 0; i < botsToRemove; i++) {
+                if (this.enemies.length > 0) {
+                    const enemy = this.enemies.shift(); // Remove the first (oldest) enemy
+
+                    // Release its color
+                    if (enemy.id) {
+                        this.colorManager.releaseColor(enemy.id);
+                    }
+
+                    // Properly remove from scene and physics
+                    if (enemy.mesh) {
+                        this.scene.scene.remove(enemy.mesh);
+                    }
+                    if (enemy.body) {
+                        this.physics.physicsWorld.removeRigidBody(enemy.body);
+                    }
+
+                    // Make sure health bar is removed
+                    if (enemy.healthBarContainer) {
+                        document.body.removeChild(enemy.healthBarContainer);
+                    }
+
+                    log(`Removed bot ${enemy.id || 'unknown'}`);
+                }
+            }
+        } else {
+            log('Bot count is already correct');
+        }
+    }
+
+    /**
+     * Spawn a specified number of enemy bots
+     * @param {Number} count - Number of bots to spawn
+     */
+    spawnEnemies(count) {
+        try {
+            log(`Spawning ${count} enemies`);
+
+            for (let i = 0; i < count; i++) {
+                // Generate a unique ID for the bot
+                const botId = 'bot-' + Math.random().toString(36).substring(2, 9);
+
+                // Get a random spawn position
+                const spawnPosition = this.getRandomSpawnPosition();
+
+                // Get a unique color for this bot
+                const botColor = this.colorManager.getColorForId(botId);
+
+                // Create the enemy
+                const enemy = new Enemy(
+                    this.scene.scene,
+                    this.physics.physicsWorld,
+                    spawnPosition,
+                    botColor
+                );
+
+                // Set the bot's ID
+                enemy.id = botId;
+
+                // Add to enemies list
+                this.enemies.push(enemy);
+
+                log(`Spawned bot with ID: ${botId} at position: x=${spawnPosition.x.toFixed(2)}, y=${spawnPosition.y.toFixed(2)}, z=${spawnPosition.z.toFixed(2)}`);
+            }
+        } catch (err) {
+            error('Error spawning enemies:', err);
+        }
+    }
+
+    /**
+     * Get a random spawn position away from the player
+     * @returns {Object} Position object with x, y, z coordinates
+     */
+    getRandomSpawnPosition() {
+        // Get player position
+        const playerPos = this.player ? this.player.getPosition() : { x: 0, y: 0, z: 0 };
+
+        // Get a random position that's at least 15 units away from the player
+        let position;
+        let distance = 0;
+
+        // Try up to 10 times to find a suitable position
+        for (let attempts = 0; attempts < 10 && distance < 15; attempts++) {
+            // Random position within a 30x30 area
+            position = {
+                x: (Math.random() - 0.5) * 60,
+                y: 5, // Start above ground
+                z: (Math.random() - 0.5) * 60
+            };
+
+            // Calculate distance to player
+            const dx = position.x - playerPos.x;
+            const dz = position.z - playerPos.z;
+            distance = Math.sqrt(dx * dx + dz * dz);
+        }
+
+        return position;
+    }
+
+    /**
+     * Animation loop - handles requesting animation frames and calculating delta time
+     */
+    animate() {
+        try {
+            // Set flag to indicate initialization is complete
+            this.initialized = true;
+
+            // Use requestAnimationFrame for smooth animation
+            requestAnimationFrame((timestamp) => {
+                // Calculate delta time in seconds
+                const deltaTime = (timestamp - this.previousTime) / 1000;
+                this.previousTime = timestamp;
+
+                // Limit delta time to avoid large jumps if the game was paused
+                const clampedDeltaTime = Math.min(deltaTime, 0.1);
+
+                // Update game state
+                this.update(clampedDeltaTime);
+
+                // Continue the animation loop
+                this.animate();
+            });
+        } catch (err) {
+            error('Error in animation loop', err);
+        }
+    }
+
+    /**
+     * Main update method for the game
+     * @param {Number} deltaTime - Time elapsed since last frame
+     */
     update(deltaTime) {
         try {
-            // Skip update if no player or deltaTime is invalid
-            if (!this.player || !deltaTime || isNaN(deltaTime)) return;
+            // Skip update if game is not initialized
+            if (!this.initialized) return;
 
-            // Step physics simulation
-            if (this.physics) {
-                try {
-                    this.physics.update(deltaTime);
-                } catch (physicsError) {
-                    error('Error in physics update:', physicsError);
-                }
+            // Skip update if physics world is not initialized
+            if (!this.physics || !this.physics.physicsWorld) return;
+
+            // Get raw input state
+            const inputState = this.input.getInputState();
+
+            // Process input with prediction system in multiplayer mode
+            if (this.isMultiplayer && this.predictionSystem && this.networkManager.connected) {
+                this.predictionSystem.processInput({
+                    movement: {
+                        forward: inputState.forward,
+                        backward: inputState.backward,
+                        left: inputState.left,
+                        right: inputState.right
+                    },
+                    jump: inputState.jump,
+                    attack: inputState.attack
+                }, deltaTime);
+
+                // Update prediction system for velocity damping
+                this.predictionSystem.update(deltaTime);
+            } else {
+                // Single player movement
+                this.updateMovement();
             }
 
-            // Update player
-            if (this.player) {
-                try {
-                    this.player.update(deltaTime);
+            // Update physics world - include time step and maximum substeps
+            this.physics.update(deltaTime, 2);
 
-                    // Update player movement based on input - CRITICAL FOR MOVEMENT
-                    this.updateMovement();
+            // Check if player exists
+            if (!this.player) return;
 
-                    // Log player position for debugging
-                    if (Math.random() < 0.01) { // Only log occasionally to avoid spam
-                        const pos = this.player.getPosition();
-                        console.log(`Player position: x=${pos.x.toFixed(2)}, y=${pos.y.toFixed(2)}, z=${pos.z.toFixed(2)}`);
+            // Update player physics
+            try {
+                // Update player
+                this.player.update(deltaTime);
+                this.player.checkGroundContact();
+
+                // Ensure player is above minimum Y position
+                // This prevents falling out of the world
+                const playerPosition = this.player.getPosition();
+                if (playerPosition.y < -20) {
+                    console.log('Player fell out of bounds, resetting position...');
+                    this.player.setPosition({ x: 0, y: 5, z: 0 });
+
+                    // If in multiplayer, also send the player's death
+                    if (this.isMultiplayer && this.networkManager.connected) {
+                        this.player.takeDamage(this.player.health); // Ensure death
                     }
-
-                    // Update player animation based on input
-                    if (this.input) {
-                        const movementState = this.input.getMovementState();
-                        console.log('Movement state:',
-                            movementState.isMoving ? 'Moving' : 'Not moving',
-                            movementState.isJumping ? 'Jumping' : 'Not jumping');
-                        this.player.updateMovementAnimation(movementState);
-                    }
-                } catch (playerError) {
-                    error('Error updating player:', playerError.message || playerError);
-                    console.error('Player update stack trace:', playerError.stack || 'No stack trace available');
                 }
-            }
-
-            // Update remote players
-            for (const id in this.remotePlayers) {
-                try {
-                    if (this.remotePlayers[id]) {
-                        this.remotePlayers[id].update(deltaTime);
-                    }
-                } catch (remotePlayerError) {
-                    error(`Error updating remote player ${id}:`, remotePlayerError);
-                }
+            } catch (playerErr) {
+                error('Error updating player:', playerErr);
             }
 
             // Update projectiles
             try {
                 this.updateProjectiles(deltaTime);
-            } catch (projectileError) {
-                error('Error updating projectiles:', projectileError);
+            } catch (projErr) {
+                error('Error updating projectiles:', projErr);
             }
 
-            // Update enemies in single-player mode
-            if (!this.isMultiplayer) {
-                try {
-                    this.updateEnemies(deltaTime);
-                } catch (enemyError) {
-                    error('Error updating enemies:', enemyError);
-                }
-
-                try {
-                    this.checkProjectileEnemyCollisions();
-                } catch (collisionError) {
-                    error('Error checking projectile-enemy collisions:', collisionError);
-                }
-
-                try {
-                    this.updateEnemyProjectiles(deltaTime);
-                } catch (enemyProjectileError) {
-                    error('Error updating enemy projectiles:', enemyProjectileError);
-                }
-
-                try {
-                    this.checkEnemyProjectilePlayerCollisions();
-                } catch (playerCollisionError) {
-                    error('Error checking enemy projectile-player collisions:', playerCollisionError);
-                }
+            // Update enemies
+            try {
+                this.updateEnemies(deltaTime);
+            } catch (enemyErr) {
+                error('Error updating enemies:', enemyErr);
             }
 
-            // Send player state to server (if multiplayer)
-            if (this.isMultiplayer) {
+            // Update remote players
+            try {
+                for (const id in this.remotePlayers) {
+                    this.remotePlayers[id].update(deltaTime);
+                }
+            } catch (remoteErr) {
+                error('Error updating remote players:', remoteErr);
+            }
+
+            // Check projectile-enemy collisions
+            try {
+                this.checkProjectileEnemyCollisions();
+            } catch (collisionErr) {
+                error('Error checking projectile-enemy collisions:', collisionErr);
+            }
+
+            // Update enemy projectiles
+            try {
+                this.updateEnemyProjectiles(deltaTime);
+            } catch (enemyProjErr) {
+                error('Error updating enemy projectiles:', enemyProjErr);
+            }
+
+            // Check for enemy collision with player
+            try {
+                this.checkEnemyProjectilePlayerCollisions();
+            } catch (enemyProjErr) {
+                error('Error checking enemy projectile collisions:', enemyProjErr);
+            }
+
+            // Check collisions with remote players
+            try {
+                this.checkProjectileRemotePlayerCollisions();
+            } catch (remoteCollErr) {
+                error('Error checking remote player collisions:', remoteCollErr);
+            }
+
+            // Send player state to server in multiplayer mode
+            if (this.isMultiplayer && this.networkManager.connected) {
                 try {
                     this.sendPlayerState();
-                } catch (networkError) {
-                    error('Error sending player state to server:', networkError);
+                } catch (netErr) {
+                    error('Error sending player state:', netErr);
+                }
+            }
+
+            // Update debug display for multiplayer information
+            if (this.isMultiplayer) {
+                try {
+                    this.updateDebugDisplay();
+                } catch (debugError) {
+                    error('Error updating debug display:', debugError);
                 }
             }
 
@@ -1173,41 +2051,7 @@ export class Game {
         }
     }
 
-    animate(currentTime = 0) {
-        // Continue animation loop even if there's an error
-        try {
-            requestAnimationFrame(this.animate.bind(this));
-        } catch (rafError) {
-            error('Error in requestAnimationFrame:', rafError);
-            // Fallback to setTimeout if requestAnimationFrame fails
-            setTimeout(() => this.animate(), 16);
-            return;
-        }
-
-        try {
-            // Calculate delta time in seconds (convert from ms)
-            const deltaTime = Math.min((currentTime - this.previousTime) / 1000, 0.1); // Cap at 100ms
-            this.previousTime = currentTime;
-
-            // Skip update if delta is too small to avoid physics issues
-            if (deltaTime > 0) {
-                this.update(deltaTime);
-            }
-
-            // Render the scene
-            if (this.scene) {
-                try {
-                    this.scene.update();
-                } catch (renderError) {
-                    error('Error in scene update during animation:', renderError);
-                }
-            }
-        } catch (err) {
-            error('Error in animation loop:', err);
-            // We've already set up the next animation frame, so we'll recover
-        }
-    }
-
+    // Add the missing method to handle environment elements
     addEnvironmentElements() {
         // Add only decorative elements, no walls
         this.addTrees();
@@ -1340,148 +2184,6 @@ export class Game {
             Ammo.destroy(rbInfo);
         });
 
-        log('Invisible walls added to map boundaries');
-    }
-
-    spawnEnemies(count) {
-        try {
-            log('Spawning ' + count + ' enemies');
-
-            // Spawn enemies at random positions
-            for (let i = 0; i < count; i++) {
-                // Use a wider distribution for enemy spawning
-                const x = Math.random() * 80 - 40;
-                const z = Math.random() * 80 - 40;
-
-                // IMPORTANT: Start enemies at a higher position to ensure they have time to fall
-                const y = 15; // Increased from 5 to 15 to ensure they have time to fall and make ground contact
-
-                // Generate a unique ID for this enemy and get a color from the color manager
-                const enemyId = `enemy-${i}-${Date.now().toString(36)}`;
-                const enemyColor = this.colorManager.getColorForId(enemyId);
-                log(`Assigning color ${enemyColor.toString(16)} to enemy ${i}`);
-
-                // Create enemy with the assigned color
-                const enemy = new Enemy(this.scene.scene, this.physics.physicsWorld, { x, y, z }, enemyColor);
-
-                // Store the ID for later reference (useful for color release when enemy dies)
-                enemy.id = enemyId;
-
-                this.enemies.push(enemy);
-
-                log(`Enemy ${i} (ID: ${enemyId}) spawned at position x=${x.toFixed(2)}, y=${y.toFixed(2)}, z=${z.toFixed(2)}`);
-
-                // Force immediate activation of physics bodies with stronger initial impulse
-                setTimeout(() => {
-                    if (enemy.body) {
-                        // Ensure the body is active
-                        enemy.body.activate(true);
-
-                        // Apply a very strong initial downward impulse to start falling immediately
-                        const impulse = new Ammo.btVector3(0, -50, 0); // Increased from -30 to -50
-                        enemy.body.applyCentralImpulse(impulse);
-                        Ammo.destroy(impulse);
-
-                        log(`Applied strong initial impulse to enemy ${i}`);
-
-                        // Log initial physics position
-                        const transform = enemy.body.getWorldTransform();
-                        const origin = transform.getOrigin();
-                        log(`Enemy ${i} initial physics position: x=${origin.x().toFixed(2)}, y=${origin.y().toFixed(2)}, z=${origin.z().toFixed(2)}`);
-
-                        // Set up periodic checks to ensure enemy reaches the ground
-                        const checkInterval = setInterval(() => {
-                            if (!enemy.body || enemy.isDead) {
-                                clearInterval(checkInterval);
-                                return;
-                            }
-
-                            // Get current position
-                            const transform = enemy.body.getWorldTransform();
-                            const origin = transform.getOrigin();
-                            const y = origin.y();
-
-                            // Check if enemy is grounded
-                            const isGrounded = enemy.checkGroundContact();
-                            log(`Enemy ${i} at y=${y.toFixed(2)}, grounded: ${isGrounded}`);
-
-                            // If enemy is grounded, stop checking
-                            if (isGrounded) {
-                                log(`Enemy ${i} has reached the ground!`);
-                                clearInterval(checkInterval);
-                            }
-
-                            // If enemy is stuck in air, apply an additional impulse
-                            if (!isGrounded && y > 2) {
-                                const newImpulse = new Ammo.btVector3(0, -30, 0);
-                                enemy.body.applyCentralImpulse(newImpulse);
-                                Ammo.destroy(newImpulse);
-                                log(`Applied additional impulse to enemy ${i} at height ${y.toFixed(2)}`);
-                            }
-                        }, 1000); // Check every second
-                    }
-                }, 100);
-            }
-
-            log('Successfully spawned ' + count + ' enemies');
-        } catch (err) {
-            error('Error spawning enemies:', err);
-        }
-    }
-
-    /**
-     * Adjust the number of bots based on player count to maintain a total of 12 players
-     */
-    adjustBotCount() {
-        // Calculate how many bots we need
-        const totalPlayers = 12; // Target number for deathmatch
-        const connectedPlayerCount = Object.keys(this.remotePlayers).length + 1; // +1 for local player
-        const requiredBotCount = Math.max(0, totalPlayers - connectedPlayerCount);
-
-        // Current bot count
-        const currentBotCount = this.enemies.length;
-
-        log(`Adjusting bot count: ${currentBotCount} bots currently, need ${requiredBotCount} (${connectedPlayerCount} players connected)`);
-
-        // If we need more bots, spawn them
-        if (requiredBotCount > currentBotCount) {
-            const botsToSpawn = requiredBotCount - currentBotCount;
-            log(`Spawning ${botsToSpawn} more bots to reach required ${requiredBotCount}`);
-            this.spawnEnemies(botsToSpawn);
-        }
-        // If we need fewer bots, remove some
-        else if (requiredBotCount < currentBotCount) {
-            const botsToRemove = currentBotCount - requiredBotCount;
-            log(`Removing ${botsToRemove} bots to reach required ${requiredBotCount}`);
-
-            // Remove the oldest bots
-            for (let i = 0; i < botsToRemove; i++) {
-                if (this.enemies.length > 0) {
-                    const enemy = this.enemies.shift(); // Remove the first (oldest) enemy
-
-                    // Release its color
-                    if (enemy.id) {
-                        this.colorManager.releaseColor(enemy.id);
-                    }
-
-                    // Properly remove from scene and physics
-                    if (enemy.mesh) {
-                        this.scene.scene.remove(enemy.mesh);
-                    }
-                    if (enemy.body) {
-                        this.physics.physicsWorld.removeRigidBody(enemy.body);
-                    }
-
-                    // Make sure health bar is removed
-                    if (enemy.healthBarContainer) {
-                        document.body.removeChild(enemy.healthBarContainer);
-                    }
-
-                    log(`Removed bot ${enemy.id || 'unknown'}`);
-                }
-            }
-        } else {
-            log('Bot count is already correct');
-        }
+        console.log('Invisible walls added to map boundaries');
     }
 } 

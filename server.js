@@ -17,6 +17,10 @@ const server = Bun.serve({
                     position: { x: 0, y: 5, z: 0 },
                     rotation: { x: 0, y: 0, z: 0 },
                     health: 100,
+                    isDead: false,
+                    isAttacking: false,
+                    animation: 'idle',
+                    lastProcessedInput: 0,
                     connected: true
                 };
 
@@ -227,6 +231,10 @@ function handleClientMessage(ws, data) {
             position: { x: 0, y: 5, z: 0 },
             rotation: { x: 0, y: 0, z: 0 },
             health: 100,
+            isDead: false,
+            isAttacking: false,
+            animation: 'idle',
+            lastProcessedInput: 0,
             connected: true
         };
     }
@@ -242,7 +250,22 @@ function handleClientMessage(ws, data) {
                         y: typeof data.position.y === 'number' ? data.position.y : gameState.players[playerId].position.y,
                         z: typeof data.position.z === 'number' ? data.position.z : gameState.players[playerId].position.z
                     };
-                    gameState.players[playerId].position = position;
+
+                    // Apply basic speed check to prevent teleporting/speedhacking
+                    const prevPos = gameState.players[playerId].position;
+                    const distance = Math.sqrt(
+                        Math.pow(position.x - prevPos.x, 2) +
+                        Math.pow(position.y - prevPos.y, 2) +
+                        Math.pow(position.z - prevPos.z, 2)
+                    );
+
+                    // If distance is too large, reject the update (10 units max per update)
+                    const MAX_MOVEMENT_PER_UPDATE = 10;
+                    if (distance > MAX_MOVEMENT_PER_UPDATE) {
+                        console.log(`Rejecting movement from ${playerId}: distance ${distance.toFixed(2)} exceeds limit`);
+                    } else {
+                        gameState.players[playerId].position = position;
+                    }
                 }
 
                 if (data.rotation && typeof data.rotation === 'object') {
@@ -254,6 +277,28 @@ function handleClientMessage(ws, data) {
                     };
                     gameState.players[playerId].rotation = rotation;
                 }
+
+                // Update player state if provided
+                if (data.health !== undefined && typeof data.health === 'number') {
+                    gameState.players[playerId].health = data.health;
+                }
+
+                if (data.isDead !== undefined) {
+                    gameState.players[playerId].isDead = Boolean(data.isDead);
+                }
+
+                if (data.animation) {
+                    gameState.players[playerId].animation = data.animation;
+                }
+
+                if (data.isAttacking !== undefined) {
+                    gameState.players[playerId].isAttacking = Boolean(data.isAttacking);
+                }
+
+                // Store sequence number for client-side prediction
+                if (data.sequence !== undefined && typeof data.sequence === 'number') {
+                    gameState.players[playerId].lastProcessedInput = data.sequence;
+                }
             } catch (err) {
                 console.error(`Error updating player ${playerId}:`, err);
             }
@@ -262,20 +307,181 @@ function handleClientMessage(ws, data) {
         case 'PLAYER_SHOOT':
             // Handle player shooting
             console.log(`Player ${playerId} fired a projectile`);
-            // Will implement projectile logic later
+            if (data.direction && data.origin) {
+                // Create projectile in game state
+                const projectile = {
+                    id: `proj_${playerId}_${Date.now()}`,
+                    ownerId: playerId,
+                    origin: data.origin,
+                    direction: data.direction,
+                    speed: 50, // Units per second
+                    damage: 10,
+                    createdAt: Date.now(),
+                    position: { ...data.origin }, // Start at origin
+                    active: true
+                };
+
+                gameState.projectiles.push(projectile);
+                console.log(`Created projectile ${projectile.id} for player ${playerId}`);
+            }
             break;
 
-        case 'PLAYER_JUMP':
-            // Handle player jump
-            console.log(`Player ${playerId} jumped`);
-            // Will implement jump logic later
+        case 'PLAYER_ATTACK':
+            // Handle player attack
+            console.log(`Player ${playerId} attacked`);
+            gameState.players[playerId].isAttacking = true;
+
+            // Reset attack state after animation duration
+            setTimeout(() => {
+                if (gameState.players[playerId]) {
+                    gameState.players[playerId].isAttacking = false;
+                }
+            }, 800);
+            break;
+
+        case 'PLAYER_DAMAGE':
+            // Handle player damage event
+            if (data.targetId && typeof data.amount === 'number') {
+                const targetId = data.targetId;
+                const amount = data.amount;
+
+                // Validate target exists
+                if (gameState.players[targetId]) {
+                    const targetPlayer = gameState.players[targetId];
+
+                    // Apply damage only if player is alive
+                    if (!targetPlayer.isDead) {
+                        targetPlayer.health = Math.max(0, targetPlayer.health - amount);
+                        console.log(`Player ${targetId} took ${amount} damage, health: ${targetPlayer.health}`);
+
+                        // Check if player died
+                        if (targetPlayer.health <= 0) {
+                            targetPlayer.isDead = true;
+                            targetPlayer.health = 0;
+                            console.log(`Player ${targetId} died from damage by ${playerId}`);
+
+                            // Broadcast death event
+                            broadcastToAll({
+                                type: 'PLAYER_DEATH',
+                                data: {
+                                    playerId: targetId,
+                                    killerId: playerId
+                                }
+                            });
+
+                            // Schedule respawn after delay
+                            setTimeout(() => {
+                                if (gameState.players[targetId]) {
+                                    gameState.players[targetId].health = 100;
+                                    gameState.players[targetId].isDead = false;
+                                    gameState.players[targetId].position = {
+                                        x: Math.random() * 20 - 10, // Random position within ±10
+                                        y: 5, // Above ground
+                                        z: Math.random() * 20 - 10
+                                    };
+
+                                    // Broadcast respawn event
+                                    broadcastToAll({
+                                        type: 'PLAYER_RESPAWN',
+                                        data: {
+                                            playerId: targetId,
+                                            position: gameState.players[targetId].position
+                                        }
+                                    });
+
+                                    console.log(`Player ${targetId} respawned`);
+                                }
+                            }, 3000); // 3 second respawn time
+                        }
+
+                        // Broadcast damage event to all players
+                        broadcastToAll({
+                            type: 'PLAYER_DAMAGE',
+                            data: {
+                                targetId,
+                                amount,
+                                attackerId: playerId
+                            }
+                        });
+                    }
+                }
+            }
+            break;
+
+        case 'PLAYER_DEATH':
+            // Player reported their own death
+            if (!gameState.players[playerId].isDead) {
+                gameState.players[playerId].isDead = true;
+                gameState.players[playerId].health = 0;
+
+                console.log(`Player ${playerId} reported death`);
+
+                // Broadcast death event
+                broadcastToAll({
+                    type: 'PLAYER_DEATH',
+                    data: {
+                        playerId: playerId
+                    }
+                });
+
+                // Schedule respawn
+                setTimeout(() => {
+                    if (gameState.players[playerId]) {
+                        gameState.players[playerId].health = 100;
+                        gameState.players[playerId].isDead = false;
+                        gameState.players[playerId].position = {
+                            x: Math.random() * 20 - 10,
+                            y: 5,
+                            z: Math.random() * 20 - 10
+                        };
+
+                        console.log(`Player ${playerId} respawned`);
+
+                        // Broadcast respawn event
+                        broadcastToAll({
+                            type: 'PLAYER_RESPAWN',
+                            data: {
+                                playerId: playerId,
+                                position: gameState.players[playerId].position
+                            }
+                        });
+                    }
+                }, 3000); // 3 second respawn time
+            }
+            break;
+
+        case 'PLAYER_RESPAWN':
+            // Player is requesting a respawn
+            if (gameState.players[playerId].isDead) {
+                const respawnPos = data.position || {
+                    x: Math.random() * 20 - 10,
+                    y: 5,
+                    z: Math.random() * 20 - 10
+                };
+
+                gameState.players[playerId].health = 100;
+                gameState.players[playerId].isDead = false;
+                gameState.players[playerId].position = respawnPos;
+
+                console.log(`Player ${playerId} manually respawned`);
+
+                // Broadcast respawn event
+                broadcastToAll({
+                    type: 'PLAYER_RESPAWN',
+                    data: {
+                        playerId: playerId,
+                        position: respawnPos
+                    }
+                });
+            }
             break;
 
         case 'PING':
             // Handle ping from client (keep-alive)
             ws.send(JSON.stringify({
                 type: 'PONG',
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                serverTime: Date.now()
             }));
             break;
 
@@ -309,22 +515,29 @@ function broadcastGameState() {
                         y: typeof player.rotation?.y === 'number' ? player.rotation.y : 0,
                         z: typeof player.rotation?.z === 'number' ? player.rotation.z : 0
                     },
-                    health: typeof player.health === 'number' ? player.health : 100
+                    health: typeof player.health === 'number' ? player.health : 100,
+                    isDead: Boolean(player.isDead),
+                    isAttacking: Boolean(player.isAttacking),
+                    animation: player.animation || 'idle',
+                    lastProcessedInput: player.lastProcessedInput || 0
                 };
             }
         }
+
+        // Limit projectiles to active ones
+        const activeProjectiles = gameState.projectiles.filter(p => p.active);
 
         const payload = JSON.stringify({
             type: 'GAME_STATE',
             data: {
                 players: sanitizedPlayers,
-                projectiles: gameState.projectiles,
+                projectiles: activeProjectiles,
                 enemies: gameState.enemies,
                 timestamp: Date.now()
             }
         });
 
-        // Count active connections
+        // Count active connections - properly initialized
         let activeConnections = 0;
 
         // Send to each client directly
@@ -353,8 +566,29 @@ function broadcastGameState() {
                 delete gameState.players[playerId];
             }
         }
+
+        // Log active connections count
+        if (Math.random() < 0.1) { // Log only occasionally
+            console.log(`Broadcast complete, sent to ${activeConnections} active connections`);
+        }
     } catch (err) {
         console.error('Error in broadcastGameState:', err);
+    }
+}
+
+// Helper function to broadcast message to all connected clients
+function broadcastToAll(message) {
+    const payload = JSON.stringify(message);
+
+    for (const playerId in gameState.connections) {
+        const ws = gameState.connections[playerId];
+        if (ws && ws.readyState === 1) {
+            try {
+                ws.send(payload);
+            } catch (error) {
+                console.error(`Error broadcasting to player ${playerId}:`, error);
+            }
+        }
     }
 }
 
@@ -439,14 +673,347 @@ function updateGameState() {
         const deltaTime = (currentTime - gameState.lastUpdateTime) / 1000; // Convert to seconds
         gameState.lastUpdateTime = currentTime;
 
-        // Update projectiles
-        // Will implement projectile updates later
+        // Apply ground constraint to all players - prevent them from falling through
+        // or getting stuck in the air
+        for (const playerId in gameState.players) {
+            const player = gameState.players[playerId];
 
-        // Update enemies
-        // Will implement enemy updates later
+            // Skip dead players
+            if (player.isDead) continue;
+
+            // If player is below ground, reset to ground level
+            if (player.position.y < 0) {
+                player.position.y = 0;
+            }
+
+            // If player has been in the air without updating for too long (3 seconds),
+            // force them back to ground
+            if (!player.lastYUpdateTime) {
+                player.lastYUpdateTime = currentTime;
+                player.lastY = player.position.y;
+            }
+            else if (player.position.y > 0.5 &&
+                Math.abs(player.position.y - player.lastY) < 0.01 &&
+                currentTime - player.lastYUpdateTime > 3000) {
+                // Player has been stuck in the air - force back to ground
+                console.log(`Player ${playerId} appeared stuck at y=${player.position.y.toFixed(2)} - resetting to ground`);
+                player.position.y = 0;
+                player.lastYUpdateTime = currentTime;
+            }
+
+            // Track Y position changes
+            if (Math.abs(player.position.y - player.lastY) > 0.01) {
+                player.lastY = player.position.y;
+                player.lastYUpdateTime = currentTime;
+            }
+        }
+
+        // Update projectiles
+        updateProjectiles(deltaTime);
+
+        // Check for projectile collisions with players
+        checkProjectilePlayerCollisions();
+
+        // Update enemies - basic implementation
+        updateEnemies(deltaTime);
     } catch (err) {
         console.error('Error in updateGameState:', err);
     }
+}
+
+// Update projectile positions
+function updateProjectiles(deltaTime) {
+    const MAX_PROJECTILE_LIFETIME = 5000; // 5 seconds max lifetime
+
+    // Update each projectile position based on direction and speed
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const projectile = gameState.projectiles[i];
+
+        // Check if projectile is too old
+        const age = Date.now() - projectile.createdAt;
+        if (age > MAX_PROJECTILE_LIFETIME) {
+            // Remove old projectiles
+            gameState.projectiles.splice(i, 1);
+            continue;
+        }
+
+        // Skip inactive projectiles
+        if (!projectile.active) {
+            gameState.projectiles.splice(i, 1);
+            continue;
+        }
+
+        // Update position based on direction and speed
+        projectile.position.x += projectile.direction.x * projectile.speed * deltaTime;
+        projectile.position.y += projectile.direction.y * projectile.speed * deltaTime;
+        projectile.position.z += projectile.direction.z * projectile.speed * deltaTime;
+    }
+}
+
+// Check for projectile collisions with players
+function checkProjectilePlayerCollisions() {
+    // Process each active projectile
+    for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
+        const projectile = gameState.projectiles[i];
+
+        // Skip if already inactive
+        if (!projectile.active) continue;
+
+        // Check against each player
+        for (const playerId in gameState.players) {
+            // Skip if this is the projectile owner
+            if (playerId === projectile.ownerId) continue;
+
+            const player = gameState.players[playerId];
+
+            // Skip dead players
+            if (player.isDead) continue;
+
+            // Calculate distance between projectile and player
+            const dx = projectile.position.x - player.position.x;
+            const dy = projectile.position.y - player.position.y;
+            const dz = projectile.position.z - player.position.z;
+
+            const distanceSquared = dx * dx + dy * dy + dz * dz;
+
+            // Hit if distance is less than 2 units
+            if (distanceSquared < 4) {
+                // Mark projectile as inactive
+                projectile.active = false;
+
+                // Apply damage to the hit player
+                const damage = projectile.damage || 10;
+
+                // If player was alive, apply damage
+                if (player.health > 0) {
+                    player.health = Math.max(0, player.health - damage);
+
+                    console.log(`Projectile hit: Player ${playerId} hit for ${damage} damage, health now ${player.health}`);
+
+                    // Broadcast damage event
+                    broadcastToAll({
+                        type: 'PLAYER_DAMAGE',
+                        data: {
+                            targetId: playerId,
+                            amount: damage,
+                            attackerId: projectile.ownerId
+                        }
+                    });
+
+                    // Check if player died
+                    if (player.health <= 0) {
+                        player.isDead = true;
+
+                        console.log(`Player ${playerId} died from projectile by ${projectile.ownerId}`);
+
+                        // Broadcast death event
+                        broadcastToAll({
+                            type: 'PLAYER_DEATH',
+                            data: {
+                                playerId: playerId,
+                                killerId: projectile.ownerId
+                            }
+                        });
+
+                        // Schedule respawn
+                        setTimeout(() => {
+                            if (gameState.players[playerId]) {
+                                gameState.players[playerId].health = 100;
+                                gameState.players[playerId].isDead = false;
+                                gameState.players[playerId].position = {
+                                    x: Math.random() * 20 - 10,
+                                    y: 5,
+                                    z: Math.random() * 20 - 10
+                                };
+
+                                console.log(`Player ${playerId} respawned`);
+
+                                // Broadcast respawn event
+                                broadcastToAll({
+                                    type: 'PLAYER_RESPAWN',
+                                    data: {
+                                        playerId: playerId,
+                                        position: gameState.players[playerId].position
+                                    }
+                                });
+                            }
+                        }, 3000); // 3 second respawn time
+                    }
+                }
+
+                // Break to next projectile - this one has been consumed
+                break;
+            }
+        }
+    }
+}
+
+// Basic enemy update function
+function updateEnemies(deltaTime) {
+    // Only update enemies if we have at least one player
+    const playerCount = Object.keys(gameState.players).filter(id =>
+        gameState.players[id].connected && !gameState.players[id].isDead
+    ).length;
+
+    if (playerCount === 0) return;
+
+    // Adjust enemy count based on player count (1-2 enemies per player)
+    const desiredEnemyCount = Math.min(10, Math.ceil(playerCount * 1.5));
+
+    // Check if we need to spawn more enemies
+    if (gameState.enemies.length < desiredEnemyCount) {
+        spawnEnemy();
+    }
+
+    // Update each enemy
+    for (let i = 0; i < gameState.enemies.length; i++) {
+        const enemy = gameState.enemies[i];
+
+        // Skip dead enemies
+        if (enemy.isDead) continue;
+
+        // Find closest player to chase
+        let closestPlayer = null;
+        let closestDistance = Infinity;
+
+        for (const playerId in gameState.players) {
+            const player = gameState.players[playerId];
+
+            // Skip dead or disconnected players
+            if (player.isDead || !player.connected) continue;
+
+            // Calculate distance
+            const dx = enemy.position.x - player.position.x;
+            const dz = enemy.position.z - player.position.z;
+            const distanceSquared = dx * dx + dz * dz;
+
+            if (distanceSquared < closestDistance) {
+                closestDistance = distanceSquared;
+                closestPlayer = player;
+            }
+        }
+
+        // If we found a player, move toward them
+        if (closestPlayer) {
+            // Calculate direction to player
+            const dx = closestPlayer.position.x - enemy.position.x;
+            const dz = closestPlayer.position.z - enemy.position.z;
+            const distance = Math.sqrt(dx * dx + dz * dz);
+
+            // Only move if not too close
+            if (distance > 2) {
+                // Normalize direction
+                const dirX = dx / distance;
+                const dirZ = dz / distance;
+
+                // Move enemy toward player
+                const speed = 2 * deltaTime; // 2 units per second
+                enemy.position.x += dirX * speed;
+                enemy.position.z += dirZ * speed;
+
+                // Update enemy rotation to face player
+                enemy.rotation.y = Math.atan2(dirX, dirZ);
+            }
+            // If close enough, attack
+            else if (Math.random() < 0.02) { // 2% chance per update to attack
+                enemy.isAttacking = true;
+
+                // Reset attack state after animation duration
+                setTimeout(() => {
+                    if (enemy) {
+                        enemy.isAttacking = false;
+                    }
+                }, 800);
+
+                // Deal damage to player
+                if (closestPlayer.health > 0 && !closestPlayer.isDead) {
+                    const damage = 10;
+                    closestPlayer.health = Math.max(0, closestPlayer.health - damage);
+
+                    console.log(`Enemy ${enemy.id} attacked player ${closestPlayer.id} for ${damage} damage`);
+
+                    // Broadcast damage event
+                    broadcastToAll({
+                        type: 'PLAYER_DAMAGE',
+                        data: {
+                            targetId: closestPlayer.id,
+                            amount: damage,
+                            attackerId: null // null means enemy attack
+                        }
+                    });
+
+                    // Check if player died
+                    if (closestPlayer.health <= 0) {
+                        closestPlayer.isDead = true;
+
+                        console.log(`Player ${closestPlayer.id} died from enemy attack`);
+
+                        // Broadcast death event
+                        broadcastToAll({
+                            type: 'PLAYER_DEATH',
+                            data: {
+                                playerId: closestPlayer.id
+                            }
+                        });
+
+                        // Schedule respawn
+                        setTimeout(() => {
+                            if (gameState.players[closestPlayer.id]) {
+                                gameState.players[closestPlayer.id].health = 100;
+                                gameState.players[closestPlayer.id].isDead = false;
+                                gameState.players[closestPlayer.id].position = {
+                                    x: Math.random() * 20 - 10,
+                                    y: 5,
+                                    z: Math.random() * 20 - 10
+                                };
+
+                                console.log(`Player ${closestPlayer.id} respawned after enemy kill`);
+
+                                // Broadcast respawn event
+                                broadcastToAll({
+                                    type: 'PLAYER_RESPAWN',
+                                    data: {
+                                        playerId: closestPlayer.id,
+                                        position: gameState.players[closestPlayer.id].position
+                                    }
+                                });
+                            }
+                        }, 3000); // 3 second respawn time
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Spawn a new enemy
+function spawnEnemy() {
+    const enemyId = `enemy_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+
+    // Spawn away from players
+    let spawnX = Math.random() * 40 - 20;
+    let spawnZ = Math.random() * 40 - 20;
+
+    const enemy = {
+        id: enemyId,
+        type: 'enemy',
+        position: {
+            x: spawnX,
+            y: 0, // Ground level
+            z: spawnZ
+        },
+        rotation: { x: 0, y: 0, z: 0 },
+        health: 50,
+        isDead: false,
+        isAttacking: false,
+        model: 'default',
+        color: Math.floor(Math.random() * 0xFFFFFF)
+    };
+
+    gameState.enemies.push(enemy);
+    console.log(`Spawned enemy ${enemyId} at x=${spawnX.toFixed(2)}, z=${spawnZ.toFixed(2)}`);
+
+    return enemy;
 }
 
 // Start the game loop

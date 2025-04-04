@@ -15,7 +15,10 @@ export class NetworkManager {
             'disconnect': [],
             'playerConnected': [],
             'playerDisconnected': [],
-            'gameStateUpdate': []
+            'gameStateUpdate': [],
+            'playerDamage': [],
+            'playerDeath': [],
+            'playerRespawn': []
         };
         this.serverTimeOffset = 0;
         this.RETRY_CONNECTION_DELAY = 3000; // Time in ms to wait before retrying connection
@@ -291,11 +294,12 @@ export class NetworkManager {
     }
 
     /**
-     * Update player state on the server
+     * Update player state to send to the server
      * @param {Object} position - Player position
      * @param {Object} rotation - Player rotation
+     * @param {Object} playerState - Additional player state info
      */
-    updatePlayerState(position, rotation) {
+    updatePlayerState(position, rotation, playerState = {}) {
         if (!this.connected || !this.playerId) {
             return;
         }
@@ -308,6 +312,10 @@ export class NetworkManager {
         this.send('PLAYER_UPDATE', {
             position,
             rotation,
+            health: playerState.health,
+            isAttacking: playerState.isAttacking,
+            isDead: playerState.isDead,
+            animation: playerState.animation,
             timestamp: Date.now()
         });
     }
@@ -316,18 +324,76 @@ export class NetworkManager {
      * Send a jump event to the server
      */
     sendJump() {
-        this.send('PLAYER_JUMP');
+        if (!this.connected || !this.socket) return;
+
+        this.send('PLAYER_JUMP', {
+            timestamp: Date.now()
+        });
     }
 
     /**
      * Send a shoot event to the server
-     * @param {Object} direction - Direction vector { x, y, z }
-     * @param {Object} origin - Origin position { x, y, z }
+     * @param {Object} direction - The direction vector
+     * @param {Object} origin - The origin/position of the projectile
+     * @param {String} projectileId - Unique ID for the projectile
      */
-    sendShoot(direction, origin) {
+    sendShoot(direction, origin, projectileId) {
+        if (!this.connected || !this.socket) return;
+
         this.send('PLAYER_SHOOT', {
-            direction,
-            origin
+            direction: {
+                x: direction.x,
+                y: direction.y,
+                z: direction.z
+            },
+            origin: {
+                x: origin.x,
+                y: origin.y,
+                z: origin.z
+            },
+            projectileId: projectileId
+        });
+    }
+
+    /**
+     * Send player attack event to the server
+     */
+    sendAttack() {
+        this.send('PLAYER_ATTACK', {
+            timestamp: Date.now()
+        });
+    }
+
+    /**
+     * Send player damage event to the server
+     * @param {String} targetId - ID of the player who was damaged
+     * @param {Number} amount - Amount of damage dealt
+     */
+    sendDamage(targetId, amount) {
+        this.send('PLAYER_DAMAGE', {
+            targetId,
+            amount,
+            timestamp: Date.now()
+        });
+    }
+
+    /**
+     * Send player death event to the server
+     */
+    sendDeath() {
+        this.send('PLAYER_DEATH', {
+            timestamp: Date.now()
+        });
+    }
+
+    /**
+     * Send player respawn event to the server
+     * @param {Object} position - Respawn position
+     */
+    sendRespawn(position) {
+        this.send('PLAYER_RESPAWN', {
+            position,
+            timestamp: Date.now()
         });
     }
 
@@ -401,18 +467,31 @@ export class NetworkManager {
                     // Process game state update - the most important message type for sync
                     if (message.data) {
                         console.log('Received game state update with player data:', Object.keys(message.data.players).length);
-
-                        // Debug: log player positions from game state
-                        if (message.data.players) {
-                            for (const playerId in message.data.players) {
-                                const player = message.data.players[playerId];
-                                if (player && player.position && playerId !== this.playerId) {
-                                    console.log(`Remote player ${playerId} position: x=${player.position.x.toFixed(2)}, y=${player.position.y.toFixed(2)}, z=${player.position.z.toFixed(2)}`);
-                                }
-                            }
-                        }
-
                         this._emitEvent('gameStateUpdate', message.data);
+                    }
+                    break;
+
+                case 'PLAYER_DAMAGE':
+                    // Handle damage event from server
+                    if (message.data) {
+                        console.log(`Received damage event for player: ${message.data.targetId}, amount: ${message.data.amount}`);
+                        this._emitEvent('playerDamage', message.data);
+                    }
+                    break;
+
+                case 'PLAYER_DEATH':
+                    // Handle death event from server
+                    if (message.data) {
+                        console.log(`Received death event for player: ${message.data.playerId}`);
+                        this._emitEvent('playerDeath', message.data);
+                    }
+                    break;
+
+                case 'PLAYER_RESPAWN':
+                    // Handle respawn event from server
+                    if (message.data) {
+                        console.log(`Received respawn event for player: ${message.data.playerId}`);
+                        this._emitEvent('playerRespawn', message.data);
                     }
                     break;
 

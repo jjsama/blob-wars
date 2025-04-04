@@ -450,6 +450,11 @@ export class Player {
         this.isAttacking = true;
         this.playAnimation('attack');
 
+        // Send attack event to server if this is the local player in multiplayer mode
+        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
+            window.game.networkManager.sendAttack();
+        }
+
         // Reset attack state after a fixed time
         setTimeout(() => {
             this.isAttacking = false;
@@ -522,6 +527,9 @@ export class Player {
                 return;
             }
 
+            // Define a consistent Y-offset for all player models
+            const MODEL_Y_OFFSET = -1.0;
+
             // Update mesh position based on physics
             try {
                 const ms = this.body.getMotionState();
@@ -536,7 +544,7 @@ export class Player {
                         // Make sure p is valid and has x, y, z methods
                         if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
                             // Update mesh position with the offset for the model
-                            this.mesh.position.set(p.x(), p.y() - 1.0, p.z());
+                            this.mesh.position.set(p.x(), p.y() + MODEL_Y_OFFSET, p.z());
                         }
                     }
                 }
@@ -807,14 +815,34 @@ export class Player {
         return direction;
     }
 
-    takeDamage(amount) {
+    takeDamage(amount, attackerId = null) {
+        // Store previous health for comparison
+        const previousHealth = this.health;
+
+        // Apply damage locally for immediate feedback
         this.health = Math.max(0, this.health - amount);
 
         // Update health UI
         this.updateHealthUI();
 
+        // Log the damage event
+        console.log(`Player took ${amount} damage, health reduced from ${previousHealth} to ${this.health}`);
+
+        // If this is the local player in a multiplayer game, we still apply damage locally
+        // but we don't have to send a damage event because the server should have calculated this
+        // This is client-side prediction for responsive feedback
+        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
+            // Add a damage indicator for visual feedback
+            this.addDamageIndicator(amount);
+
+            // We could implement client-side prediction by sending a "hit-confirm" event
+            // if we're confident in our hit detection
+            // window.game.networkManager.sendHitConfirm(attackerId, amount);
+        }
+
+        // Check if this damage kills the player
         if (this.health <= 0 && !this.isDead) {
-            this.die();
+            this.die(attackerId);
         }
     }
 
@@ -840,8 +868,16 @@ export class Player {
         }
     }
 
-    die() {
+    die(attackerId = null) {
         this.isDead = true;
+
+        // Play death animation
+        this.playAnimation('death');
+
+        // Send death event to server if this is the local player
+        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
+            window.game.networkManager.sendDeath();
+        }
 
         // Show death message
         const deathMessage = document.createElement('div');
@@ -865,58 +901,64 @@ export class Player {
         }, 3000);
     }
 
+    /**
+     * Respawn the player
+     */
     respawn() {
-        try {
-            // Check if Ammo is defined
-            if (typeof Ammo === 'undefined') {
-                error('Ammo is not defined in respawn');
-                return;
+        log(`Player respawning`);
+
+        // Reset health
+        this.health = 100;
+        this.isDead = false;
+        this.isJumping = false;
+
+        // Update health UI
+        this.updateHealthUI();
+
+        // Reset position to spawn position
+        const spawnPosition = { ...GAME_CONFIG.playerStartPosition };
+
+        // Add slight randomization to prevent spawning in the same spot
+        spawnPosition.x += (Math.random() - 0.5) * 2;
+        spawnPosition.z += (Math.random() - 0.5) * 2;
+
+        // Ensure we're above ground
+        spawnPosition.y = Math.max(5, spawnPosition.y);
+
+        // If we have a physics body, reset its state
+        if (this.body && this.physicsWorld) {
+            // Remove old physics body
+            this.physicsWorld.removeRigidBody(this.body);
+
+            // Create a fresh physics body at the spawn position
+            try {
+                // Clean up old Ammo objects
+                if (this.body) {
+                    Ammo.destroy(this.body);
+                    this.body = null;
+                }
+
+                // Create a new physics body
+                this.position = { ...spawnPosition };
+                this.createPhysics();
+
+                // Update mesh position
+                if (this.mesh) {
+                    this.mesh.position.set(spawnPosition.x, spawnPosition.y, spawnPosition.z);
+                }
+
+                log(`Player physics reset at position: x=${spawnPosition.x.toFixed(2)}, y=${spawnPosition.y.toFixed(2)}, z=${spawnPosition.z.toFixed(2)}`);
+            } catch (err) {
+                error('Error recreating physics on respawn:', err);
             }
-
-            // Reset health
-            this.health = 100;
-            this.isDead = false;
-            this.updateHealthUI();
-
-            // Reset position
-            if (this.body) {
-                const transform = new Ammo.btTransform();
-                transform.setIdentity();
-                transform.setOrigin(new Ammo.btVector3(0, 5, 0));
-
-                const ms = this.body.getMotionState();
-                if (ms && typeof ms.setWorldTransform === 'function') {
-                    ms.setWorldTransform(transform);
-                }
-
-                if (typeof this.body.setWorldTransform === 'function') {
-                    this.body.setWorldTransform(transform);
-                }
-
-                // Reset velocity
-                const zero = new Ammo.btVector3(0, 0, 0);
-                if (typeof this.body.setLinearVelocity === 'function') {
-                    this.body.setLinearVelocity(zero);
-                }
-
-                if (typeof this.body.setAngularVelocity === 'function') {
-                    this.body.setAngularVelocity(zero);
-                }
-
-                // Activate the body
-                if (typeof this.body.activate === 'function') {
-                    this.body.activate(true);
-                }
-
-                // Clean up Ammo objects
-                Ammo.destroy(zero);
-                Ammo.destroy(transform);
-            } else {
-                error('Cannot respawn player: physics body is null');
-            }
-        } catch (err) {
-            error('Error in respawn:', err);
+        } else {
+            // Just update position if no physics body
+            this.setPosition(spawnPosition);
         }
+
+        // Play idle animation
+        this.playAnimation('idle');
+        log('Player respawn complete');
     }
 
     setAnimation(name) {
@@ -952,8 +994,11 @@ export class Player {
                 return;
             }
 
-            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.5, origin.z());
-            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 2.0, origin.z());
+            // Increased ray length to detect ground more reliably
+            // Start from slightly above the player's feet (adjusted for capsule)
+            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.9, origin.z());
+            // Cast ray further down to ensure we detect ground
+            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 3.0, origin.z());
 
             const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
 
@@ -971,10 +1016,27 @@ export class Player {
             const wasOnGround = this.canJump;
             this.canJump = rayCallback.hasHit();
 
+            // Additional check: if very close to y=0 (ground level), force canJump to true
+            // This helps in case the ray test somehow misses
+            if (!this.canJump && origin.y() < 1.5) {
+                this.canJump = true;
+                console.log('Force setting canJump=true because player is close to ground');
+            }
+
             // Log when ground state changes
             if (wasOnGround !== this.canJump) {
                 if (this.canJump) {
                     log('Player touched ground');
+
+                    // Reset jump state for player when touching ground
+                    this.isJumping = false;
+
+                    // If we were falling, play land animation
+                    const velocity = this.body.getLinearVelocity();
+                    if (velocity.y() < -5) {
+                        // Play land animation if we were falling fast
+                        this.playAnimation('idle');
+                    }
                 } else {
                     log('Player left ground');
                 }
@@ -987,5 +1049,41 @@ export class Player {
         } catch (err) {
             error('Error in checkGroundContact:', err);
         }
+    }
+
+    // Add a visual damage indicator method
+    addDamageIndicator(amount) {
+        // Create a floating damage indicator
+        const indicator = document.createElement('div');
+        indicator.className = 'damage-indicator';
+        indicator.textContent = `-${amount}`;
+        indicator.style.position = 'absolute';
+        indicator.style.color = 'red';
+        indicator.style.fontWeight = 'bold';
+        indicator.style.fontSize = '20px';
+        indicator.style.textShadow = '0 0 3px black';
+        indicator.style.zIndex = '1000';
+        indicator.style.pointerEvents = 'none';
+
+        document.body.appendChild(indicator);
+
+        // Position the indicator in the center of the screen (where the crosshair is)
+        indicator.style.top = '50%';
+        indicator.style.left = '50%';
+        indicator.style.transform = 'translate(-50%, -150%)'; // Position above crosshair
+
+        // Add animation
+        indicator.style.transition = 'all 1s ease-out';
+
+        // Start animation after a small delay
+        setTimeout(() => {
+            indicator.style.opacity = '0';
+            indicator.style.transform = 'translate(-50%, -200%)'; // Move up while fading
+        }, 10);
+
+        // Remove from DOM after animation completes
+        setTimeout(() => {
+            document.body.removeChild(indicator);
+        }, 1000);
     }
 }
