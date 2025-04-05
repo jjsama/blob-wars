@@ -850,6 +850,11 @@ function checkProjectilePlayerCollisions() {
 
 // Basic enemy update function
 function updateEnemies(deltaTime) {
+    // Enemies disabled for multiplayer-only mode
+    return;
+
+    // Previous enemy code commented out
+    /*
     // Only update enemies if we have at least one player
     const playerCount = Object.keys(gameState.players).filter(id =>
         gameState.players[id].connected && !gameState.players[id].isDead
@@ -893,27 +898,28 @@ function updateEnemies(deltaTime) {
             }
         }
 
-        // If we found a player, move toward them
+        // If we found a player to chase
         if (closestPlayer) {
             // Calculate direction to player
             const dx = closestPlayer.position.x - enemy.position.x;
             const dz = closestPlayer.position.z - enemy.position.z;
             const distance = Math.sqrt(dx * dx + dz * dz);
 
-            // Only move if not too close
+            // Only move if outside attack range
             if (distance > 2) {
                 // Normalize direction
                 const dirX = dx / distance;
                 const dirZ = dz / distance;
 
-                // Move enemy toward player
-                const speed = 2 * deltaTime; // 2 units per second
-                enemy.position.x += dirX * speed;
-                enemy.position.z += dirZ * speed;
+                // Move toward player (slower movement speed)
+                const moveSpeed = 0.1;
+                enemy.position.x += dirX * moveSpeed;
+                enemy.position.z += dirZ * moveSpeed;
 
-                // Update enemy rotation to face player
+                // Update rotation to face player
                 enemy.rotation.y = Math.atan2(dirX, dirZ);
             }
+
             // If close enough, attack
             else if (Math.random() < 0.02) { // 2% chance per update to attack
                 enemy.isAttacking = true;
@@ -984,10 +990,15 @@ function updateEnemies(deltaTime) {
             }
         }
     }
+    */
 }
 
 // Spawn a new enemy
 function spawnEnemy() {
+    // Enemies disabled for multiplayer-only mode
+    return null;
+
+    /*
     const enemyId = `enemy_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
 
     // Spawn away from players
@@ -1014,6 +1025,7 @@ function spawnEnemy() {
     console.log(`Spawned enemy ${enemyId} at x=${spawnX.toFixed(2)}, z=${spawnZ.toFixed(2)}`);
 
     return enemy;
+    */
 }
 
 // Start the game loop

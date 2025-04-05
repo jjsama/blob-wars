@@ -4,12 +4,15 @@ import { log, error } from '../debug.js';
 import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class RemotePlayer extends THREE.Object3D {
-    constructor(scene, id, position = { x: 0, y: 0, z: 0 }, color = null) {
+    constructor(scene, id, position = GAME_CONFIG.playerStartPosition, color = null) {
         super();
 
         this.scene = scene;
         this.remoteId = id;
-        this.initialPosition = position;
+
+        // Initialize with the same starting position as local player
+        this.position.set(position.x, position.y, position.z);
+
         this.modelLoaded = false;
         this.animations = {};
         this.animationActions = {};
@@ -23,6 +26,9 @@ export class RemotePlayer extends THREE.Object3D {
         this.isJumping = false;
         this.health = 100;
 
+        // Store initial position safely
+        this.initialPosition = { ...position };
+
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
 
@@ -31,22 +37,24 @@ export class RemotePlayer extends THREE.Object3D {
         this.previousPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.interpolationFactor = 0;
 
-        // Dynamic interpolation settings
-        this.BASE_INTERPOLATION_SPEED = 10;
+        // Dynamic interpolation settings - adjusted for smoother movement
+        this.BASE_INTERPOLATION_SPEED = 5; // Reduced from 10 for smoother movement
         this.interpolationSpeed = this.BASE_INTERPOLATION_SPEED;
         this.lastUpdateTime = Date.now();
-        this.updateInterval = 100; // assume 100ms update interval initially
-        this.updateIntervals = []; // store recent update intervals for averaging
+        this.updateInterval = 100;
+        this.updateIntervals = [];
 
-        // For rotation interpolation
-        this.targetRotation = new THREE.Euler(0, 0, 0);
-        this.previousRotation = new THREE.Euler(0, 0, 0);
+        // For rotation interpolation - reduced sensitivity
+        this.targetRotation = new THREE.Euler(0, Math.PI, 0); // Start facing forward like local player
+        this.previousRotation = new THREE.Euler(0, Math.PI, 0);
+        this.rotationInterpolationSpeed = 8; // Slower rotation interpolation
 
         // Store the player's assigned color
         this.playerColor = color;
 
-        // Fixed Y-offset to match the physics body height in local player
-        this.modelYOffset = 0.0;
+        // Add this to scene immediately
+        this.scene.scene.add(this);
+        console.log(`Remote player ${id} added to scene at position x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
 
         // Load the model immediately
         this.loadModel();
@@ -77,13 +85,16 @@ export class RemotePlayer extends THREE.Object3D {
                     // Scale the model appropriately
                     model.scale.set(0.35, 0.35, 0.35);
 
-                    // Set the model's initial position with the Y-offset to fix floating issue
-                    const offsetPosition = new THREE.Vector3(
-                        this.initialPosition.x,
-                        this.initialPosition.y - 1.0, // Apply -1.0 offset to match local player
-                        this.initialPosition.z
-                    );
-                    model.position.copy(offsetPosition);
+                    // Ensure the position is up to date before adding the model
+                    // Use the most recent position from the queue if available
+                    if (this.positionQueue.length > 0) {
+                        const latestPos = this.positionQueue[this.positionQueue.length - 1];
+                        this.position.set(latestPos.x, latestPos.y, latestPos.z);
+                        console.log(`Updated position from queue: ${latestPos.x.toFixed(2)}, ${latestPos.y.toFixed(2)}, ${latestPos.z.toFixed(2)}`);
+                    }
+
+                    // Set the model's position relative to parent (no offset needed)
+                    model.position.set(0, 0, 0);
 
                     // Rotate the model to face forward
                     model.rotation.set(0, Math.PI, 0);
@@ -126,11 +137,10 @@ export class RemotePlayer extends THREE.Object3D {
                     // Store reference to the model
                     this.model = model;
 
-                    // Add this to the scene
-                    this.scene.add(this);
+                    // Mark as loaded
                     this.modelLoaded = true;
 
-                    console.log(`Remote player ${this.remoteId} model added to scene`);
+                    console.log(`Remote player ${this.remoteId} model added at position x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
 
                     // Process any queued position updates
                     if (this.positionQueue.length > 0) {
@@ -251,21 +261,39 @@ export class RemotePlayer extends THREE.Object3D {
             return;
         }
 
-        // If model isn't loaded yet, queue the position update
+        // Store position for later use
+        this.initialPosition = { ...position };
+
+        // If model isn't loaded yet, queue the position update and update the base position
         if (!this.modelLoaded) {
+            // Add to queue
             this.positionQueue.push({ ...position });
-            if (this.positionQueue.length > 5) {
-                this.positionQueue.shift(); // Keep only the most recent 5 updates
+            if (this.positionQueue.length > 10) {
+                this.positionQueue.shift(); // Keep only the most recent 10 updates
             }
-            // Only log queue size changes occasionally
-            if (Math.random() < 0.1) {
-                console.log(`Remote player ${this.remoteId}: Model not loaded yet, queued position update. Queue size: ${this.positionQueue.length}`);
+
+            // Update the Object3D position directly
+            this.position.set(
+                position.x,
+                position.y,
+                position.z
+            );
+
+            // Update the target position for when the model loads
+            this.targetPosition.set(
+                position.x,
+                position.y,
+                position.z
+            );
+
+            // Copy previous position if not set
+            if (this.previousPosition.distanceToSquared(new THREE.Vector3(0, 0, 0)) < 0.001) {
+                this.previousPosition.copy(this.targetPosition);
             }
+
+            console.log(`Remote player ${this.remoteId}: Model not loaded yet, base position set to x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
             return;
         }
-
-        // Define a consistent Y-offset for all player models
-        const MODEL_Y_OFFSET = -1.0;
 
         // Calculate time since last update to adjust interpolation speed
         const now = Date.now();
@@ -295,19 +323,37 @@ export class RemotePlayer extends THREE.Object3D {
             }
         }
 
+        // Directly set position for large distances to prevent long interpolation
+        const distSq = this.position.distanceToSquared(new THREE.Vector3(position.x, position.y, position.z));
+        const TELEPORT_THRESHOLD = 100; // 10 units squared
+
+        if (distSq > TELEPORT_THRESHOLD) {
+            // Just teleport for large distances
+            console.log(`Remote player ${this.remoteId}: Teleporting due to large distance (${Math.sqrt(distSq).toFixed(2)} units)`);
+            this.position.set(
+                position.x,
+                position.y,
+                position.z
+            );
+
+            // Update target to match current position to avoid interpolation
+            this.previousPosition.copy(this.position);
+            this.targetPosition.copy(this.position);
+            this.interpolationFactor = 1.0;
+            return;
+        }
+
         // Update interpolation targets with y-offset to fix floating model
         this.previousPosition.copy(this.position);
         this.targetPosition.set(
             position.x,
-            position.y + MODEL_Y_OFFSET, // Apply offset consistently
+            position.y,
             position.z
         );
         this.interpolationFactor = 0;
 
-        // Only log position updates occasionally for debugging
-        if (Math.random() < 0.05) {
-            console.log(`Remote player ${this.remoteId} target position set: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}, interpolation speed: ${this.interpolationSpeed.toFixed(2)}`);
-        }
+        // Log position updates
+        console.log(`Remote player ${this.remoteId} position updated: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
     }
 
     setRotation(rotation) {
@@ -350,11 +396,14 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     update(deltaTime) {
-        if (!this.modelLoaded) return;
-
         // Update animation mixer
         if (this.mixer && deltaTime) {
             this.mixer.update(deltaTime);
+        }
+
+        // Skip further updates if not fully initialized
+        if (!this.modelLoaded) {
+            return;
         }
 
         // Smooth position interpolation
@@ -371,11 +420,11 @@ export class RemotePlayer extends THREE.Object3D {
 
             // Interpolate rotation if model exists
             if (this.model) {
-                // Interpolate Y rotation (most common case)
+                // Interpolate Y rotation with reduced sensitivity
                 this.model.rotation.y = THREE.MathUtils.lerp(
                     this.previousRotation.y,
                     this.targetRotation.y,
-                    this.interpolationFactor
+                    deltaTime * this.rotationInterpolationSpeed
                 );
 
                 // Only interpolate X and Z if they're significantly different
@@ -383,7 +432,7 @@ export class RemotePlayer extends THREE.Object3D {
                     this.model.rotation.x = THREE.MathUtils.lerp(
                         this.previousRotation.x,
                         this.targetRotation.x,
-                        this.interpolationFactor
+                        deltaTime * this.rotationInterpolationSpeed
                     );
                 }
 
@@ -391,14 +440,20 @@ export class RemotePlayer extends THREE.Object3D {
                     this.model.rotation.z = THREE.MathUtils.lerp(
                         this.previousRotation.z,
                         this.targetRotation.z,
-                        this.interpolationFactor
+                        deltaTime * this.rotationInterpolationSpeed
                     );
                 }
             }
         }
 
+        // Update visual elements
+        this.updateVisualElements();
+    }
+
+    // Split out visual elements update to a separate method
+    updateVisualElements() {
         // Update nametag position if it exists
-        if (this.nameTag) {
+        if (this.nameTag && this.scene.camera) {
             this.updateNameTag();
         }
 
@@ -410,16 +465,23 @@ export class RemotePlayer extends THREE.Object3D {
 
     // Update nametag position to follow the player
     updateNameTag() {
-        if (!this.nameTag || !this.scene.camera) return;
+        if (!this.nameTag || !this.scene || !this.scene.camera) return;
 
         try {
+            // Get position in world space
+            const position = new THREE.Vector3();
+            this.getWorldPosition(position);
+
+            // Add height offset to place tag above player's head
+            position.y += 2.0;
+
             // Convert 3D position to screen coordinates
-            const vector = new THREE.Vector3();
-            vector.setFromMatrixPosition(this.matrixWorld);
+            const screenPosition = position.clone();
+            screenPosition.project(this.scene.camera);
 
             // Check if player is behind camera
             const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
-            const playerDirection = new THREE.Vector3().subVectors(vector, this.scene.camera.position).normalize();
+            const playerDirection = new THREE.Vector3().subVectors(position, this.scene.camera.position).normalize();
             const dotProduct = cameraDirection.dot(playerDirection);
 
             // Hide tag if player is behind camera (dot product < 0)
@@ -431,19 +493,16 @@ export class RemotePlayer extends THREE.Object3D {
             // Show tag if player is visible
             this.nameTag.style.display = 'block';
 
-            // Project to screen coordinates
-            vector.project(this.scene.camera);
-
             // Convert to CSS coordinates
-            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 50; // Position above player
+            const x = (screenPosition.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(screenPosition.y * 0.5) + 0.5) * window.innerHeight;
 
             // Update nametag position
             this.nameTag.style.left = `${x - (this.nameTag.offsetWidth / 2)}px`;
             this.nameTag.style.top = `${y}px`;
 
             // Add distance fade effect - farther players have more transparent tags
-            const distance = this.position.distanceTo(this.scene.camera.position);
+            const distance = position.distanceTo(this.scene.camera.position);
             const maxDistance = 50; // Maximum distance at which tag is visible
             const opacity = Math.max(0.2, 1 - (distance / maxDistance));
 
@@ -676,16 +735,23 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     updateHealthBarPosition() {
-        if (!this.healthBar || !this.scene.camera) return;
+        if (!this.healthBar || !this.healthBar.container || !this.scene || !this.scene.camera) return;
 
         try {
+            // Get position in world space
+            const position = new THREE.Vector3();
+            this.getWorldPosition(position);
+
+            // Add height offset to place bar above player's head but below name tag
+            position.y += 1.8;
+
             // Convert 3D position to screen coordinates
-            const vector = new THREE.Vector3();
-            vector.setFromMatrixPosition(this.matrixWorld);
+            const screenPosition = position.clone();
+            screenPosition.project(this.scene.camera);
 
             // Check if player is behind camera
             const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
-            const playerDirection = new THREE.Vector3().subVectors(vector, this.scene.camera.position).normalize();
+            const playerDirection = new THREE.Vector3().subVectors(position, this.scene.camera.position).normalize();
             const dotProduct = cameraDirection.dot(playerDirection);
 
             // Hide health bar if player is behind camera or dead
@@ -698,19 +764,16 @@ export class RemotePlayer extends THREE.Object3D {
             const healthPercent = Math.max(0, Math.min(100, this.health));
             this.healthBar.container.style.display = healthPercent < 100 ? 'block' : 'none';
 
-            // Project to screen coordinates
-            vector.project(this.scene.camera);
-
             // Convert to CSS coordinates
-            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 65; // Position above nametag
+            const x = (screenPosition.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(screenPosition.y * 0.5) + 0.5) * window.innerHeight;
 
-            // Update health bar position
+            // Update health bar position (centered horizontally)
             this.healthBar.container.style.left = `${x - 25}px`; // Center the 50px wide bar
             this.healthBar.container.style.top = `${y}px`;
 
             // Adjust opacity based on distance like the nametag
-            const distance = this.position.distanceTo(this.scene.camera.position);
+            const distance = position.distanceTo(this.scene.camera.position);
             const maxDistance = 50;
             const opacity = Math.max(0.2, 1 - (distance / maxDistance));
 

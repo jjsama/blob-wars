@@ -113,6 +113,13 @@ export class PredictionSystem {
                     this.game.moveForce,
                     this.game.maxVelocity
                 );
+            } else {
+                // Stop player by setting velocity to zero
+                const velocity = this.game.player.body.getLinearVelocity();
+                const currentVelY = velocity.y();
+                const zeroVelocity = new Ammo.btVector3(0, currentVelY, 0);
+                this.game.player.body.setLinearVelocity(zeroVelocity);
+                Ammo.destroy(zeroVelocity);
             }
         }
 
@@ -160,8 +167,9 @@ export class PredictionSystem {
         const now = Date.now();
         this.noInputDuration = now - this.lastInputAppliedTime;
 
-        // If no input for more than 100ms, start damping velocity
-        if (this.noInputDuration > 100 && !this.velocityDampingActive && this.game.isPlayerOnGround()) {
+        // If no input for more than 20ms (reduced from 50ms), immediately stop player
+        // This creates an immediate response when keys are released
+        if (this.noInputDuration > 20 && this.game.isPlayerOnGround()) {
             // Get current velocity
             const velocity = this.game.player.body.getLinearVelocity();
             const vx = velocity.x();
@@ -170,32 +178,26 @@ export class PredictionSystem {
             // Calculate velocity magnitude (horizontal only)
             const velocityMagnitude = Math.sqrt(vx * vx + vz * vz);
 
-            // Apply damping if moving significantly
-            if (velocityMagnitude > this.velocityDampingThreshold) {
-                // Create damped velocity (80% reduction)
-                const dampedVelocity = new Ammo.btVector3(
-                    vx * 0.2,
-                    velocity.y(),
-                    vz * 0.2
-                );
-
-                // Apply damped velocity
-                this.game.player.body.setLinearVelocity(dampedVelocity);
-                this.velocityDampingActive = true;
-
-                // Clean up Ammo object
-                Ammo.destroy(dampedVelocity);
-            } else if (velocityMagnitude > 0.001) {
-                // If velocity is very small, just stop completely
+            // Apply more aggressive immediate stopping to ensure player stops instantly
+            if (velocityMagnitude > 0.0001) {
+                // Apply a hard stop by directly zeroing the horizontal velocity
                 const zeroVelocity = new Ammo.btVector3(
                     0,
-                    velocity.y(),
+                    velocity.y(), // Maintain vertical velocity
                     0
                 );
 
                 this.game.player.body.setLinearVelocity(zeroVelocity);
+                this.velocityDampingActive = true;
+
+                // Clean up Ammo object
                 Ammo.destroy(zeroVelocity);
+
+                console.log(`Player velocity zeroed immediately, magnitude was: ${velocityMagnitude.toFixed(2)}`);
             }
+        } else if (this.noInputDuration <= 20) {
+            // Reset damping flag when input is detected again
+            this.velocityDampingActive = false;
         }
     }
 
