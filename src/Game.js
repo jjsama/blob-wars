@@ -265,8 +265,6 @@ export class Game {
                                     // Skip eyes
                                     if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
                                         child.material.color.setHex(playerColor);
-                                        child.material.emissive = new THREE.Color(playerColor);
-                                        child.material.emissiveIntensity = 0.2;
                                         child.material.needsUpdate = true;
                                     }
                                 }
@@ -697,15 +695,20 @@ export class Game {
      * @param {Object} projectile - Server projectile data
      */
     visualizeRemoteProjectile(projectile) {
-        // This is a simplified visualization - in a full implementation,
-        // you would track these by ID and update their positions
+        // Get the owner's color from remote players, or use default red
+        let projectileColor = 0xff0000; // Default red
+        if (projectile.ownerId && this.remotePlayers[projectile.ownerId]) {
+            projectileColor = this.remotePlayers[projectile.ownerId].playerColor || 0xff0000;
+        }
 
-        // Create a simple sphere to represent the projectile
-        const geometry = new THREE.SphereGeometry(0.2, 8, 8);
-        const material = new THREE.MeshBasicMaterial({
-            color: 0xff0000, // Red for remote projectiles
-            emissive: 0xff0000,
-            emissiveIntensity: 0.5
+        // Create a smaller sphere with smoother geometry to match local projectiles
+        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: projectileColor,
+            emissive: projectileColor,
+            emissiveIntensity: 0.5,
+            roughness: 0.3,
+            metalness: 0.0
         });
 
         const mesh = new THREE.Mesh(geometry, material);
@@ -1266,34 +1269,56 @@ export class Game {
         }
         this.lastShootTime = now;
 
-        // Get the direction the player is facing (camera forward vector)
-        const direction = new THREE.Vector3();
-        this.scene.camera.getWorldDirection(direction);
-
-        // Get the position to spawn the projectile (slightly in front of player)
+        // Get the player's position and facing direction
         const playerPos = this.player.getPosition();
+        const playerRotation = this.player.getRotation().y;
+
+        // Calculate offset from player center (right hand position)
+        const offsetX = Math.cos(playerRotation + Math.PI / 2) * 0.3; // 0.3 units to the right
+        const offsetZ = Math.sin(playerRotation + Math.PI / 2) * 0.3;
+
+        // Calculate the shooting start position (at hand level with right-side offset)
         const spawnPos = new THREE.Vector3(
-            playerPos.x + direction.x * 1.5,
-            playerPos.y + 1.7, // Adjust for height
-            playerPos.z + direction.z * 1.5
+            playerPos.x + offsetX,
+            playerPos.y + 0.5, // Hand level
+            playerPos.z + offsetZ
         );
+
+        // Get camera position and direction for accurate targeting
+        const cameraPos = new THREE.Vector3();
+        const cameraDir = new THREE.Vector3();
+        this.scene.camera.getWorldPosition(cameraPos);
+        this.scene.camera.getWorldDirection(cameraDir);
+
+        // Calculate the exact point where the crosshair is pointing
+        // Use raycasting to find the intersection with a distant plane
+        const distance = 100;
+        const targetPoint = new THREE.Vector3()
+            .copy(cameraPos)
+            .add(cameraDir.multiplyScalar(distance));
+
+        // Calculate the exact shooting direction from spawn to target
+        const shootDirection = new THREE.Vector3()
+            .subVectors(targetPoint, spawnPos)
+            .normalize();
 
         // Generate a unique ID for this projectile
         const projectileId = `proj_${this.networkManager.playerId || 'local'}_${now}_${Math.floor(Math.random() * 1000)}`;
 
-        // Create a new projectile immediately for client-side prediction
+        // Create a new projectile with player reference for color
         const projectile = {
             id: projectileId,
             position: spawnPos.clone(),
-            velocity: direction.clone().multiplyScalar(40), // Speed: 40 units per second
+            velocity: shootDirection.multiplyScalar(40),
             mesh: null,
             ownerId: this.networkManager.playerId || 'local',
             creationTime: now,
             active: true,
+            owner: this.player, // Pass player reference for color
             update: function (deltaTime) {
                 if (!this.active) return false;
 
-                // Update position
+                // Update position using exact velocity without any gravity
                 this.position.x += this.velocity.x * deltaTime;
                 this.position.y += this.velocity.y * deltaTime;
                 this.position.z += this.velocity.z * deltaTime;
@@ -1313,12 +1338,14 @@ export class Game {
             }
         };
 
-        // Create a sphere mesh for the projectile
-        const geometry = new THREE.SphereGeometry(0.2, 8, 8);
-        const material = new THREE.MeshBasicMaterial({
-            color: 0x00ffff,
-            emissive: 0x00ffff,
-            emissiveIntensity: 0.5
+        // Create a sphere mesh for the projectile using player's color
+        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: this.player.playerColor,
+            emissive: this.player.playerColor,
+            emissiveIntensity: 0.5,
+            roughness: 0.3,
+            metalness: 0.0
         });
 
         const mesh = new THREE.Mesh(geometry, material);
@@ -1363,19 +1390,16 @@ export class Game {
      */
     checkProjectileRemotePlayerCollisions() {
         // Skip if no projectiles or no remote players
-        if (!this.projectiles || this.projectiles.length === 0) return;
-        if (!this.remotePlayers || Object.keys(this.remotePlayers).length === 0) return;
+        if (!this.projectiles.length || !Object.keys(this.remotePlayers).length) {
+            return;
+        }
 
-        // Check each projectile against each remote player
+        // Process each projectile
         for (let i = this.projectiles.length - 1; i >= 0; i--) {
             const projectile = this.projectiles[i];
+            if (!projectile || !projectile.active || !projectile.mesh) continue;
 
-            // Skip inactive projectiles
-            if (!projectile.active) continue;
-
-            // Get projectile position
-            const projPos = projectile.mesh ? projectile.mesh.position : projectile.position;
-            if (!projPos) continue;
+            const projPos = projectile.mesh.position;
 
             // Check against each remote player
             for (const id in this.remotePlayers) {
@@ -1388,18 +1412,26 @@ export class Game {
                 const playerPos = remotePlayer.getPosition();
                 if (!playerPos) continue;
 
-                // Calculate distance between projectile and player
+                // Calculate distance between projectile and player's center
                 const dx = projPos.x - playerPos.x;
                 const dy = projPos.y - playerPos.y;
                 const dz = projPos.z - playerPos.z;
-                const distSquared = dx * dx + dy * dy + dz * dz;
 
-                // Hit detection radius (1.5 units squared)
-                const hitRadiusSquared = 2.25;
+                // Use tighter hit detection radius (0.5 units squared = ~0.7 unit radius)
+                // This roughly matches the player model's actual size
+                const hitRadiusSquared = 0.25; // Reduced from 2.25
 
-                if (distSquared < hitRadiusSquared) {
+                // Additional height-based check to improve accuracy
+                const heightCheck = Math.abs(dy) < 1.5; // Only hit within reasonable height range
+
+                const distSquared = dx * dx + dz * dz; // Only check horizontal distance for main hit
+
+                if (distSquared < hitRadiusSquared && heightCheck) {
                     // Hit detected! Handle damage
-                    console.log(`Projectile hit remote player ${id}`);
+                    console.log(`Projectile hit remote player ${id} at distance: ${Math.sqrt(distSquared).toFixed(2)}`);
+
+                    // Create hit effect
+                    this.createHitEffect(projPos);
 
                     // Deactivate projectile
                     projectile.active = false;
@@ -1421,23 +1453,18 @@ export class Game {
                     // Set damage amount based on projectile type
                     const damageAmount = projectile.damage || 20;
 
-                    // Send damage event to server if connected
-                    if (this.isMultiplayer && this.networkManager.connected) {
-                        this.networkManager.sendDamage(id, damageAmount);
-                        console.log(`Sent damage event to server: player ${id} took ${damageAmount} damage`);
-                    } else {
-                        // In single player or when server connection is not available,
-                        // apply damage directly
-                        remotePlayer.takeDamage(damageAmount);
+                    // Send hit confirmation to server
+                    if (this.networkManager && this.networkManager.connected) {
+                        this.networkManager.sendHit({
+                            targetId: id,
+                            damage: damageAmount,
+                            projectileId: projectile.id,
+                            hitPosition: projPos
+                        });
                     }
 
-                    // Create hit effect at point of impact
-                    this.createHitEffect(projPos);
-
-                    // Remove from projectiles array
+                    // Remove projectile from array
                     this.projectiles.splice(i, 1);
-
-                    // Break the loop since this projectile is now inactive
                     break;
                 }
             }

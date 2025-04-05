@@ -73,7 +73,6 @@ export class GameScene {
                 console.log('Requesting pointer lock...');
                 this.renderer.domElement.requestPointerLock().catch(error => {
                     console.error('Failed to request pointer lock:', error);
-                    this.showControlsMessage();
                 });
             }
         });
@@ -107,57 +106,14 @@ export class GameScene {
         document.addEventListener('pointerlockchange', () => {
             if (document.pointerLockElement !== this.renderer.domElement) {
                 console.log('Pointer lock released');
-                this.showControlsMessage();
             } else {
                 console.log('Pointer lock acquired');
-                this.hideControlsMessage();
             }
         });
 
         document.addEventListener('pointerlockerror', (event) => {
             console.error('Pointer lock error:', event);
-            this.showControlsMessage('Click to enable mouse look (pointer lock failed)');
         });
-
-        // Initial controls message
-        this.showControlsMessage();
-    }
-
-    // Helper to show a message about controls
-    showControlsMessage(message = 'Click to enable mouse look') {
-        // Remove any existing controls message
-        this.hideControlsMessage();
-
-        // Create new message element
-        const controlsMessage = document.createElement('div');
-        controlsMessage.id = 'controls-message';
-        controlsMessage.style.position = 'fixed';
-        controlsMessage.style.top = '50%';
-        controlsMessage.style.left = '50%';
-        controlsMessage.style.transform = 'translate(-50%, -50%)';
-        controlsMessage.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        controlsMessage.style.color = 'white';
-        controlsMessage.style.padding = '15px 20px';
-        controlsMessage.style.borderRadius = '5px';
-        controlsMessage.style.fontFamily = 'Arial, sans-serif';
-        controlsMessage.style.zIndex = '1000';
-        controlsMessage.style.pointerEvents = 'none'; // Don't interfere with clicks
-        controlsMessage.innerHTML = `
-            <div style="text-align: center; margin-bottom: 10px;">${message}</div>
-            <div style="font-size: 0.8em; margin-top: 10px;">
-                WASD: Move | Space: Jump | Mouse: Look | Click: Shoot
-            </div>
-        `;
-
-        document.body.appendChild(controlsMessage);
-    }
-
-    // Helper to hide the controls message
-    hideControlsMessage() {
-        const existingMessage = document.getElementById('controls-message');
-        if (existingMessage) {
-            existingMessage.remove();
-        }
     }
 
     updateCamera(target) {

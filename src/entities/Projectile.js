@@ -14,27 +14,32 @@ export class Projectile {
         this.mesh = null;
         this.body = null;
 
-        // Use a single color for all bullets
-        this.color = 0xff0000; // Bright red for all bullets
+        // Get owner's color if available, otherwise use default red
+        this.color = (owner && owner.playerColor) ? owner.playerColor : 0xff0000;
 
         this.create();
     }
 
     create() {
         try {
-            // Create a simple small sphere
-            const radius = 0.05;
-            const geometry = new THREE.SphereGeometry(radius, 8, 8);
-            const material = new THREE.MeshBasicMaterial({
-                color: this.color
+            // Create a smaller sphere for the projectile
+            const radius = 0.08; // Reduced from 0.2 to 0.08 - clay ball size
+            const geometry = new THREE.SphereGeometry(radius, 16, 16); // Increased segments for smoother look
+            const material = new THREE.MeshStandardMaterial({
+                color: this.color,
+                emissive: this.color,
+                emissiveIntensity: 0.5,
+                roughness: 0.3, // Slightly rough like clay
+                metalness: 0.0
             });
 
             this.mesh = new THREE.Mesh(geometry, material);
             this.mesh.position.copy(this.position);
             this.scene.add(this.mesh);
 
-            // Create physics body
-            const shape = new Ammo.btSphereShape(radius);
+            // Create physics body - use slightly smaller collision radius for better hit detection
+            const physicsRadius = radius * 0.8; // 20% smaller collision radius than visual
+            const shape = new Ammo.btSphereShape(physicsRadius);
             const transform = new Ammo.btTransform();
             transform.setIdentity();
             transform.setOrigin(new Ammo.btVector3(
@@ -69,8 +74,14 @@ export class Projectile {
             console.error('Failed to create projectile:', err);
             // Ensure we have a valid mesh even if physics fails
             if (!this.mesh) {
-                const geometry = new THREE.SphereGeometry(0.05, 8, 8);
-                const material = new THREE.MeshBasicMaterial({ color: this.color });
+                const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+                const material = new THREE.MeshStandardMaterial({
+                    color: this.color,
+                    emissive: this.color,
+                    emissiveIntensity: 0.5,
+                    roughness: 0.3,
+                    metalness: 0.0
+                });
                 this.mesh = new THREE.Mesh(geometry, material);
                 this.scene.add(this.mesh);
             }

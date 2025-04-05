@@ -91,8 +91,6 @@ export class Player {
                                         // Skip eyes
                                         if (!m.name || !m.name.toLowerCase().includes('eye')) {
                                             m.color.setHex(this.playerColor);
-                                            m.emissive = new THREE.Color(this.playerColor);
-                                            m.emissiveIntensity = 0.2; // Add glow
                                         }
                                     });
                                 } else {
@@ -100,8 +98,6 @@ export class Player {
                                     // Skip eyes
                                     if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
                                         child.material.color.setHex(this.playerColor);
-                                        child.material.emissive = new THREE.Color(this.playerColor);
-                                        child.material.emissiveIntensity = 0.2; // Add glow
                                     }
                                 }
                             }

@@ -5,7 +5,27 @@ export function initDebug() {
     if (!document.getElementById('debug')) {
         const debugDiv = document.createElement('div');
         debugDiv.id = 'debug';
+        debugDiv.style.position = 'fixed';
+        debugDiv.style.top = '0';
+        debugDiv.style.left = '0';
+        debugDiv.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+        debugDiv.style.color = '#fff';
+        debugDiv.style.padding = '10px';
+        debugDiv.style.fontFamily = 'monospace';
+        debugDiv.style.fontSize = '12px';
+        debugDiv.style.maxHeight = '200px';
+        debugDiv.style.overflowY = 'auto';
+        debugDiv.style.zIndex = '1000';
+        debugDiv.style.display = 'none'; // Hidden by default
         document.body.appendChild(debugDiv);
+
+        // Add tilde key listener
+        document.addEventListener('keydown', (event) => {
+            if (event.key === '`' || event.key === '~') {
+                event.preventDefault();
+                debugDiv.style.display = debugDiv.style.display === 'none' ? 'block' : 'none';
+            }
+        });
     }
 }
 
@@ -25,6 +45,11 @@ export function log(message, ...args) {
 
         // Auto-scroll to bottom
         debugDiv.scrollTop = debugDiv.scrollHeight;
+
+        // Limit the number of lines to prevent memory issues
+        while (debugDiv.childNodes.length > 1000) {
+            debugDiv.removeChild(debugDiv.firstChild);
+        }
     }
 }
 

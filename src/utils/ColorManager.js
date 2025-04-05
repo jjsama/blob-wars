@@ -7,18 +7,19 @@ export class ColorManager {
         this.assignedColors = new Map();
         // Keep track of which colors are in use
         this.usedColors = new Set();
-        // Generate a random shuffle of colors at startup
-        this.shuffledColors = [...PLAYER_COLORS];
-        this.shuffleColors();
+        // Store the colors array without shuffling
+        this.colors = [...PLAYER_COLORS];
     }
 
-    // Shuffle the colors array to get a random ordering
-    shuffleColors() {
-        for (let i = this.shuffledColors.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [this.shuffledColors[i], this.shuffledColors[j]] = [this.shuffledColors[j], this.shuffledColors[i]];
+    // Simple hash function to convert string to number
+    hashString(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32bit integer
         }
-        log('Colors shuffled for this session');
+        return Math.abs(hash);
     }
 
     // Get a unique color for a player/entity ID
@@ -28,21 +29,17 @@ export class ColorManager {
             return this.assignedColors.get(id);
         }
 
-        // Find an unused color from the shuffled list
-        for (let color of this.shuffledColors) {
-            if (!this.usedColors.has(color)) {
-                this.usedColors.add(color);
-                this.assignedColors.set(id, color);
-                log(`Assigned color ${color.toString(16)} to entity ${id}`);
-                return color;
-            }
-        }
+        // Use the hash of the ID to get a deterministic color
+        const hash = this.hashString(id);
+        const colorIndex = hash % this.colors.length;
+        const color = this.colors[colorIndex];
 
-        // If all colors are used, pick a random one
-        const randomColor = this.shuffledColors[Math.floor(Math.random() * this.shuffledColors.length)];
-        this.assignedColors.set(id, randomColor);
-        log(`All colors in use, assigned random color ${randomColor.toString(16)} to entity ${id}`);
-        return randomColor;
+        // Store the assignment
+        this.assignedColors.set(id, color);
+        this.usedColors.add(color);
+
+        log(`Assigned color ${color.toString(16)} to entity ${id}`);
+        return color;
     }
 
     // Release a color when an entity is removed
@@ -59,11 +56,10 @@ export class ColorManager {
     reset() {
         this.assignedColors.clear();
         this.usedColors.clear();
-        this.shuffleColors();
         log('Color manager reset, all colors released');
     }
 
-    // Get a random new color when restarting a session for the same entity
+    // Get a new color when restarting a session for the same entity
     getNewColorForId(id) {
         // Release the old color if it exists
         this.releaseColor(id);
