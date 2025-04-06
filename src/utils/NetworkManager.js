@@ -38,18 +38,11 @@ export class NetworkManager {
     async connect(serverUrl = null) {
         // If URL not provided, construct it based on the current hostname
         if (!serverUrl) {
-            // Check if we're on localhost and use explicit localhost in that case
-            const isLocalhost = window.location.hostname === 'localhost' ||
-                window.location.hostname === '127.0.0.1' ||
-                window.location.hostname === '';
+            const wsUrl = process.env.NODE_ENV === 'production'
+                ? `wss://${window.location.host}`
+                : `ws://localhost:3000`;
 
-            // Use secure WebSocket for HTTPS, regular for HTTP
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-
-            // For production/deployed environments, use relative path
-            serverUrl = isLocalhost
-                ? `ws://localhost:3000/ws`
-                : `${protocol}//${window.location.host}/ws`;
+            serverUrl = `${wsUrl}/ws`;
         }
 
         console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);
