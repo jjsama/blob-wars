@@ -40,7 +40,7 @@ export class NetworkManager {
         if (!serverUrl) {
             const wsUrl = process.env.NODE_ENV === 'production'
                 ? `wss://${window.location.host}`
-                : `ws://localhost:3000`;
+                : `ws://localhost:8080`;
 
             serverUrl = `${wsUrl}/ws`;
         }
