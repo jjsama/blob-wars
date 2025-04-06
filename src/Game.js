@@ -418,8 +418,7 @@ export class Game {
                     }
                     if (remotePlayer && playerData) {
                         // Update remote player
-                        if (playerData.position) remotePlayer.setPosition(playerData.position);
-                        if (playerData.rotation) remotePlayer.setRotation(playerData.rotation);
+                        this.updateRemotePlayerState(remotePlayer, playerData);
                     }
                 }
             });
@@ -462,6 +461,16 @@ export class Game {
     }
 
     updateRemotePlayerState(remotePlayer, playerData) {
+        if (!remotePlayer || !playerData) return;
+
+        // Update position and rotation if provided
+        if (playerData.position) {
+            remotePlayer.setPosition(playerData.position);
+        }
+        if (playerData.rotation) {
+            remotePlayer.setRotation(playerData.rotation);
+        }
+
         // Handle death state
         if (playerData.isDead !== undefined) {
             if (playerData.isDead && !remotePlayer.isDead) {
@@ -485,17 +494,15 @@ export class Game {
             setTimeout(() => {
                 remotePlayer.isJumping = false;
                 if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
-                    remotePlayer.setAnimation('idle');
+                    remotePlayer.setAnimation(remotePlayer.isMoving ? 'walkForward' : 'idle');
                 }
             }, 1000);
         }
 
-        // Update movement animation
+        // Update animation based on movement state
         if (!remotePlayer.isDead && !remotePlayer.isAttacking && !remotePlayer.isJumping) {
-            if (playerData.isMoving) {
-                remotePlayer.setAnimation('walkForward');
-            } else {
-                remotePlayer.setAnimation('idle');
+            if (playerData.animation) {
+                remotePlayer.setAnimation(playerData.animation);
             }
         }
     }

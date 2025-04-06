@@ -33,7 +33,18 @@ export class RemotePlayer extends THREE.Object3D {
         this.targetPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.previousPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.interpolationFactor = 0;
-        this.interpolationSpeed = 5;
+        this.interpolationSpeed = 10; // Increased from 5 to 10 for smoother movement
+
+        // For rotation interpolation
+        this.targetRotation = new THREE.Vector3(0, 0, 0);
+        this.previousRotation = new THREE.Vector3(0, 0, 0);
+        this.rotationInterpolationFactor = 0;
+        this.rotationInterpolationSpeed = 15; // Faster than position for responsive turning
+
+        // Movement state
+        this.isMoving = false;
+        this.lastPosition = new THREE.Vector3(position.x, position.y, position.z);
+        this.movementThreshold = 0.01;
 
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
@@ -65,20 +76,28 @@ export class RemotePlayer extends THREE.Object3D {
                 y: position.y,
                 z: position.z
             });
-            console.log(`RemotePlayer ${this.remoteId}: Model not loaded, queued position update. Queue size: ${this.positionQueue.length}`);
             return;
         }
-
-        // Update the Object3D position
-        this.position.set(position.x, position.y, position.z);
 
         // Update interpolation targets
         this.previousPosition.copy(this.position);
         this.targetPosition.set(position.x, position.y, position.z);
         this.interpolationFactor = 0;
 
-        // Update visual elements
-        this.updateVisualElements();
+        // Detect movement for animation
+        const dx = position.x - this.lastPosition.x;
+        const dz = position.z - this.lastPosition.z;
+        const distanceSquared = dx * dx + dz * dz;
+
+        const wasMoving = this.isMoving;
+        this.isMoving = distanceSquared > this.movementThreshold;
+
+        // Update animation if movement state changed
+        if (this.isMoving !== wasMoving && !this.isAttacking && !this.isJumping && !this.isDead) {
+            this.playAnimation(this.isMoving ? 'walkForward' : 'idle');
+        }
+
+        this.lastPosition.set(position.x, position.y, position.z);
     }
 
     loadModel() {
@@ -251,25 +270,12 @@ export class RemotePlayer extends THREE.Object3D {
             targetY = rotation.y || 0;
         }
 
-        // Normalize the target rotation to be between -PI and PI
-        while (targetY > Math.PI) targetY -= 2 * Math.PI;
-        while (targetY < -Math.PI) targetY += 2 * Math.PI;
+        // Store previous rotation
+        this.previousRotation.y = this.model.rotation.y;
 
-        // Calculate the shortest rotation path
-        let currentY = this.model.rotation.y;
-        while (currentY > Math.PI) currentY -= 2 * Math.PI;
-        while (currentY < -Math.PI) currentY += 2 * Math.PI;
-
-        let diff = targetY - currentY;
-        if (diff > Math.PI) diff -= 2 * Math.PI;
-        if (diff < -Math.PI) diff += 2 * Math.PI;
-
-        // Only update rotation if the change is significant
-        if (Math.abs(diff) > 0.1) {
-            this.previousRotation.y = currentY;
-            this.targetRotation.y = currentY + diff;
-            this.interpolationFactor = 0;
-        }
+        // Set target rotation
+        this.targetRotation.y = targetY;
+        this.rotationInterpolationFactor = 0;
     }
 
     getPosition() {
@@ -291,9 +297,7 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     update(deltaTime) {
-        if (!this.modelLoaded) {
-            return;
-        }
+        if (!this.modelLoaded) return;
 
         // Update animation mixer
         if (this.mixer) {
@@ -308,6 +312,30 @@ export class RemotePlayer extends THREE.Object3D {
             const newPosition = new THREE.Vector3();
             newPosition.lerpVectors(this.previousPosition, this.targetPosition, this.interpolationFactor);
             this.position.copy(newPosition);
+        }
+
+        // Interpolate rotation
+        if (this.rotationInterpolationFactor < 1 && this.model) {
+            this.rotationInterpolationFactor += deltaTime * this.rotationInterpolationSpeed;
+            if (this.rotationInterpolationFactor > 1) this.rotationInterpolationFactor = 1;
+
+            // Interpolate rotation using shortest path
+            let fromAngle = this.previousRotation.y;
+            let toAngle = this.targetRotation.y;
+
+            // Normalize angles
+            while (fromAngle > Math.PI) fromAngle -= 2 * Math.PI;
+            while (fromAngle < -Math.PI) fromAngle += 2 * Math.PI;
+            while (toAngle > Math.PI) toAngle -= 2 * Math.PI;
+            while (toAngle < -Math.PI) toAngle += 2 * Math.PI;
+
+            // Calculate shortest rotation path
+            let diff = toAngle - fromAngle;
+            if (diff > Math.PI) diff -= 2 * Math.PI;
+            if (diff < -Math.PI) diff += 2 * Math.PI;
+
+            // Apply interpolated rotation
+            this.model.rotation.y = fromAngle + diff * this.rotationInterpolationFactor;
         }
 
         // Update visual elements
