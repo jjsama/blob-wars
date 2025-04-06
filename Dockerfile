@@ -11,8 +11,11 @@ RUN bun install
 # Copy all files needed for build
 COPY . .
 
-# Build the application
-RUN bun run build
+# Set production environment for build
+ENV NODE_ENV=production
+
+# Build the application using Bun
+RUN bunx --bun vite build
 
 # Start fresh with Bun runtime for smaller final image
 FROM oven/bun:1.0
