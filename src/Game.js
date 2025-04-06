@@ -177,7 +177,30 @@ export class Game {
             this.isMultiplayer = true;
             log('Enabling multiplayer mode');
             log('Initializing network connection (non-blocking)');
-            await this.initNetworkAsync();
+
+            try {
+                await this.initNetworkAsync();
+                log('Network connection successful');
+            } catch (networkError) {
+                error('Network connection failed:', networkError);
+                // Show a more user-friendly error message
+                const errorMessage = document.getElementById('debug');
+                if (errorMessage) {
+                    errorMessage.innerHTML = `
+                        <div style="color: #ff5555; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 5px;">
+                            <h3>Connection Error</h3>
+                            <p>Failed to connect to game server. The game will continue in offline mode.</p>
+                            <p>Error details: ${networkError.message}</p>
+                            <p>URL: ${window.location.href}</p>
+                            <button onclick="window.location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                Retry Connection
+                            </button>
+                        </div>
+                    `;
+                }
+                // Continue in offline mode
+                this.isMultiplayer = false;
+            }
 
             log('Game initialization complete');
         } catch (err) {

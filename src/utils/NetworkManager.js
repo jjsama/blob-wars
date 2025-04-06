@@ -42,20 +42,24 @@ export class NetworkManager {
             // Check if we're in production (Digital Ocean)
             if (window.location.hostname.includes('digitaloceanspaces.com') ||
                 window.location.hostname.includes('ondigitalocean.app')) {
-                // Use your Digital Ocean app URL - replace this with your actual app URL
-                serverUrl = `wss://${window.location.hostname}/ws`;
+                // Try both hostname and host to handle potential proxy setups
+                serverUrl = `wss://${window.location.host}/ws`;
+                console.log('Using production WebSocket URL:', serverUrl);
             } else {
                 // Local development
                 serverUrl = `${protocol}//${window.location.host}/ws`;
+                console.log('Using development WebSocket URL:', serverUrl);
             }
         }
 
         console.log(`
-=== WebSocket Connection Attempt ===
+=== WebSocket Connection Details ===
 URL: ${serverUrl}
 Protocol: ${window.location.protocol}
 Hostname: ${window.location.hostname}
-Port: ${window.location.port}
+Host: ${window.location.host}
+Port: ${window.location.port || '(default)'}
+Origin: ${window.location.origin}
 Environment: ${window.location.hostname.includes('digitaloceanspaces.com') ||
                 window.location.hostname.includes('ondigitalocean.app') ? 'Production' : 'Development'}
 Previous Attempts: ${this.reconnectAttempts}
@@ -66,9 +70,10 @@ Previous Attempts: ${this.reconnectAttempts}
             try {
                 // Don't attempt to connect if we've reached the max reconnect attempts
                 if (this.reconnectAttempts >= this.MAX_RECONNECT_ATTEMPTS) {
-                    console.log(`Maximum reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached, stopping reconnection.`);
+                    const error = new Error(`Maximum reconnection attempts (${this.MAX_RECONNECT_ATTEMPTS}) reached`);
+                    console.error(error.message);
                     this.autoReconnect = false;
-                    reject(new Error("Maximum reconnection attempts reached"));
+                    reject(error);
                     return;
                 }
 
@@ -89,7 +94,7 @@ Previous Attempts: ${this.reconnectAttempts}
                 }
 
                 // Create a new WebSocket connection
-                console.log(`Creating new WebSocket connection to ${serverUrl}`);
+                console.log('Attempting WebSocket connection...');
                 this.socket = new WebSocket(serverUrl);
 
                 // Add properties to track connection state
@@ -99,8 +104,9 @@ Previous Attempts: ${this.reconnectAttempts}
                 // Setup timeout to avoid hanging indefinitely
                 const connectionTimeout = setTimeout(() => {
                     if (this.socket.connecting) {
-                        console.error(`WebSocket connection timeout after ${(Date.now() - this.socket.connectionStartTime) / 1000}s`);
-                        reject(new Error("Connection timeout"));
+                        const timeoutError = new Error(`WebSocket connection timeout after ${(Date.now() - this.socket.connectionStartTime) / 1000}s`);
+                        console.error(timeoutError.message);
+                        reject(timeoutError);
                         this.reconnectAttempts++;
 
                         // Try to close the socket
