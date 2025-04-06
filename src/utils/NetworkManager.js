@@ -43,13 +43,13 @@ export class NetworkManager {
                 window.location.hostname === '127.0.0.1' ||
                 window.location.hostname === '';
 
-            // Use explicit protocol and host for local development
-            if (isLocalhost) {
-                serverUrl = `ws://localhost:3000/ws`;
-            } else {
-                // For production/deployed environments, use relative path with current hostname
-                serverUrl = `ws://${window.location.hostname}:3000/ws`;
-            }
+            // Use secure WebSocket for HTTPS, regular for HTTP
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+
+            // For production/deployed environments, use relative path
+            serverUrl = isLocalhost
+                ? `ws://localhost:3000/ws`
+                : `${protocol}//${window.location.host}/ws`;
         }
 
         console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);

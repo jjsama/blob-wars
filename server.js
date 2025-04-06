@@ -1,5 +1,5 @@
 const server = Bun.serve({
-    port: 3000,
+    port: process.env.PORT || 3000,
     // Add WebSocket support
     websocket: {
         // Handle new WebSocket connections
@@ -93,6 +93,13 @@ const server = Bun.serve({
         const url = new URL(req.url);
         console.log(`Received request for: ${url.pathname}`);
 
+        // Add CORS headers for all responses
+        const corsHeaders = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type"
+        };
+
         // Handle WebSocket upgrade requests
         if (url.pathname === "/ws") {
             console.log("Received WebSocket upgrade request");
@@ -101,7 +108,10 @@ const server = Bun.serve({
                 return;
             }
             console.error("WebSocket upgrade failed");
-            return new Response("WebSocket upgrade failed", { status: 400 });
+            return new Response("WebSocket upgrade failed", {
+                status: 400,
+                headers: corsHeaders
+            });
         }
 
         // Serve index.html for root path
@@ -110,7 +120,7 @@ const server = Bun.serve({
             return new Response(Bun.file("index.html"), {
                 headers: {
                     "Content-Type": "text/html",
-                    "Access-Control-Allow-Origin": "*"
+                    ...corsHeaders
                 }
             });
         }
