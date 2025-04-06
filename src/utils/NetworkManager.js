@@ -36,10 +36,18 @@ export class NetworkManager {
      * @returns {Promise} - Resolves when connected, rejects on error
      */
     async connect(serverUrl = null) {
-        // If URL not provided, construct it based on the current hostname
+        // If URL not provided, construct it based on environment
         if (!serverUrl) {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            serverUrl = `${protocol}//${window.location.host}/ws`;
+            // Check if we're in production (Digital Ocean)
+            if (window.location.hostname.includes('digitaloceanspaces.com') ||
+                window.location.hostname.includes('ondigitalocean.app')) {
+                // Use your Digital Ocean app URL - replace this with your actual app URL
+                serverUrl = `wss://${window.location.hostname}/ws`;
+            } else {
+                // Local development
+                serverUrl = `${protocol}//${window.location.host}/ws`;
+            }
         }
 
         console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);
@@ -117,7 +125,60 @@ export class NetworkManager {
 
                 this.socket.onclose = (event) => {
                     this.socket.connecting = false;
-                    console.log(`WebSocket connection closed (Code: ${event.code}, Reason: ${event.reason || 'None provided'})`);
+                    const reason = event.reason || 'No reason provided';
+                    const code = event.code;
+                    let explanation = '';
+
+                    // Add human-readable explanations for common WebSocket close codes
+                    switch (code) {
+                        case 1000:
+                            explanation = 'Normal closure';
+                            break;
+                        case 1001:
+                            explanation = 'Server going down or browser navigating away';
+                            break;
+                        case 1002:
+                            explanation = 'Protocol error';
+                            break;
+                        case 1003:
+                            explanation = 'Received data cannot be accepted';
+                            break;
+                        case 1005:
+                            explanation = 'No status code was provided';
+                            break;
+                        case 1006:
+                            explanation = 'Connection lost abnormally';
+                            break;
+                        case 1007:
+                            explanation = 'Message format error';
+                            break;
+                        case 1008:
+                            explanation = 'Policy violation';
+                            break;
+                        case 1009:
+                            explanation = 'Message too big';
+                            break;
+                        case 1010:
+                            explanation = 'Required extension missing';
+                            break;
+                        case 1011:
+                            explanation = 'Internal server error';
+                            break;
+                        case 1015:
+                            explanation = 'TLS handshake failure';
+                            break;
+                        default:
+                            explanation = 'Unknown error';
+                    }
+
+                    console.log(`WebSocket connection closed:
+                        Code: ${code}
+                        Reason: ${reason}
+                        Explanation: ${explanation}
+                        Reconnect Attempts: ${this.reconnectAttempts}/${this.MAX_RECONNECT_ATTEMPTS}
+                        Auto Reconnect: ${this.autoReconnect}
+                        URL: ${this.socket.url}`);
+
                     this.connected = false;
 
                     // Clear ping interval
@@ -126,11 +187,11 @@ export class NetworkManager {
                         this.pingInterval = null;
                     }
 
-                    this._emitEvent('disconnect');
+                    this._emitEvent('disconnect', { code, reason, explanation });
                     clearTimeout(connectionTimeout);
 
-                    // Only reconnect if autoReconnect is enabled
-                    if (this.autoReconnect) {
+                    // Only reconnect if autoReconnect is enabled and it wasn't a normal closure
+                    if (this.autoReconnect && code !== 1000) {
                         this.reconnectAttempts++;
                         this._scheduleReconnect();
                     }
@@ -138,6 +199,13 @@ export class NetworkManager {
 
                 this.socket.onerror = (error) => {
                     console.error('WebSocket error:', error);
+                    console.log(`Connection details:
+                        URL: ${this.socket.url}
+                        Ready State: ${this.socket.readyState}
+                        Connecting: ${this.socket.connecting}
+                        Protocol: ${this.socket.protocol}
+                        Extensions: ${this.socket.extensions || 'none'}`);
+
                     if (this.socket.connecting) {
                         this.socket.connecting = false;
                         clearTimeout(connectionTimeout);
