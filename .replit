@@ -1,4 +1,4 @@
-run = "bun run start"
+run = "bun run server.js"
 hidden = [".config", "bun.lockb"]
 language = "nodejs"
 
@@ -6,8 +6,9 @@ language = "nodejs"
 channel = "stable-23_11"
 
 [deployment]
-run = ["sh", "-c", "bun run start"]
+run = ["bun", "run", "server.js"]
 deploymentTarget = "cloudrun"
+ignorePorts = false
 
 [env]
 PORT = "3000"
@@ -18,4 +19,8 @@ language = "nodejs"
   [packager.features]
   packageSearch = true
   guessImports = true
-  enabledForHosting = true 
+
+[languages.javascript]
+pattern = "**/*.{js,jsx,ts,tsx,mjs,cjs}"
+  [languages.javascript.languageServer]
+  start = ["typescript-language-server", "--stdio"] 
