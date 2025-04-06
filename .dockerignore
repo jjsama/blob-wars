@@ -1,11 +1,36 @@
-node_modules
-dist
-.git
+# Dependencies
+node_modules/
+.git/
 .gitignore
+
+# Build output
+dist/
+
+# Environment and config
 .env
-*.log
+.env.*
+.cursor/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
-.vscode
-.idea
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Documentation
 *.md
-!README.md 
+!README.md
+
+# Test files
+test.html
+test-ws.js
+
+# Temporary files
+*.tmp
+*.temp 
