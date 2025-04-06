@@ -15,12 +15,6 @@ await Bun.write(
     await Bun.file('./index.html').text()
 );
 
-// Copy test.html to dist
-await Bun.write(
-    './dist/test.html',
-    await Bun.file('./test.html').text()
-);
-
 // Copy public directory if it exists
 try {
     await Bun.spawn(['cp', '-r', 'public', 'dist/']);

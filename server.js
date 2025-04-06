@@ -160,34 +160,6 @@ const server = Bun.serve({
                 }
             }
 
-            // Serve test.html
-            if (url.pathname === "/test.html") {
-                console.log("Serving test.html");
-                try {
-                    const file = Bun.file("dist/test.html");
-                    const exists = await file.exists();
-                    if (!exists) {
-                        console.error("test.html not found in path:", process.cwd());
-                        return new Response("test.html not found", {
-                            status: 404,
-                            headers: corsHeaders
-                        });
-                    }
-                    return new Response(file, {
-                        headers: {
-                            "Content-Type": "text/html",
-                            ...corsHeaders
-                        }
-                    });
-                } catch (e) {
-                    console.error("Error serving test.html:", e, "Current directory:", process.cwd());
-                    return new Response("Error serving test.html", {
-                        status: 500,
-                        headers: corsHeaders
-                    });
-                }
-            }
-
             // Special case for Ammo.js files
             if (url.pathname === "/ammo.wasm.js" || url.pathname === "/ammo.wasm.wasm") {
                 console.log(`Serving Ammo file from public directory: ${url.pathname}`);
