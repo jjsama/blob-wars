@@ -1,9 +1,8 @@
 services:
   - type: web
     name: blob-wars
-    env: node
-    buildCommand: curl -fsSL https://bun.sh/install | bash && ~/.bun/bin/bun install && ~/.bun/bin/bun run build
-    startCommand: ~/.bun/bin/bun run server.js
+    env: docker
+    dockerfilePath: ./Dockerfile
     envVars:
       - key: PORT
         value: 3000
