@@ -10,8 +10,8 @@ export class RemotePlayer extends THREE.Object3D {
         this.scene = scene;
         this.remoteId = id;
 
-        // Initialize with the same starting position as local player
-        this.position.set(position.x, position.y, position.z);
+        // Initialize with the provided position, adjusting Y for proper alignment
+        this.position.set(position.x, position.y, position.z); // Remove the +1.0 offset here
 
         this.modelLoaded = false;
         this.animations = {};
@@ -26,81 +26,82 @@ export class RemotePlayer extends THREE.Object3D {
         this.isJumping = false;
         this.health = 100;
 
-        // Store initial position safely
-        this.initialPosition = { ...position };
-
-        // Queue for storing position updates that arrive before model is loaded
-        this.positionQueue = [];
+        // Store initial position
+        this.initialPosition = new THREE.Vector3(position.x, position.y, position.z);
 
         // For position interpolation
         this.targetPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.previousPosition = new THREE.Vector3(position.x, position.y, position.z);
         this.interpolationFactor = 0;
+        this.interpolationSpeed = 5;
 
-        // Dynamic interpolation settings - adjusted for smoother movement
-        this.BASE_INTERPOLATION_SPEED = 5; // Reduced from 10 for smoother movement
-        this.interpolationSpeed = this.BASE_INTERPOLATION_SPEED;
-        this.lastUpdateTime = Date.now();
-        this.updateInterval = 100;
-        this.updateIntervals = [];
+        // Queue for storing position updates that arrive before model is loaded
+        this.positionQueue = [];
 
-        // For rotation interpolation - reduced sensitivity
-        this.targetRotation = new THREE.Euler(0, Math.PI, 0);
-        this.previousRotation = new THREE.Euler(0, Math.PI, 0);
-        this.rotationInterpolationSpeed = 3; // Reduced from 8 for smoother rotation
-        this.rotationThreshold = 0.1; // Only interpolate rotation if change is significant
-
-        // Store the player's assigned color
+        // Store the player's color
         this.playerColor = color;
 
-        // Add this to scene immediately
+        // Add to scene
         this.scene.scene.add(this);
-        console.log(`Remote player ${id} added to scene at position x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
+        log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
 
-        // Load the model immediately
+        // Load model
         this.loadModel();
 
         // Create health bar
         this.createHealthBar();
+    }
 
-        log(`Remote player ${id} created at position x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
+    setPosition(position) {
+        if (!position) {
+            console.warn('RemotePlayer.setPosition: Invalid position provided');
+            return;
+        }
+
+        // Store position update if model isn't loaded yet
+        if (!this.modelLoaded) {
+            this.positionQueue.push({
+                x: position.x,
+                y: position.y,
+                z: position.z
+            });
+            console.log(`RemotePlayer ${this.remoteId}: Model not loaded, queued position update. Queue size: ${this.positionQueue.length}`);
+            return;
+        }
+
+        // Update the Object3D position
+        this.position.set(position.x, position.y, position.z);
+
+        // Update interpolation targets
+        this.previousPosition.copy(this.position);
+        this.targetPosition.set(position.x, position.y, position.z);
+        this.interpolationFactor = 0;
+
+        // Update visual elements
+        this.updateVisualElements();
     }
 
     loadModel() {
         try {
-            // Create a GLTFLoader
             const loader = new GLTFLoader();
-
-            // Use path from constants file that works in both dev and prod
             const modelPath = ASSET_PATHS.models.player;
-            console.log(`Loading remote player model from path: ${modelPath}`);
 
             loader.load(
                 modelPath,
                 (gltf) => {
-                    console.log(`Remote player model loaded successfully from ${modelPath}!`);
-
-                    // Get the model from the loaded GLTF
+                    // Get the model
                     const model = gltf.scene;
 
-                    // Scale the model appropriately
+                    // Scale the model
                     model.scale.set(0.35, 0.35, 0.35);
 
-                    // Ensure the position is up to date before adding the model
-                    // Use the most recent position from the queue if available
-                    if (this.positionQueue.length > 0) {
-                        const latestPos = this.positionQueue[this.positionQueue.length - 1];
-                        this.position.set(latestPos.x, latestPos.y, latestPos.z);
-                        console.log(`Updated position from queue: ${latestPos.x.toFixed(2)}, ${latestPos.y.toFixed(2)}, ${latestPos.z.toFixed(2)}`);
-                    }
+                    // Reset model position relative to parent with proper Y offset
+                    model.position.set(0, 0, 0); // Remove the -2 offset, let the parent handle position
 
-                    // Set the model's position relative to parent (no offset needed)
-                    model.position.set(0, 0, 0);
-
-                    // Rotate the model to face forward
+                    // Rotate to face forward
                     model.rotation.set(0, Math.PI, 0);
 
-                    // Ensure all meshes cast shadows
+                    // Apply materials and shadows
                     model.traverse((child) => {
                         if (child.isMesh) {
                             child.castShadow = true;
@@ -108,19 +109,16 @@ export class RemotePlayer extends THREE.Object3D {
 
                             // Apply player color if provided
                             if (this.playerColor && child.material) {
-                                // Clone the material to avoid affecting other instances
                                 if (Array.isArray(child.material)) {
                                     child.material = child.material.map(m => m.clone());
                                     child.material.forEach(m => {
-                                        // Skip eyes
-                                        if (!m.name || !m.name.toLowerCase().includes('eye')) {
+                                        if (!m.name?.toLowerCase().includes('eye')) {
                                             m.color.setHex(this.playerColor);
                                         }
                                     });
                                 } else {
                                     child.material = child.material.clone();
-                                    // Skip eyes
-                                    if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
+                                    if (!child.material.name?.toLowerCase().includes('eye')) {
                                         child.material.color.setHex(this.playerColor);
                                     }
                                 }
@@ -128,41 +126,31 @@ export class RemotePlayer extends THREE.Object3D {
                         }
                     });
 
-                    // Add the model to this object
+                    // Add model
                     this.add(model);
-
-                    // Store reference to the model
                     this.model = model;
-
-                    // Mark as loaded
                     this.modelLoaded = true;
-
-                    console.log(`Remote player ${this.remoteId} model added at position x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
-
-                    // Process any queued position updates
-                    if (this.positionQueue.length > 0) {
-                        console.log(`Processing ${this.positionQueue.length} queued positions for remote player ${this.remoteId}`);
-                        // Use the most recent position
-                        const latestPosition = this.positionQueue.pop();
-                        this.setPosition(latestPosition);
-                        // Clear the queue
-                        this.positionQueue = [];
-                    }
 
                     // Set up animations
                     this.setupAnimations(gltf);
+
+                    // Process any queued position updates
+                    if (this.positionQueue.length > 0) {
+                        console.log(`RemotePlayer ${this.remoteId}: Processing ${this.positionQueue.length} queued positions`);
+                        const latestPosition = this.positionQueue.pop();
+                        this.setPosition(latestPosition);
+                        this.positionQueue = []; // Clear the queue
+                    }
+
+                    log(`Remote player ${this.remoteId} model loaded and positioned`);
                 },
-                // Progress callback
-                (xhr) => {
-                    console.log(`Remote player model ${(xhr.loaded / xhr.total * 100).toFixed(2)}% loaded`);
-                },
-                // Error callback
+                undefined,
                 (error) => {
-                    console.error(`Failed to load remote player model: ${error.message}`);
+                    error(`Failed to load remote player model: ${error.message}`);
                 }
             );
         } catch (err) {
-            console.error('Exception while loading remote player model:', err);
+            error('Exception while loading remote player model:', err);
         }
     }
 
@@ -252,107 +240,6 @@ export class RemotePlayer extends THREE.Object3D {
         }
     }
 
-    setPosition(position) {
-        if (!position) {
-            console.error('setPosition called with invalid position for remote player:', position);
-            return;
-        }
-
-        // Store position for later use
-        this.initialPosition = { ...position };
-
-        // If model isn't loaded yet, queue the position update and update the base position
-        if (!this.modelLoaded) {
-            // Add to queue
-            this.positionQueue.push({ ...position });
-            if (this.positionQueue.length > 10) {
-                this.positionQueue.shift(); // Keep only the most recent 10 updates
-            }
-
-            // Update the Object3D position directly
-            this.position.set(
-                position.x,
-                position.y,
-                position.z
-            );
-
-            // Update the target position for when the model loads
-            this.targetPosition.set(
-                position.x,
-                position.y,
-                position.z
-            );
-
-            // Copy previous position if not set
-            if (this.previousPosition.distanceToSquared(new THREE.Vector3(0, 0, 0)) < 0.001) {
-                this.previousPosition.copy(this.targetPosition);
-            }
-
-            console.log(`Remote player ${this.remoteId}: Model not loaded yet, base position set to x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
-            return;
-        }
-
-        // Calculate time since last update to adjust interpolation speed
-        const now = Date.now();
-        const timeSinceLastUpdate = now - this.lastUpdateTime;
-        this.lastUpdateTime = now;
-
-        // Only update if reasonable time has passed (ignore duplicate/batched updates)
-        if (timeSinceLastUpdate > 10) {
-            // Track update intervals for averaging (keep last 5)
-            this.updateIntervals.push(timeSinceLastUpdate);
-            if (this.updateIntervals.length > 5) {
-                this.updateIntervals.shift();
-            }
-
-            // Calculate average update interval
-            if (this.updateIntervals.length > 0) {
-                this.updateInterval = this.updateIntervals.reduce((sum, val) => sum + val, 0) / this.updateIntervals.length;
-
-                // Adjust interpolation speed based on update frequency
-                // Faster updates -> slower interpolation (smoother movement)
-                // Slower updates -> faster interpolation (catch up quicker)
-                const idealUpdateRate = 50; // 50ms = 20 updates per second is ideal
-                const updateRatio = this.updateInterval / idealUpdateRate;
-
-                // Clamp to reasonable range: between 0.5x and 3x base speed
-                this.interpolationSpeed = Math.max(0.5, Math.min(3.0, updateRatio)) * this.BASE_INTERPOLATION_SPEED;
-            }
-        }
-
-        // Directly set position for large distances to prevent long interpolation
-        const distSq = this.position.distanceToSquared(new THREE.Vector3(position.x, position.y, position.z));
-        const TELEPORT_THRESHOLD = 100; // 10 units squared
-
-        if (distSq > TELEPORT_THRESHOLD) {
-            // Just teleport for large distances
-            console.log(`Remote player ${this.remoteId}: Teleporting due to large distance (${Math.sqrt(distSq).toFixed(2)} units)`);
-            this.position.set(
-                position.x,
-                position.y,
-                position.z
-            );
-
-            // Update target to match current position to avoid interpolation
-            this.previousPosition.copy(this.position);
-            this.targetPosition.copy(this.position);
-            this.interpolationFactor = 1.0;
-            return;
-        }
-
-        // Update interpolation targets with y-offset to fix floating model
-        this.previousPosition.copy(this.position);
-        this.targetPosition.set(
-            position.x,
-            position.y,
-            position.z
-        );
-        this.interpolationFactor = 0;
-
-        // Log position updates
-        console.log(`Remote player ${this.remoteId} position updated: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
-    }
-
     setRotation(rotation) {
         if (!rotation || !this.modelLoaded || !this.model) return;
 
@@ -378,7 +265,7 @@ export class RemotePlayer extends THREE.Object3D {
         if (diff < -Math.PI) diff += 2 * Math.PI;
 
         // Only update rotation if the change is significant
-        if (Math.abs(diff) > this.rotationThreshold) {
+        if (Math.abs(diff) > 0.1) {
             this.previousRotation.y = currentY;
             this.targetRotation.y = currentY + diff;
             this.interpolationFactor = 0;
@@ -404,59 +291,39 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     update(deltaTime) {
-        // Update animation mixer
-        if (this.mixer && deltaTime) {
-            this.mixer.update(deltaTime);
-        }
-
-        // Skip further updates if not fully initialized
-        if (!this.modelLoaded || !this.model) {
+        if (!this.modelLoaded) {
             return;
         }
 
-        // Smooth position interpolation
+        // Update animation mixer
+        if (this.mixer) {
+            this.mixer.update(deltaTime);
+        }
+
+        // Interpolate position
         if (this.interpolationFactor < 1) {
             this.interpolationFactor += deltaTime * this.interpolationSpeed;
             if (this.interpolationFactor > 1) this.interpolationFactor = 1;
 
-            // Interpolate position
-            this.position.lerpVectors(
-                this.previousPosition,
-                this.targetPosition,
-                this.interpolationFactor
-            );
-
-            // Smooth rotation interpolation with damping
-            const rotationDelta = deltaTime * this.rotationInterpolationSpeed;
-            const currentRotation = this.model.rotation.y;
-            const targetRotation = this.targetRotation.y;
-
-            // Calculate shortest rotation path
-            let diff = targetRotation - currentRotation;
-            if (diff > Math.PI) diff -= 2 * Math.PI;
-            if (diff < -Math.PI) diff += 2 * Math.PI;
-
-            // Apply smooth rotation with damping
-            if (Math.abs(diff) > 0.001) {
-                const newRotation = currentRotation + diff * rotationDelta;
-                this.model.rotation.y = newRotation;
-            }
+            const newPosition = new THREE.Vector3();
+            newPosition.lerpVectors(this.previousPosition, this.targetPosition, this.interpolationFactor);
+            this.position.copy(newPosition);
         }
 
         // Update visual elements
         this.updateVisualElements();
     }
 
-    // Split out visual elements update to a separate method
     updateVisualElements() {
-        // Update nametag position if it exists
-        if (this.nameTag && this.scene.camera) {
-            this.updateNameTag();
+        if (!this.modelLoaded) {
+            return;
         }
 
-        // Update health bar position if it exists
+        // Update health bar position
         if (this.healthBar) {
-            this.updateHealthBar();
+            const worldPos = this.getWorldPosition(new THREE.Vector3());
+            this.healthBar.position.set(worldPos.x, worldPos.y + 2, worldPos.z);
+            this.healthBar.updateHealth(this.health);
         }
     }
 
@@ -515,53 +382,50 @@ export class RemotePlayer extends THREE.Object3D {
 
     remove() {
         // Remove from scene
-        if (this.parent) {
-            this.parent.remove(this);
-        }
+        this.scene.scene.remove(this);
 
-        // Clean up mixer
+        // Stop animations
         if (this.mixer) {
             this.mixer.stopAllAction();
+            this.mixer = null;
         }
 
-        // Remove health bar if it exists
-        if (this.healthBar) {
-            if (this.healthBar.container && this.healthBar.container.parentNode) {
-                this.healthBar.container.parentNode.removeChild(this.healthBar.container);
-            }
+        // Remove UI elements
+        if (this.healthBar?.container?.parentNode) {
+            this.healthBar.container.parentNode.removeChild(this.healthBar.container);
             this.healthBar = null;
         }
 
-        // Remove name tag if it exists
-        if (this.nameTag && this.nameTag.parentNode) {
+        if (this.nameTag?.parentNode) {
             this.nameTag.parentNode.removeChild(this.nameTag);
             this.nameTag = null;
         }
 
-        // Remove model
+        // Clean up model resources
         if (this.model) {
-            // Remove from scene (redundant due to parent removal, but just in case)
-            if (this.model.parent) {
-                this.model.parent.remove(this.model);
-            }
-
-            // Dispose of geometries and materials
             this.model.traverse(child => {
                 if (child.isMesh) {
-                    if (child.geometry) child.geometry.dispose();
-
-                    if (child.material) {
-                        if (Array.isArray(child.material)) {
-                            child.material.forEach(material => material.dispose());
-                        } else {
-                            child.material.dispose();
-                        }
+                    if (child.geometry) {
+                        child.geometry.dispose();
+                    }
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else if (child.material) {
+                        child.material.dispose();
                     }
                 }
             });
+
+            this.remove(this.model);
+            this.model = null;
         }
 
-        console.log(`Remote player ${this.remoteId} removed from scene`);
+        // Clear references
+        this.scene = null;
+        this.animations = {};
+        this.animationActions = {};
+
+        log(`Remote player ${this.remoteId} removed and cleaned up`);
     }
 
     attack() {
@@ -778,5 +642,45 @@ export class RemotePlayer extends THREE.Object3D {
         } catch (err) {
             console.error('Error updating health bar position:', err);
         }
+    }
+
+    destroy() {
+        // Remove from scene
+        if (this.scene && this.scene.scene) {
+            this.scene.scene.remove(this);
+        }
+
+        // Clean up health bar
+        if (this.healthBar) {
+            this.healthBar.destroy();
+            this.healthBar = null;
+        }
+
+        // Clean up animations
+        if (this.mixer) {
+            this.mixer.stopAllAction();
+            this.mixer = null;
+        }
+
+        // Clean up model
+        if (this.model) {
+            this.model.traverse((child) => {
+                if (child.isMesh) {
+                    child.geometry.dispose();
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach(m => m.dispose());
+                    } else {
+                        child.material.dispose();
+                    }
+                }
+            });
+            this.model = null;
+        }
+
+        // Clear references
+        this.scene = null;
+        this.animations = null;
+        this.animationActions = null;
+        this.currentAction = null;
     }
 } 

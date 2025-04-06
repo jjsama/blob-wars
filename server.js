@@ -14,7 +14,7 @@ const server = Bun.serve({
                 // Add player to the connected players with proper initialization
                 gameState.players[playerId] = {
                     id: playerId,
-                    position: { x: 0, y: 5, z: 0 },
+                    position: { x: 0, y: 0, z: 0 }, // Start at ground level
                     rotation: { x: 0, y: 0, z: 0 },
                     health: 100,
                     isDead: false,
@@ -228,7 +228,7 @@ function handleClientMessage(ws, data) {
         // Recreate player in gameState
         gameState.players[playerId] = {
             id: playerId,
-            position: { x: 0, y: 5, z: 0 },
+            position: { x: 0, y: 0, z: 0 }, // Start at ground level
             rotation: { x: 0, y: 0, z: 0 },
             health: 100,
             isDead: false,
@@ -247,7 +247,7 @@ function handleClientMessage(ws, data) {
                     // Ensure position has valid properties
                     const position = {
                         x: typeof data.position.x === 'number' ? data.position.x : gameState.players[playerId].position.x,
-                        y: typeof data.position.y === 'number' ? data.position.y : gameState.players[playerId].position.y,
+                        y: typeof data.position.y === 'number' ? Math.max(0, data.position.y) : gameState.players[playerId].position.y, // Ensure Y is never negative
                         z: typeof data.position.z === 'number' ? data.position.z : gameState.players[playerId].position.z
                     };
 
@@ -301,6 +301,52 @@ function handleClientMessage(ws, data) {
                 }
             } catch (err) {
                 console.error(`Error updating player ${playerId}:`, err);
+            }
+            break;
+
+        case 'PROJECTILE_SPAWN':
+            // Handle projectile spawn
+            if (data.id && data.position && data.velocity && data.ownerId) {
+                // Validate projectile data
+                if (typeof data.position.x !== 'number' ||
+                    typeof data.position.y !== 'number' ||
+                    typeof data.position.z !== 'number' ||
+                    typeof data.velocity.x !== 'number' ||
+                    typeof data.velocity.y !== 'number' ||
+                    typeof data.velocity.z !== 'number') {
+                    console.error('Invalid projectile data:', data);
+                    return;
+                }
+
+                const projectile = {
+                    id: data.id,
+                    ownerId: data.ownerId,
+                    position: {
+                        x: data.position.x,
+                        y: data.position.y,
+                        z: data.position.z
+                    },
+                    velocity: {
+                        x: data.velocity.x,
+                        y: data.velocity.y,
+                        z: data.velocity.z
+                    },
+                    createdAt: Date.now(),
+                    active: true
+                };
+
+                // Add to game state
+                gameState.projectiles.push(projectile);
+
+                // Broadcast to all clients including sender for confirmation
+                broadcastToAll({
+                    type: 'PROJECTILE_SPAWN',
+                    data: projectile
+                });
+
+                console.log(`Projectile ${projectile.id} spawned by player ${data.ownerId}`);
+            } else {
+                console.error('Invalid projectile spawn data:', data);
             }
             break;
 
@@ -725,7 +771,7 @@ function updateGameState() {
 function updateProjectiles(deltaTime) {
     const MAX_PROJECTILE_LIFETIME = 5000; // 5 seconds max lifetime
 
-    // Update each projectile position based on direction and speed
+    // Update each projectile position based on velocity and speed
     for (let i = gameState.projectiles.length - 1; i >= 0; i--) {
         const projectile = gameState.projectiles[i];
 
@@ -743,10 +789,16 @@ function updateProjectiles(deltaTime) {
             continue;
         }
 
-        // Update position based on direction and speed
-        projectile.position.x += projectile.direction.x * projectile.speed * deltaTime;
-        projectile.position.y += projectile.direction.y * projectile.speed * deltaTime;
-        projectile.position.z += projectile.direction.z * projectile.speed * deltaTime;
+        // Update position based on velocity
+        if (projectile.velocity) {
+            projectile.position.x += projectile.velocity.x * deltaTime;
+            projectile.position.y += projectile.velocity.y * deltaTime;
+            projectile.position.z += projectile.velocity.z * deltaTime;
+        } else {
+            // If no velocity, remove the projectile
+            console.log('Removing projectile without velocity');
+            gameState.projectiles.splice(i, 1);
+        }
     }
 }
 

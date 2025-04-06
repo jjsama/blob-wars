@@ -18,7 +18,8 @@ export class NetworkManager {
             'gameStateUpdate': [],
             'playerDamage': [],
             'playerDeath': [],
-            'playerRespawn': []
+            'playerRespawn': [],
+            'projectileSpawn': []
         };
         this.serverTimeOffset = 0;
         this.RETRY_CONNECTION_DELAY = 3000; // Time in ms to wait before retrying connection
@@ -398,6 +399,30 @@ export class NetworkManager {
     }
 
     /**
+     * Send projectile spawn event to the server
+     * @param {Object} projectileData - Data about the spawned projectile
+     */
+    sendProjectileSpawn(projectileData) {
+        if (!this.connected || !this.socket) return;
+
+        this.send('PROJECTILE_SPAWN', {
+            id: projectileData.id,
+            position: {
+                x: projectileData.position.x,
+                y: projectileData.position.y,
+                z: projectileData.position.z
+            },
+            velocity: {
+                x: projectileData.velocity.x,
+                y: projectileData.velocity.y,
+                z: projectileData.velocity.z
+            },
+            ownerId: projectileData.ownerId,
+            timestamp: Date.now()
+        });
+    }
+
+    /**
      * Register an event listener
      * @param {String} event - Event name
      * @param {Function} callback - Callback function
@@ -468,6 +493,14 @@ export class NetworkManager {
                     if (message.data) {
                         console.log('Received game state update with player data:', Object.keys(message.data.players).length);
                         this._emitEvent('gameStateUpdate', message.data);
+                    }
+                    break;
+
+                case 'PROJECTILE_SPAWN':
+                    // Handle projectile spawn from server
+                    if (message.data) {
+                        console.log(`Received projectile spawn: ${message.data.id}`);
+                        this._emitEvent('projectileSpawn', message.data);
                     }
                     break;
 

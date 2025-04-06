@@ -53,27 +53,24 @@ export class Player {
 
     loadModel() {
         try {
-            // Create a GLTFLoader
             const loader = new GLTFLoader();
-
-            // Use path from constants file that works in both dev and prod
             const modelPath = ASSET_PATHS.models.player;
-            console.log(`Loading player model from path: ${modelPath}`);
 
             loader.load(
                 modelPath,
                 (gltf) => {
                     console.log(`Player model loaded successfully from ${modelPath}!`);
-                    // Get the model from the loaded GLTF
+
+                    // Get the model
                     const model = gltf.scene;
 
-                    // Scale the model appropriately
+                    // Scale the model
                     model.scale.set(0.35, 0.35, 0.35);
 
-                    // Set the model's position
-                    model.position.copy(this.position);
+                    // Reset model position relative to parent
+                    model.position.set(0, -1, 0); // Offset Y to match physics body
 
-                    // Rotate the model to face forward
+                    // Rotate to face forward
                     model.rotation.set(0, Math.PI, 0);
 
                     // Ensure all meshes cast shadows
@@ -111,73 +108,30 @@ export class Player {
                     this.scene.add(this.mesh);
                     this.modelLoaded = true;
 
-                    // Call the onModelLoaded callback if defined (for remote players)
-                    if (typeof this.onModelLoaded === 'function') {
-                        this.onModelLoaded(model);
-                    }
-
-                    // Process any queued position updates for remote players
-                    if (this.isRemote && this.positionQueue.length > 0) {
-                        console.log(`Processing ${this.positionQueue.length} queued positions for remote player`);
-                        // Use the most recent position
-                        const latestPosition = this.positionQueue.pop();
-                        this.mesh.position.set(latestPosition.x, latestPosition.y, latestPosition.z);
-                        console.log(`Applied queued position: x=${latestPosition.x.toFixed(2)}, y=${latestPosition.y.toFixed(2)}, z=${latestPosition.z.toFixed(2)}`);
-                        // Clear the queue
-                        this.positionQueue = [];
-                    }
-
                     // Set up animations
                     this.mixer = new THREE.AnimationMixer(model);
 
-                    // Process animations with proper name normalization
-                    if (gltf.animations && gltf.animations.length > 0) {
-                        console.log(`Player model has ${gltf.animations.length} animations:`);
-                        gltf.animations.forEach((anim, index) => {
-                            console.log(`Animation ${index}: "${anim.name}"`);
-                        });
+                    // Process animations
+                    gltf.animations.forEach(animation => {
+                        this.animations[animation.name] = animation;
+                        this.animationActions[animation.name] = this.mixer.clipAction(animation);
+                    });
 
-                        // Create a normalized mapping of animations
-                        this.animations = {};
-                        this.animationActions = {};
+                    // Start idle animation
+                    this.playAnimation('idle');
 
-                        gltf.animations.forEach(anim => {
-                            // Store with original name
-                            this.animations[anim.name] = anim;
-                            this.animationActions[anim.name] = this.mixer.clipAction(anim);
-
-                            // Also store with lowercase name for case-insensitive lookup
-                            const lowerName = anim.name.toLowerCase();
-                            if (lowerName !== anim.name) {
-                                this.animations[lowerName] = anim;
-                                this.animationActions[lowerName] = this.mixer.clipAction(anim);
-                            }
-                        });
-                    } else {
-                        console.warn('No animations found in the player model');
-                    }
-
-                    // Set the initial animation to idle (try multiple variants of the name)
-                    const idleAnimationNames = ['idle', 'Idle', 'IDLE'];
-                    for (const name of idleAnimationNames) {
-                        if (this.animations[name]) {
-                            this.playAnimation(name);
-                            console.log(`Started player animation: ${name}`);
-                            break;
-                        }
-                    }
-
-                    // Create physics only after model is loaded
-                    if (!this._physicsCreated) {
-                        this.createPhysics();
-                        this._physicsCreated = true;
-                    }
-
-                    // Apply queued position updates
+                    // Process any queued position updates
                     if (this.positionQueue.length > 0) {
-                        const queuedPosition = this.positionQueue.pop();
-                        this.setPosition(queuedPosition);
+                        console.log(`Processing ${this.positionQueue.length} queued positions`);
+                        const latestPosition = this.positionQueue.pop();
+                        this.setPosition(latestPosition);
+                        this.positionQueue = []; // Clear the queue
+                    } else {
+                        // Set initial position if no queued positions
+                        this.setPosition(this.position);
                     }
+
+                    log('Player model loaded and initialized');
                 },
                 // Progress callback
                 (xhr) => {
@@ -704,43 +658,40 @@ export class Player {
             return;
         }
 
-        // Debug logging
-        console.log(`setPosition called${this.isRemote ? ' (remote)' : ''}: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
-
-        // If mesh isn't loaded yet, queue the position update for remote players
-        if (!this.mesh && this.isRemote) {
-            // Store the position update in the queue (keep only the most recent 5)
-            this.positionQueue.push({ ...position });
-            if (this.positionQueue.length > 5) {
-                this.positionQueue.shift(); // Remove oldest position
-            }
+        // Store position update if model isn't loaded yet
+        if (!this.modelLoaded || !this.mesh) {
+            this.positionQueue.push({
+                x: position.x,
+                y: position.y,
+                z: position.z
+            });
             console.log(`Model not loaded yet, queued position update. Queue size: ${this.positionQueue.length}`);
             return;
         }
 
         // Update the mesh position
-        if (this.mesh) {
-            this.mesh.position.set(position.x, position.y, position.z);
-            console.log(`Mesh position updated to: x=${this.mesh.position.x.toFixed(2)}, y=${this.mesh.position.y.toFixed(2)}, z=${this.mesh.position.z.toFixed(2)}`);
-        } else {
-            console.warn('setPosition: mesh is not available yet, position update skipped');
+        this.mesh.position.set(position.x, position.y, position.z);
+
+        // Update the physics body position if it exists and this is not a remote player
+        if (this.body && !this.isRemote) {
+            try {
+                const transform = new Ammo.btTransform();
+                const ms = this.body.getMotionState();
+                ms.getWorldTransform(transform);
+
+                transform.setOrigin(new Ammo.btVector3(position.x, position.y + 1.0, position.z));
+                this.body.setWorldTransform(transform);
+                ms.setWorldTransform(transform);
+
+                // Activate the body
+                this.body.activate(true);
+            } catch (err) {
+                console.error('Error updating physics body position:', err);
+            }
         }
 
-        // If this is a remote player, we don't need to update physics
-        if (this.isRemote) return;
-
-        // Update the physics body position if it exists
-        if (this.body) {
-            const transform = this.body.getWorldTransform();
-            const origin = transform.getOrigin();
-
-            origin.setX(position.x);
-            origin.setY(position.y);
-            origin.setZ(position.z);
-
-            transform.setOrigin(origin);
-            this.body.setWorldTransform(transform);
-        }
+        // Store the position for future reference
+        this.position = { ...position };
     }
 
     /**

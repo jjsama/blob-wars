@@ -44,6 +44,17 @@ export class Game {
         // Initialize prediction system for client-side prediction and server reconciliation
         this.predictionSystem = new PredictionSystem(this);
 
+        // Set up network event handlers
+        this.networkManager.on('projectileSpawn', (projectileData) => {
+            // Only handle projectiles from other players
+            if (projectileData.ownerId !== this.networkManager.playerId) {
+                this.handleRemoteProjectileSpawn(projectileData);
+            } else {
+                // For our own projectiles, create them locally
+                this.handleLocalProjectileSpawn(projectileData);
+            }
+        });
+
         // Reduce movement speed for better gameplay
         this.moveForce = 15;
 
@@ -58,40 +69,8 @@ export class Game {
     }
 
     initUI() {
-        // Create health display
-        const healthContainer = document.createElement('div');
-        healthContainer.id = 'health-container';
-        healthContainer.style.position = 'fixed';
-        healthContainer.style.bottom = '20px';
-        healthContainer.style.left = '20px';
-        healthContainer.style.width = '200px';
-        healthContainer.style.height = '30px';
-        healthContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        healthContainer.style.border = '2px solid white';
-        healthContainer.style.borderRadius = '5px';
-
-        const healthBar = document.createElement('div');
-        healthBar.id = 'health-bar';
-        healthBar.style.width = '100%';
-        healthBar.style.height = '100%';
-        healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
-        healthBar.style.transition = 'width 0.3s, background-color 0.3s';
-
-        const healthText = document.createElement('div');
-        healthText.id = 'health-text';
-        healthText.style.position = 'absolute';
-        healthText.style.top = '50%';
-        healthText.style.left = '50%';
-        healthText.style.transform = 'translate(-50%, -50%)';
-        healthText.style.color = 'white';
-        healthText.style.fontFamily = 'Arial, sans-serif';
-        healthText.style.fontWeight = 'bold';
-        healthText.style.textShadow = '1px 1px 2px black';
-        healthText.textContent = '100 HP';
-
-        healthContainer.appendChild(healthBar);
-        healthContainer.appendChild(healthText);
-        document.body.appendChild(healthContainer);
+        // Remove the console initialization since we're using the centralized debug system
+        // The debug system from debug.js will handle all logging
     }
 
     async init() {
@@ -407,79 +386,65 @@ export class Game {
                 return;
             }
 
-            // Validate and process local player data first
-            if (this.networkManager.playerId && gameState.players[this.networkManager.playerId]) {
-                const myData = gameState.players[this.networkManager.playerId];
-                if (myData && myData.position && this.player) {
-                    // Validate position data
-                    if (this.isValidPosition(myData.position)) {
-                        // Update local player position if significantly different
-                        const currentPos = this.player.getPosition();
-                        const posDiff = new THREE.Vector3(
-                            myData.position.x - currentPos.x,
-                            myData.position.y - currentPos.y,
-                            myData.position.z - currentPos.z
-                        );
-
-                        // Only reconcile if difference is significant
-                        if (posDiff.lengthSq() > 1) {
-                            this.player.setPosition(myData.position);
-                        }
-                    } else {
-                        console.warn('Received invalid position for local player:', myData.position);
-                    }
-                }
-            }
-
+            // Track seen player IDs for cleanup
             const seenPlayerIds = new Set();
 
-            // Process remote players
-            for (const id in gameState.players) {
-                // Skip local player
-                if (id === this.networkManager.playerId) {
-                    seenPlayerIds.add(id);
-                    continue;
-                }
-
+            // Process all players in the game state
+            Object.entries(gameState.players).forEach(([id, playerData]) => {
                 seenPlayerIds.add(id);
-                const playerData = gameState.players[id];
 
-                // Validate player data
-                if (!this.isValidPlayerData(playerData)) {
-                    console.warn('Invalid player data for ID:', id, playerData);
-                    continue;
+                if (id === this.networkManager.playerId) {
+                    // Handle local player updates
+                    if (playerData && playerData.position && this.player) {
+                        if (this.isValidPosition(playerData.position)) {
+                            const currentPos = this.player.getPosition();
+                            const posDiff = new THREE.Vector3(
+                                playerData.position.x - currentPos.x,
+                                playerData.position.y - currentPos.y,
+                                playerData.position.z - currentPos.z
+                            );
+
+                            if (posDiff.lengthSq() > 1) {
+                                this.player.setPosition(playerData.position);
+                            }
+                        }
+                    }
+                } else {
+                    // Handle remote player updates
+                    let remotePlayer = this.remotePlayers[id];
+                    if (!remotePlayer && playerData) {
+                        // Create new remote player if it doesn't exist
+                        remotePlayer = this.addRemotePlayer(id, playerData.position);
+                    }
+                    if (remotePlayer && playerData) {
+                        // Update remote player
+                        if (playerData.position) remotePlayer.setPosition(playerData.position);
+                        if (playerData.rotation) remotePlayer.setRotation(playerData.rotation);
+                    }
                 }
+            });
 
-                // Create new remote player if doesn't exist
-                if (!this.remotePlayers[id]) {
-                    this.addRemotePlayer(id, playerData.position);
-                    continue;
+            // Clean up disconnected players
+            Object.keys(this.remotePlayers).forEach(id => {
+                if (!seenPlayerIds.has(id)) {
+                    // Remove player's visual elements
+                    if (this.remotePlayers[id]) {
+                        // Remove name tag if it exists
+                        if (this.remotePlayers[id].nameTag) {
+                            document.body.removeChild(this.remotePlayers[id].nameTag);
+                        }
+                        // Remove health bar if it exists
+                        if (this.remotePlayers[id].healthBar) {
+                            this.scene.scene.remove(this.remotePlayers[id].healthBar);
+                        }
+                        // Remove the player model from the scene
+                        this.scene.scene.remove(this.remotePlayers[id]);
+                        // Delete the player reference
+                        delete this.remotePlayers[id];
+                        console.log(`Cleaned up disconnected player: ${id}`);
+                    }
                 }
-
-                const remotePlayer = this.remotePlayers[id];
-
-                // Update position with validation
-                if (this.isValidPosition(playerData.position)) {
-                    remotePlayer.setPosition(playerData.position);
-                }
-
-                // Update rotation if valid
-                if (playerData.rotation !== undefined) {
-                    remotePlayer.setRotation(playerData.rotation);
-                }
-
-                // Update health
-                if (typeof playerData.health === 'number') {
-                    remotePlayer.health = playerData.health;
-                    remotePlayer.updateHealthBar();
-                }
-
-                // Handle state changes
-                this.updateRemotePlayerState(remotePlayer, playerData);
-            }
-
-            // Remove disconnected players
-            this.cleanupDisconnectedPlayers(seenPlayerIds);
+            });
         } catch (err) {
             console.error('Error handling game state update:', err);
         }
@@ -562,71 +527,105 @@ export class Game {
             // Skip if running single-player
             if (!this.isMultiplayer) return;
 
-            // Get local player ID for reference
             const localPlayerId = this.networkManager.playerId;
-
-            // Track which local projectiles have been confirmed by the server
             const confirmedProjectileIds = new Set();
 
             // Process each server projectile
             for (const serverProjectile of serverProjectiles) {
-                // Track server-confirmed projectiles by ID
-                if (serverProjectile.id) {
-                    confirmedProjectileIds.add(serverProjectile.id);
-                }
+                if (!serverProjectile.id) continue;
 
-                // Handle projectiles from other players by creating visual representations
-                if (serverProjectile.ownerId !== localPlayerId && serverProjectile.active && serverProjectile.position) {
-                    // Visualize remote player projectiles
-                    this.visualizeRemoteProjectile(serverProjectile);
-                }
-                // For local player projectiles, reconcile with server state
-                else if (serverProjectile.ownerId === localPlayerId && serverProjectile.id) {
-                    // Find matching local projectile
-                    const localProjectile = this.projectiles.find(p => p.id === serverProjectile.id);
+                confirmedProjectileIds.add(serverProjectile.id);
 
-                    if (localProjectile) {
-                        // If server says projectile is inactive but client shows active, deactivate it
-                        if (!serverProjectile.active && localProjectile.active) {
-                            console.log(`Server marked projectile ${serverProjectile.id} as inactive`);
-                            localProjectile.active = false;
+                // Find existing projectile
+                let projectile = this.projectiles.find(p => p.id === serverProjectile.id);
 
-                            // If this projectile has a mesh, remove it
-                            if (localProjectile.mesh) {
-                                this.scene.scene.remove(localProjectile.mesh);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Remove local projectiles that weren't confirmed by the server (if they're older than reconciliation window)
-            if (this.isMultiplayer && this.networkManager.connected) {
-                // Only enforce this for older projectiles (200ms or older) to account for network delay
-                const reconciliationTime = Date.now() - 200;
-
-                for (let i = this.projectiles.length - 1; i >= 0; i--) {
-                    const projectile = this.projectiles[i];
-
-                    // If this projectile is from the local player, has an ID, was created before our window,
-                    // and is not confirmed by the server, remove it
-                    if (projectile.ownerId === localPlayerId &&
-                        projectile.id &&
-                        projectile.creationTime < reconciliationTime &&
-                        !confirmedProjectileIds.has(projectile.id)) {
-
-                        console.log(`Removing unconfirmed projectile ${projectile.id}`);
-
-                        // Remove mesh from scene
+                if (!serverProjectile.active) {
+                    // If server says projectile is inactive, remove it
+                    if (projectile) {
                         if (projectile.mesh) {
                             this.scene.scene.remove(projectile.mesh);
+                            if (projectile.mesh.geometry) projectile.mesh.geometry.dispose();
+                            if (projectile.mesh.material) projectile.mesh.material.dispose();
                         }
+                        this.projectiles = this.projectiles.filter(p => p.id !== serverProjectile.id);
+                    }
+                    continue;
+                }
 
-                        // Remove from array
-                        this.projectiles.splice(i, 1);
+                if (!projectile) {
+                    // Create new projectile if it doesn't exist
+                    if (serverProjectile.ownerId !== localPlayerId) {
+                        projectile = {
+                            ...serverProjectile,
+                            mesh: null,
+                            update: function (deltaTime) {
+                                if (!this.active) return false;
+
+                                // Update position using velocity
+                                this.position.x += this.velocity.x * deltaTime;
+                                this.position.y += this.velocity.y * deltaTime;
+                                this.position.z += this.velocity.z * deltaTime;
+
+                                // Update mesh position
+                                if (this.mesh) {
+                                    this.mesh.position.set(this.position.x, this.position.y, this.position.z);
+                                }
+
+                                return true;
+                            }
+                        };
+
+                        // Create visual representation
+                        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+                        const material = new THREE.MeshStandardMaterial({
+                            color: this.remotePlayers[serverProjectile.ownerId]?.playerColor || 0xff0000,
+                            roughness: 0.3,
+                            metalness: 0.7,
+                            transparent: true,
+                            opacity: 0.8
+                        });
+
+                        const mesh = new THREE.Mesh(geometry, material);
+                        mesh.position.set(
+                            serverProjectile.position.x,
+                            serverProjectile.position.y,
+                            serverProjectile.position.z
+                        );
+                        this.scene.scene.add(mesh);
+                        projectile.mesh = mesh;
+
+                        this.projectiles.push(projectile);
+                    }
+                } else {
+                    // Update existing projectile
+                    projectile.position = serverProjectile.position;
+                    projectile.velocity = serverProjectile.velocity;
+                    projectile.active = serverProjectile.active;
+
+                    // Update mesh position
+                    if (projectile.mesh) {
+                        projectile.mesh.position.set(
+                            serverProjectile.position.x,
+                            serverProjectile.position.y,
+                            serverProjectile.position.z
+                        );
                     }
                 }
             }
+
+            // Remove unconfirmed projectiles after reconciliation window
+            const reconciliationTime = Date.now() - 200;
+            this.projectiles = this.projectiles.filter(projectile => {
+                if (projectile.creationTime < reconciliationTime && !confirmedProjectileIds.has(projectile.id)) {
+                    if (projectile.mesh) {
+                        this.scene.scene.remove(projectile.mesh);
+                        if (projectile.mesh.geometry) projectile.mesh.geometry.dispose();
+                        if (projectile.mesh.material) projectile.mesh.material.dispose();
+                    }
+                    return false;
+                }
+                return true;
+            });
         } catch (err) {
             console.error('Error syncing server projectiles:', err);
         }
@@ -1114,90 +1113,6 @@ export class Game {
         }
     }
 
-    // Add this method to initialize the console
-    initConsole() {
-        // Create a console element
-        const consoleContainer = document.createElement('div');
-        consoleContainer.id = 'game-console';
-        consoleContainer.style.position = 'fixed';
-        consoleContainer.style.top = '0';
-        consoleContainer.style.left = '0';
-        consoleContainer.style.width = '100%';
-        consoleContainer.style.height = '200px';
-        consoleContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-        consoleContainer.style.color = '#fff';
-        consoleContainer.style.fontFamily = 'monospace';
-        consoleContainer.style.fontSize = '12px';
-        consoleContainer.style.padding = '10px';
-        consoleContainer.style.overflow = 'auto';
-        consoleContainer.style.zIndex = '1000';
-        consoleContainer.style.display = 'none'; // Hidden by default
-
-        document.body.appendChild(consoleContainer);
-
-        // Override console.log to capture messages
-        const originalLog = console.log;
-        const originalError = console.error;
-        const originalWarn = console.warn;
-
-        // Keep track of console state
-        this.consoleVisible = false;
-
-        // Add console toggle with ~ key
-        window.addEventListener('keydown', (event) => {
-            if (event.key === '`' || event.key === '~') {
-                this.consoleVisible = !this.consoleVisible;
-                consoleContainer.style.display = this.consoleVisible ? 'block' : 'none';
-                event.preventDefault();
-            }
-        });
-
-        // Override console methods to write to our game console
-        console.log = function () {
-            // Call original console.log
-            originalLog.apply(console, arguments);
-
-            // Add to game console
-            const msg = Array.from(arguments).join(' ');
-            const logEntry = document.createElement('div');
-            logEntry.textContent = msg;
-            consoleContainer.appendChild(logEntry);
-
-            // Auto-scroll to bottom
-            consoleContainer.scrollTop = consoleContainer.scrollHeight;
-        };
-
-        console.error = function () {
-            // Call original console.error
-            originalError.apply(console, arguments);
-
-            // Add to game console with error styling
-            const msg = Array.from(arguments).join(' ');
-            const logEntry = document.createElement('div');
-            logEntry.textContent = msg;
-            logEntry.style.color = '#ff5555';
-            consoleContainer.appendChild(logEntry);
-
-            // Auto-scroll to bottom
-            consoleContainer.scrollTop = consoleContainer.scrollHeight;
-        };
-
-        console.warn = function () {
-            // Call original console.warn
-            originalWarn.apply(console, arguments);
-
-            // Add to game console with warning styling
-            const msg = Array.from(arguments).join(' ');
-            const logEntry = document.createElement('div');
-            logEntry.textContent = msg;
-            logEntry.style.color = '#ffff55';
-            consoleContainer.appendChild(logEntry);
-
-            // Auto-scroll to bottom
-            consoleContainer.scrollTop = consoleContainer.scrollHeight;
-        };
-    }
-
     shootProjectile() {
         if (!this.player) return;
 
@@ -1241,37 +1156,58 @@ export class Game {
         // Generate a unique ID for this projectile
         const projectileId = `proj_${this.networkManager.playerId || 'local'}_${now}_${Math.floor(Math.random() * 1000)}`;
 
-        // Create projectile with exact trajectory
-        const projectile = {
+        // Calculate velocity (direction * speed)
+        const velocity = shootDirection.clone().multiplyScalar(60);
+
+        // Create the projectile data
+        const projectileData = {
             id: projectileId,
-            position: spawnPos.clone(),
-            velocity: shootDirection.multiplyScalar(60), // Increased speed for better accuracy
-            mesh: null,
+            position: {
+                x: spawnPos.x,
+                y: spawnPos.y,
+                z: spawnPos.z
+            },
+            velocity: {
+                x: velocity.x,
+                y: velocity.y,
+                z: velocity.z
+            },
             ownerId: this.networkManager.playerId || 'local',
             creationTime: now,
-            active: true,
-            owner: this.player,
+            active: true
+        };
+
+        // In multiplayer, send to server first
+        if (this.isMultiplayer && this.networkManager && this.networkManager.connected) {
+            // Send projectile spawn to server
+            this.networkManager.sendProjectileSpawn(projectileData);
+        }
+
+        // Create visual projectile
+        const projectile = {
+            ...projectileData,
+            mesh: null,
             update: function (deltaTime) {
                 if (!this.active) return false;
 
-                // Update position using exact velocity
+                // Update position using velocity
                 this.position.x += this.velocity.x * deltaTime;
                 this.position.y += this.velocity.y * deltaTime;
                 this.position.z += this.velocity.z * deltaTime;
 
                 // Update mesh position
                 if (this.mesh) {
-                    this.mesh.position.copy(this.position);
+                    this.mesh.position.set(this.position.x, this.position.y, this.position.z);
                 }
 
                 return true;
             }
         };
 
-        // Create projectile mesh
+        // Create visual representation
         const geometry = new THREE.SphereGeometry(0.08, 16, 16);
         const material = new THREE.MeshStandardMaterial({
-            color: this.player.playerColor,
+            color: this.player.playerColor || 0xff0000,
             roughness: 0.3,
             metalness: 0.7,
             transparent: true,
@@ -1280,8 +1216,6 @@ export class Game {
 
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.copy(spawnPos);
-
-        // Add to scene
         this.scene.scene.add(mesh);
         projectile.mesh = mesh;
 
@@ -1291,18 +1225,8 @@ export class Game {
         // Set player as attacking
         this.player.attack();
 
-        // Add muzzle flash
+        // Add muzzle flash for visual feedback
         this.addMuzzleFlash(spawnPos, shootDirection);
-
-        // Send projectile spawn to server in multiplayer
-        if (this.networkManager && this.networkManager.connected) {
-            this.networkManager.sendProjectileSpawn({
-                id: projectileId,
-                position: spawnPos,
-                velocity: projectile.velocity,
-                ownerId: this.networkManager.playerId
-            });
-        }
     }
 
     addMuzzleFlash(position, direction) {
@@ -1555,8 +1479,19 @@ export class Game {
      * Create or update a debug display for multiplayer information
      */
     updateDebugDisplay() {
-        // Completely disable debug display
-        return;
+        if (!this.networkManager) return;
+
+        // Log network stats periodically
+        const stats = {
+            ping: this.networkManager.lastPing,
+            players: Object.keys(this.remotePlayers).length,
+            projectiles: this.projectiles.length,
+            fps: Math.round(1 / this.deltaTime)
+        };
+
+        if (Math.random() < 0.1) { // Log only occasionally to prevent spam
+            log(`Network Stats: ${JSON.stringify(stats)}`);
+        }
     }
 
     // Add the missing method to handle environment elements
@@ -1763,11 +1698,165 @@ export class Game {
      * Update remote players
      */
     updateRemotePlayers(deltaTime) {
-        // Update all remote players
-        for (const id in this.remotePlayers) {
-            if (this.remotePlayers[id] && this.remotePlayers[id].update) {
-                this.remotePlayers[id].update(deltaTime);
+        Object.values(this.remotePlayers).forEach(player => {
+            try {
+                if (player && typeof player.update === 'function') {
+                    player.update(deltaTime);
+                }
+            } catch (err) {
+                error(`Error updating remote player ${player.remoteId}:`, err);
             }
+        });
+    }
+
+    /**
+     * Handle a projectile spawn from another player
+     * @param {Object} projectileData - Data about the spawned projectile
+     */
+    handleRemoteProjectileSpawn(projectileData) {
+        // Create projectile with the received data
+        const projectile = {
+            id: projectileData.id,
+            position: new THREE.Vector3(
+                projectileData.position.x,
+                projectileData.position.y,
+                projectileData.position.z
+            ),
+            velocity: new THREE.Vector3(
+                projectileData.velocity.x,
+                projectileData.velocity.y,
+                projectileData.velocity.z
+            ),
+            mesh: null,
+            ownerId: projectileData.ownerId,
+            creationTime: Date.now(),
+            active: true,
+            update: function (deltaTime) {
+                if (!this.active) return false;
+
+                // Update position using exact velocity
+                this.position.x += this.velocity.x * deltaTime;
+                this.position.y += this.velocity.y * deltaTime;
+                this.position.z += this.velocity.z * deltaTime;
+
+                // Update mesh position
+                if (this.mesh) {
+                    this.mesh.position.copy(this.position);
+                }
+
+                return true;
+            }
+        };
+
+        // Create visual representation
+        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: this.remotePlayers[projectileData.ownerId]?.playerColor || 0xff0000,
+            roughness: 0.3,
+            metalness: 0.7,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(projectile.position);
+        this.scene.scene.add(mesh);
+        projectile.mesh = mesh;
+
+        // Add to projectiles array
+        this.projectiles.push(projectile);
+    }
+
+    /**
+     * Handle confirmation of our own projectile spawn from the server
+     * @param {Object} projectileData - Data about the spawned projectile
+     */
+    handleLocalProjectileSpawn(projectileData) {
+        // Create the projectile locally now that the server has confirmed it
+        const projectile = {
+            id: projectileData.id,
+            position: new THREE.Vector3(
+                projectileData.position.x,
+                projectileData.position.y,
+                projectileData.position.z
+            ),
+            velocity: new THREE.Vector3(
+                projectileData.velocity.x,
+                projectileData.velocity.y,
+                projectileData.velocity.z
+            ),
+            mesh: null,
+            ownerId: projectileData.ownerId,
+            creationTime: Date.now(),
+            active: true,
+            owner: this.player,
+            update: function (deltaTime) {
+                if (!this.active) return false;
+
+                // Update position using exact velocity
+                this.position.x += this.velocity.x * deltaTime;
+                this.position.y += this.velocity.y * deltaTime;
+                this.position.z += this.velocity.z * deltaTime;
+
+                // Update mesh position
+                if (this.mesh) {
+                    this.mesh.position.copy(this.position);
+                }
+
+                return true;
+            }
+        };
+
+        // Create visual representation
+        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
+        const material = new THREE.MeshStandardMaterial({
+            color: this.player.playerColor,
+            roughness: 0.3,
+            metalness: 0.7,
+            transparent: true,
+            opacity: 0.8
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(projectile.position);
+        this.scene.scene.add(mesh);
+        projectile.mesh = mesh;
+
+        // Add to projectiles array
+        this.projectiles.push(projectile);
+    }
+
+    handleRemotePlayerSpawn(data) {
+        const { id, position, color } = data;
+
+        // Check if player already exists
+        if (this.remotePlayers[id]) {
+            console.warn(`Remote player ${id} already exists, updating position`);
+            this.remotePlayers[id].setPosition(position);
+            return;
+        }
+
+        try {
+            // Create new remote player
+            const remotePlayer = new RemotePlayer(this, id, position, color);
+            this.remotePlayers[id] = remotePlayer;
+            log(`Remote player ${id} spawned at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+        } catch (err) {
+            error(`Failed to spawn remote player ${id}:`, err);
+        }
+    }
+
+    handleRemotePlayerDisconnect(playerId) {
+        try {
+            const remotePlayer = this.remotePlayers[playerId];
+            if (remotePlayer) {
+                // Clean up the remote player
+                remotePlayer.destroy();
+                delete this.remotePlayers[playerId];
+                log(`Remote player ${playerId} disconnected and cleaned up`);
+            }
+        } catch (err) {
+            error(`Error cleaning up remote player ${playerId}:`, err);
         }
     }
 } 
