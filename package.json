@@ -6,13 +6,15 @@
   "scripts": {
     "start": "bun run server.js",
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && bun build ./server.js --target=bun --outdir=./dist",
     "server": "bun run start-server.js",
-    "postinstall": "bun run build"
+    "postinstall": "bun install && bun run build"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "vite": "^5.4.15"
+    "vite": "^5.4.15",
+    "@types/three": "^0.174.0",
+    "@types/ws": "^8.5.10"
   },
   "peerDependencies": {
     "typescript": "^5"
