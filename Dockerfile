@@ -5,14 +5,17 @@ WORKDIR /app
 # Copy package files
 COPY package.json bun.lockb ./
 
-# Install production dependencies only
-RUN bun install --production
+# Install ALL dependencies (including devDependencies) needed for building
+RUN bun install
 
 # Copy the rest of the application
 COPY . .
 
 # Build the application
 RUN bun run build
+
+# Clean up dev dependencies after build
+RUN bun install --production
 
 # Expose the port
 EXPOSE 3000
