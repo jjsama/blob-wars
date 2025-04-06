@@ -1,0 +1,12 @@
+[build]
+builder = "nixpacks"
+buildCommand = "bun install && bun run build"
+
+[deploy]
+startCommand = "bun run start"
+healthcheckPath = "/"
+healthcheckTimeout = 100
+restartPolicyType = "on_failure"
+
+[deploy.envs]
+BUN_VERSION = "1.0.0" 
