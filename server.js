@@ -136,7 +136,7 @@ const server = Bun.serve({
             if (url.pathname === "/") {
                 console.log("Serving index.html");
                 try {
-                    const file = Bun.file("index.html");
+                    const file = Bun.file("dist/index.html");
                     const exists = await file.exists();
                     if (!exists) {
                         console.error("index.html not found in path:", process.cwd());
@@ -163,12 +163,29 @@ const server = Bun.serve({
             // Serve test.html
             if (url.pathname === "/test.html") {
                 console.log("Serving test.html");
-                return new Response(Bun.file("test.html"), {
-                    headers: {
-                        "Content-Type": "text/html",
-                        "Access-Control-Allow-Origin": "*"
+                try {
+                    const file = Bun.file("dist/test.html");
+                    const exists = await file.exists();
+                    if (!exists) {
+                        console.error("test.html not found in path:", process.cwd());
+                        return new Response("test.html not found", {
+                            status: 404,
+                            headers: corsHeaders
+                        });
                     }
-                });
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": "text/html",
+                            ...corsHeaders
+                        }
+                    });
+                } catch (e) {
+                    console.error("Error serving test.html:", e, "Current directory:", process.cwd());
+                    return new Response("Error serving test.html", {
+                        status: 500,
+                        headers: corsHeaders
+                    });
+                }
             }
 
             // Special case for Ammo.js files
