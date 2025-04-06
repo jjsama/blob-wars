@@ -89,118 +89,147 @@ const server = Bun.serve({
         // Define ping interval to keep connections alive
         idleTimeout: 120, // Seconds until inactive connections are closed
     },
-    fetch(req, server) {
+    async fetch(req, server) {
         const url = new URL(req.url);
         console.log(`Received request for: ${url.pathname}`);
 
-        // Add CORS headers for all responses
-        const corsHeaders = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type"
-        };
+        // Add detailed error handling
+        try {
+            // Add CORS headers for all responses
+            const corsHeaders = {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type"
+            };
 
-        // Handle WebSocket upgrade requests
-        if (url.pathname === "/ws") {
-            console.log("Received WebSocket upgrade request");
-            if (server.upgrade(req)) {
-                console.log("WebSocket upgrade successful");
-                return;
-            }
-            console.error("WebSocket upgrade failed");
-            return new Response("WebSocket upgrade failed", {
-                status: 400,
-                headers: corsHeaders
-            });
-        }
-
-        // Serve index.html for root path
-        if (url.pathname === "/") {
-            console.log("Serving index.html");
-            return new Response(Bun.file("index.html"), {
-                headers: {
-                    "Content-Type": "text/html",
-                    ...corsHeaders
+            // Handle WebSocket upgrade requests
+            if (url.pathname === "/ws") {
+                console.log("Received WebSocket upgrade request");
+                if (server.upgrade(req)) {
+                    console.log("WebSocket upgrade successful");
+                    return;
                 }
-            });
-        }
+                console.error("WebSocket upgrade failed");
+                return new Response("WebSocket upgrade failed", {
+                    status: 400,
+                    headers: corsHeaders
+                });
+            }
 
-        // Serve test.html
-        if (url.pathname === "/test.html") {
-            console.log("Serving test.html");
-            return new Response(Bun.file("test.html"), {
+            // Serve index.html for root path
+            if (url.pathname === "/") {
+                console.log("Serving index.html");
+                try {
+                    const file = Bun.file("index.html");
+                    const exists = await file.exists();
+                    if (!exists) {
+                        console.error("index.html not found in path:", process.cwd());
+                        return new Response("index.html not found", {
+                            status: 404,
+                            headers: corsHeaders
+                        });
+                    }
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": "text/html",
+                            ...corsHeaders
+                        }
+                    });
+                } catch (e) {
+                    console.error("Error serving index.html:", e, "Current directory:", process.cwd());
+                    return new Response("Error serving index.html", {
+                        status: 500,
+                        headers: corsHeaders
+                    });
+                }
+            }
+
+            // Serve test.html
+            if (url.pathname === "/test.html") {
+                console.log("Serving test.html");
+                return new Response(Bun.file("test.html"), {
+                    headers: {
+                        "Content-Type": "text/html",
+                        "Access-Control-Allow-Origin": "*"
+                    }
+                });
+            }
+
+            // Special case for Ammo.js files
+            if (url.pathname === "/ammo.wasm.js" || url.pathname === "/ammo.wasm.wasm") {
+                console.log(`Serving Ammo file from public directory: ${url.pathname}`);
+                try {
+                    const file = Bun.file(`public${url.pathname}`);
+                    const contentType = url.pathname.endsWith('.js') ?
+                        "application/javascript" : "application/wasm";
+
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": contentType,
+                            "Access-Control-Allow-Origin": "*"
+                        }
+                    });
+                } catch (e) {
+                    console.error(`Error serving Ammo file ${url.pathname}:`, e);
+                    return new Response("File not found", { status: 404 });
+                }
+            }
+
+            // Handle JavaScript files
+            if (url.pathname.endsWith('.js')) {
+                console.log(`Serving JS file: ${url.pathname}`);
+                const filePath = url.pathname.slice(1);
+                try {
+                    const file = Bun.file(filePath);
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": "application/javascript",
+                            "Access-Control-Allow-Origin": "*"
+                        }
+                    });
+                } catch (e) {
+                    console.error(`Error serving JS file ${filePath}:`, e);
+                    return new Response("File not found", { status: 404 });
+                }
+            }
+
+            // Handle WASM files
+            if (url.pathname.endsWith('.wasm')) {
+                console.log(`Serving WASM file: ${url.pathname}`);
+                const filePath = url.pathname.slice(1);
+                try {
+                    const file = Bun.file(filePath);
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": "application/wasm",
+                            "Access-Control-Allow-Origin": "*"
+                        }
+                    });
+                } catch (e) {
+                    console.error(`Error serving WASM file ${filePath}:`, e);
+                    return new Response("File not found", { status: 404 });
+                }
+            }
+
+            // Serve other files
+            try {
+                const filePath = url.pathname.slice(1);
+                console.log(`Attempting to serve: ${filePath}`);
+                const file = Bun.file(filePath);
+                return new Response(file);
+            } catch (e) {
+                console.error(`Error serving ${url.pathname}:`, e);
+                return new Response("Not Found", { status: 404 });
+            }
+        } catch (e) {
+            console.error("Unhandled server error:", e);
+            return new Response("Internal Server Error", {
+                status: 500,
                 headers: {
-                    "Content-Type": "text/html",
+                    "Content-Type": "text/plain",
                     "Access-Control-Allow-Origin": "*"
                 }
             });
-        }
-
-        // Special case for Ammo.js files
-        if (url.pathname === "/ammo.wasm.js" || url.pathname === "/ammo.wasm.wasm") {
-            console.log(`Serving Ammo file from public directory: ${url.pathname}`);
-            try {
-                const file = Bun.file(`public${url.pathname}`);
-                const contentType = url.pathname.endsWith('.js') ?
-                    "application/javascript" : "application/wasm";
-
-                return new Response(file, {
-                    headers: {
-                        "Content-Type": contentType,
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                });
-            } catch (e) {
-                console.error(`Error serving Ammo file ${url.pathname}:`, e);
-                return new Response("File not found", { status: 404 });
-            }
-        }
-
-        // Handle JavaScript files
-        if (url.pathname.endsWith('.js')) {
-            console.log(`Serving JS file: ${url.pathname}`);
-            const filePath = url.pathname.slice(1);
-            try {
-                const file = Bun.file(filePath);
-                return new Response(file, {
-                    headers: {
-                        "Content-Type": "application/javascript",
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                });
-            } catch (e) {
-                console.error(`Error serving JS file ${filePath}:`, e);
-                return new Response("File not found", { status: 404 });
-            }
-        }
-
-        // Handle WASM files
-        if (url.pathname.endsWith('.wasm')) {
-            console.log(`Serving WASM file: ${url.pathname}`);
-            const filePath = url.pathname.slice(1);
-            try {
-                const file = Bun.file(filePath);
-                return new Response(file, {
-                    headers: {
-                        "Content-Type": "application/wasm",
-                        "Access-Control-Allow-Origin": "*"
-                    }
-                });
-            } catch (e) {
-                console.error(`Error serving WASM file ${filePath}:`, e);
-                return new Response("File not found", { status: 404 });
-            }
-        }
-
-        // Serve other files
-        try {
-            const filePath = url.pathname.slice(1);
-            console.log(`Attempting to serve: ${filePath}`);
-            const file = Bun.file(filePath);
-            return new Response(file);
-        } catch (e) {
-            console.error(`Error serving ${url.pathname}:`, e);
-            return new Response("Not Found", { status: 404 });
         }
     },
 });
