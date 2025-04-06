@@ -27,8 +27,8 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./
 COPY --from=builder /app/package.json ./
 
-# Install only production dependencies
-RUN bun install --production
+# Install only production dependencies without frozen lockfile
+RUN bun install --production --no-frozen-lockfile
 
 # Expose the port
 EXPOSE 3000
