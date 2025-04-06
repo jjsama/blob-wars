@@ -38,11 +38,16 @@ export class NetworkManager {
     async connect(serverUrl = null) {
         // If URL not provided, construct it based on the current hostname
         if (!serverUrl) {
-            const wsUrl = process.env.NODE_ENV === 'production'
-                ? `wss://${window.location.host}`
-                : `ws://localhost:8080`;
+            const isReplit = window.location.hostname.includes('.repl.co');
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 
-            serverUrl = `${wsUrl}/ws`;
+            if (isReplit) {
+                // Use Replit's URL structure
+                serverUrl = `${protocol}//${window.location.hostname}/ws`;
+            } else {
+                // Local development
+                serverUrl = 'ws://localhost:3000/ws';
+            }
         }
 
         console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);

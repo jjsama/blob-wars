@@ -6,9 +6,8 @@
   "scripts": {
     "start": "bun run server.js",
     "dev": "vite",
-    "build": "vite build && bun build ./server.js --target=bun --outdir=./dist",
-    "server": "bun run start-server.js",
-    "postinstall": "bun install && bun run build"
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "devDependencies": {
     "@types/bun": "latest",

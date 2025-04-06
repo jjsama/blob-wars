@@ -1,0 +1,21 @@
+run = "bun run start"
+hidden = [".config", "bun.lockb"]
+language = "nodejs"
+
+[nix]
+channel = "stable-23_11"
+
+[deployment]
+run = ["sh", "-c", "bun run start"]
+deploymentTarget = "cloudrun"
+
+[env]
+PORT = "3000"
+NODE_ENV = "production"
+
+[packager]
+language = "nodejs"
+  [packager.features]
+  packageSearch = true
+  guessImports = true
+  enabledForHosting = true 
