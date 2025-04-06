@@ -69,8 +69,49 @@ export class Game {
     }
 
     initUI() {
-        // Remove the console initialization since we're using the centralized debug system
-        // The debug system from debug.js will handle all logging
+        // Create HUD container
+        const hudContainer = document.createElement('div');
+        hudContainer.id = 'hud-container';
+        hudContainer.style.position = 'fixed';
+        hudContainer.style.bottom = '20px';
+        hudContainer.style.left = '20px';
+        hudContainer.style.zIndex = '1000';
+        document.body.appendChild(hudContainer);
+
+        // Create health bar container
+        const healthBarContainer = document.createElement('div');
+        healthBarContainer.id = 'health-bar-container';
+        healthBarContainer.style.width = '200px';
+        healthBarContainer.style.height = '20px';
+        healthBarContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+        healthBarContainer.style.border = '2px solid #000';
+        healthBarContainer.style.borderRadius = '10px';
+        healthBarContainer.style.overflow = 'hidden';
+        hudContainer.appendChild(healthBarContainer);
+
+        // Create health bar
+        const healthBar = document.createElement('div');
+        healthBar.id = 'health-bar';
+        healthBar.style.width = '100%';
+        healthBar.style.height = '100%';
+        healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)';
+        healthBar.style.transition = 'width 0.3s ease-in-out, background-color 0.3s ease-in-out';
+        healthBarContainer.appendChild(healthBar);
+
+        // Create health text
+        const healthText = document.createElement('div');
+        healthText.id = 'health-text';
+        healthText.style.position = 'absolute';
+        healthText.style.width = '100%';
+        healthText.style.textAlign = 'center';
+        healthText.style.color = '#fff';
+        healthText.style.fontFamily = 'Arial, sans-serif';
+        healthText.style.fontSize = '14px';
+        healthText.style.fontWeight = 'bold';
+        healthText.style.textShadow = '1px 1px 2px #000';
+        healthText.style.lineHeight = '20px';
+        healthText.textContent = '100 HP';
+        healthBarContainer.appendChild(healthText);
     }
 
     async init() {
