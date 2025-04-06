@@ -4,9 +4,10 @@ WORKDIR /app
 
 # Copy package management files
 COPY package*.json ./
+COPY bun.lock* ./
 
 # Install dependencies including devDependencies for build
-RUN bun install
+RUN bun install --no-frozen-lockfile
 
 # Copy all files needed for build
 COPY . .
@@ -26,8 +27,9 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./
 COPY --from=builder /app/package.json ./
+COPY --from=builder /app/bun.lock* ./
 
-# Install only production dependencies without frozen lockfile
+# Install only production dependencies
 RUN bun install --production --no-frozen-lockfile
 
 # Expose the port
