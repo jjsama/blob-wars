@@ -39,15 +39,7 @@ export class NetworkManager {
         // If URL not provided, construct it based on the current hostname
         if (!serverUrl) {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const isRender = window.location.hostname.includes('.onrender.com');
-
-            if (isRender) {
-                // Use Render's URL structure
-                serverUrl = `${protocol}//${window.location.host}/ws`;
-            } else {
-                // Local development
-                serverUrl = 'ws://localhost:3000/ws';
-            }
+            serverUrl = `${protocol}//${window.location.host}/ws`;
         }
 
         console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);

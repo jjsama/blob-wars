@@ -6,7 +6,7 @@ WORKDIR /app
 COPY package.json bun.lockb ./
 
 # Install dependencies
-RUN bun install
+RUN bun install --production
 
 # Copy the rest of the application
 COPY . .
@@ -16,6 +16,9 @@ RUN bun run build
 
 # Expose the port
 EXPOSE 3000
+
+# Set production environment
+ENV NODE_ENV=production
 
 # Start the server
 CMD ["bun", "run", "server.js"] 
