@@ -162,21 +162,41 @@ const server = Bun.serve({
 
             // Special case for Ammo.js files
             if (url.pathname === "/ammo.wasm.js" || url.pathname === "/ammo.wasm.wasm") {
-                console.log(`Serving Ammo file from public directory: ${url.pathname}`);
+                console.log(`Serving Ammo file: ${url.pathname}`);
                 try {
-                    const file = Bun.file(`public${url.pathname}`);
+                    // Try dist directory first
+                    let file = Bun.file(`dist${url.pathname}`);
+                    let exists = await file.exists();
+
+                    if (!exists) {
+                        // Try public directory if not in dist
+                        file = Bun.file(`public${url.pathname}`);
+                        exists = await file.exists();
+
+                        if (!exists) {
+                            console.error(`Ammo file ${url.pathname} not found in dist or public directories`);
+                            return new Response("File not found", {
+                                status: 404,
+                                headers: corsHeaders
+                            });
+                        }
+                    }
+
                     const contentType = url.pathname.endsWith('.js') ?
                         "application/javascript" : "application/wasm";
 
                     return new Response(file, {
                         headers: {
                             "Content-Type": contentType,
-                            "Access-Control-Allow-Origin": "*"
+                            ...corsHeaders
                         }
                     });
                 } catch (e) {
                     console.error(`Error serving Ammo file ${url.pathname}:`, e);
-                    return new Response("File not found", { status: 404 });
+                    return new Response("Error serving file", {
+                        status: 500,
+                        headers: corsHeaders
+                    });
                 }
             }
 

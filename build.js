@@ -15,6 +15,22 @@ await Bun.write(
     await Bun.file('./index.html').text()
 );
 
+// Copy Ammo.js files to dist
+console.log('Copying Ammo.js files to dist...');
+try {
+    await Bun.write(
+        './dist/ammo.wasm.js',
+        await Bun.file('./public/ammo.wasm.js').text()
+    );
+    await Bun.write(
+        './dist/ammo.wasm.wasm',
+        await Bun.file('./public/ammo.wasm.wasm')
+    );
+    console.log('Successfully copied Ammo.js files to dist');
+} catch (e) {
+    console.error('Error copying Ammo.js files:', e);
+}
+
 // Copy public directory if it exists
 try {
     await Bun.spawn(['cp', '-r', 'public', 'dist/']);

@@ -29,6 +29,7 @@ COPY --from=builder /app/server.js ./
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/bun.lock* ./
 COPY --from=builder /app/styles.css ./
+COPY --from=builder /app/public ./public
 
 # Install only production dependencies
 RUN bun install --production --no-frozen-lockfile
