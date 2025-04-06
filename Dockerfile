@@ -5,13 +5,16 @@ WORKDIR /app
 # Copy package management files
 COPY package*.json ./
 
-# Install dependencies for build
-RUN npm install
+# Install dependencies for build, including platform-specific ones
+RUN npm install --platform=linux --arch=x64 && \
+    npm install -g @rollup/rollup-linux-x64-gnu
 
 # Copy all files needed for build
 COPY . .
 
-# Build the application
+# Build the application with explicit platform
+ENV ROLLUP_PLATFORM=linux
+ENV ROLLUP_ARCH=x64
 RUN npm run build
 
 # Start fresh with Bun runtime

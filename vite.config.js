@@ -9,11 +9,18 @@ export default defineConfig({
     publicDir: 'public', // Serve static assets from the public directory
     build: {
         outDir: 'dist',
+        target: 'esnext',
         rollupOptions: {
             input: {
                 main: resolve(__dirname, 'index.html')
+            },
+            output: {
+                format: 'es',
+                dir: 'dist'
             }
-        }
+        },
+        minify: true,
+        sourcemap: false
     },
     resolve: {
         alias: {
