@@ -1,23 +1,21 @@
-FROM node:18 as builder
+FROM oven/bun:1.0 as builder
 
 WORKDIR /app
 
 # Copy package management files
 COPY package*.json ./
+COPY bun.lockb ./
 
-# Install dependencies for build, including platform-specific ones
-RUN npm install --platform=linux --arch=x64 && \
-    npm install -g @rollup/rollup-linux-x64-gnu
+# Install dependencies including devDependencies for build
+RUN bun install
 
 # Copy all files needed for build
 COPY . .
 
-# Build the application with explicit platform
-ENV ROLLUP_PLATFORM=linux
-ENV ROLLUP_ARCH=x64
-RUN npm run build
+# Build the application
+RUN bun run build
 
-# Start fresh with Bun runtime
+# Start fresh with Bun runtime for smaller final image
 FROM oven/bun:1.0
 
 WORKDIR /app
@@ -25,10 +23,11 @@ WORKDIR /app
 # Copy built files and necessary runtime files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./
-COPY package*.json ./
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/bun.lockb ./
 
-# Install only production dependencies without using frozen lockfile
-RUN bun install --production --no-frozen-lockfile
+# Install only production dependencies
+RUN bun install --production
 
 # Expose the port
 EXPOSE 3000
