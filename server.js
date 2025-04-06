@@ -203,18 +203,37 @@ const server = Bun.serve({
             // Handle JavaScript files
             if (url.pathname.endsWith('.js')) {
                 console.log(`Serving JS file: ${url.pathname}`);
-                const filePath = url.pathname.slice(1);
                 try {
-                    const file = Bun.file(filePath);
+                    // Try dist directory first
+                    let file = Bun.file(`dist${url.pathname}`);
+                    let exists = await file.exists();
+
+                    if (!exists) {
+                        // Try root directory if not in dist
+                        file = Bun.file(url.pathname.slice(1));
+                        exists = await file.exists();
+
+                        if (!exists) {
+                            console.error(`JS file ${url.pathname} not found in dist or root directories`);
+                            return new Response("File not found", {
+                                status: 404,
+                                headers: corsHeaders
+                            });
+                        }
+                    }
+
                     return new Response(file, {
                         headers: {
                             "Content-Type": "application/javascript",
-                            "Access-Control-Allow-Origin": "*"
+                            ...corsHeaders
                         }
                     });
                 } catch (e) {
-                    console.error(`Error serving JS file ${filePath}:`, e);
-                    return new Response("File not found", { status: 404 });
+                    console.error(`Error serving JS file ${url.pathname}:`, e);
+                    return new Response("Error serving file", {
+                        status: 500,
+                        headers: corsHeaders
+                    });
                 }
             }
 

@@ -1,7 +1,7 @@
 import { build } from "bun";
 
 await build({
-    entrypoints: ['./index.ts'],
+    entrypoints: ['./src/main.js'],
     outdir: './dist',
     minify: true,
     target: 'browser',
@@ -13,6 +13,12 @@ await build({
 await Bun.write(
     './dist/index.html',
     await Bun.file('./index.html').text()
+);
+
+// Copy styles.css to dist
+await Bun.write(
+    './dist/styles.css',
+    await Bun.file('./styles.css').text()
 );
 
 // Copy Ammo.js files to dist
