@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 export class Projectile {
-    constructor(scene, physicsWorld, position, direction, speed = 40, owner = null) {
+    constructor(scene, physicsWorld, position, direction, speed = 60, owner = null) {
         this.scene = scene;
         this.physicsWorld = physicsWorld;
         this.position = position.clone();
@@ -27,10 +27,10 @@ export class Projectile {
             const geometry = new THREE.SphereGeometry(radius, 16, 16); // Increased segments for smoother look
             const material = new THREE.MeshStandardMaterial({
                 color: this.color,
-                emissive: this.color,
-                emissiveIntensity: 0.5,
-                roughness: 0.3, // Slightly rough like clay
-                metalness: 0.0
+                roughness: 0.3,
+                metalness: 0.7,
+                transparent: true,
+                opacity: 0.8
             });
 
             this.mesh = new THREE.Mesh(geometry, material);
@@ -77,10 +77,10 @@ export class Projectile {
                 const geometry = new THREE.SphereGeometry(0.08, 16, 16);
                 const material = new THREE.MeshStandardMaterial({
                     color: this.color,
-                    emissive: this.color,
-                    emissiveIntensity: 0.5,
                     roughness: 0.3,
-                    metalness: 0.0
+                    metalness: 0.7,
+                    transparent: true,
+                    opacity: 0.8
                 });
                 this.mesh = new THREE.Mesh(geometry, material);
                 this.scene.add(this.mesh);

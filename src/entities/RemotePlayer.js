@@ -45,9 +45,10 @@ export class RemotePlayer extends THREE.Object3D {
         this.updateIntervals = [];
 
         // For rotation interpolation - reduced sensitivity
-        this.targetRotation = new THREE.Euler(0, Math.PI, 0); // Start facing forward like local player
+        this.targetRotation = new THREE.Euler(0, Math.PI, 0);
         this.previousRotation = new THREE.Euler(0, Math.PI, 0);
-        this.rotationInterpolationSpeed = 8; // Slower rotation interpolation
+        this.rotationInterpolationSpeed = 3; // Reduced from 8 for smoother rotation
+        this.rotationThreshold = 0.1; // Only interpolate rotation if change is significant
 
         // Store the player's assigned color
         this.playerColor = color;
@@ -353,24 +354,35 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     setRotation(rotation) {
-        if (!rotation) return;
-
-        if (!this.modelLoaded) return;
+        if (!rotation || !this.modelLoaded || !this.model) return;
 
         // Handle both number (just Y rotation) and full rotation object
+        let targetY;
         if (typeof rotation === 'number') {
-            this.previousRotation.copy(this.model.rotation);
-            this.targetRotation.set(0, rotation, 0);
+            targetY = rotation;
         } else {
-            this.previousRotation.copy(this.model.rotation);
-            this.targetRotation.set(
-                rotation.x || 0,
-                rotation.y || 0,
-                rotation.z || 0
-            );
+            targetY = rotation.y || 0;
         }
 
-        this.interpolationFactor = 0;
+        // Normalize the target rotation to be between -PI and PI
+        while (targetY > Math.PI) targetY -= 2 * Math.PI;
+        while (targetY < -Math.PI) targetY += 2 * Math.PI;
+
+        // Calculate the shortest rotation path
+        let currentY = this.model.rotation.y;
+        while (currentY > Math.PI) currentY -= 2 * Math.PI;
+        while (currentY < -Math.PI) currentY += 2 * Math.PI;
+
+        let diff = targetY - currentY;
+        if (diff > Math.PI) diff -= 2 * Math.PI;
+        if (diff < -Math.PI) diff += 2 * Math.PI;
+
+        // Only update rotation if the change is significant
+        if (Math.abs(diff) > this.rotationThreshold) {
+            this.previousRotation.y = currentY;
+            this.targetRotation.y = currentY + diff;
+            this.interpolationFactor = 0;
+        }
     }
 
     getPosition() {
@@ -398,7 +410,7 @@ export class RemotePlayer extends THREE.Object3D {
         }
 
         // Skip further updates if not fully initialized
-        if (!this.modelLoaded) {
+        if (!this.modelLoaded || !this.model) {
             return;
         }
 
@@ -414,31 +426,20 @@ export class RemotePlayer extends THREE.Object3D {
                 this.interpolationFactor
             );
 
-            // Interpolate rotation if model exists
-            if (this.model) {
-                // Interpolate Y rotation with reduced sensitivity
-                this.model.rotation.y = THREE.MathUtils.lerp(
-                    this.previousRotation.y,
-                    this.targetRotation.y,
-                    deltaTime * this.rotationInterpolationSpeed
-                );
+            // Smooth rotation interpolation with damping
+            const rotationDelta = deltaTime * this.rotationInterpolationSpeed;
+            const currentRotation = this.model.rotation.y;
+            const targetRotation = this.targetRotation.y;
 
-                // Only interpolate X and Z if they're significantly different
-                if (Math.abs(this.previousRotation.x - this.targetRotation.x) > 0.01) {
-                    this.model.rotation.x = THREE.MathUtils.lerp(
-                        this.previousRotation.x,
-                        this.targetRotation.x,
-                        deltaTime * this.rotationInterpolationSpeed
-                    );
-                }
+            // Calculate shortest rotation path
+            let diff = targetRotation - currentRotation;
+            if (diff > Math.PI) diff -= 2 * Math.PI;
+            if (diff < -Math.PI) diff += 2 * Math.PI;
 
-                if (Math.abs(this.previousRotation.z - this.targetRotation.z) > 0.01) {
-                    this.model.rotation.z = THREE.MathUtils.lerp(
-                        this.previousRotation.z,
-                        this.targetRotation.z,
-                        deltaTime * this.rotationInterpolationSpeed
-                    );
-                }
+            // Apply smooth rotation with damping
+            if (Math.abs(diff) > 0.001) {
+                const newRotation = currentRotation + diff * rotationDelta;
+                this.model.rotation.y = newRotation;
             }
         }
 

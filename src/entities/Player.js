@@ -655,24 +655,20 @@ export class Player {
             const finalDirection = new THREE.Vector3();
             finalDirection.addScaledVector(forward, -moveZ); // Forward is -Z
             finalDirection.addScaledVector(right, moveX);
-
-            // Ensure normalization for consistent speed regardless of diagonal movement
-            // This guarantees the same speed in all directions
             finalDirection.normalize();
 
-            // Get current velocity to preserve Y component (for jumping/falling)
+            // Get current velocity to preserve Y component
             const velocity = this.body.getLinearVelocity();
             const currentVelY = velocity.y();
 
-            // Always use the max velocity to ensure consistent movement speed
-            // This creates a direct, responsive control feel
-            const moveSpeed = maxVelocity;
+            // Use a fixed speed for consistent movement
+            const MOVE_SPEED = 15;
 
-            // Set velocity directly instead of applying force
+            // Set velocity directly
             const newVelocity = new Ammo.btVector3(
-                finalDirection.x * moveSpeed,
+                finalDirection.x * MOVE_SPEED,
                 currentVelY,
-                finalDirection.z * moveSpeed
+                finalDirection.z * MOVE_SPEED
             );
 
             this.body.setLinearVelocity(newVelocity);
@@ -680,7 +676,10 @@ export class Player {
 
             // Debug info occasionally
             if (Math.random() < 0.005) {
-                console.log(`Applied movement with speed: ${moveSpeed.toFixed(2)}, direction: (${finalDirection.x.toFixed(2)}, ${finalDirection.z.toFixed(2)})`);
+                const vel = this.body.getLinearVelocity();
+                if (vel) {
+                    console.log(`Player velocity: (${vel.x().toFixed(2)}, ${vel.y().toFixed(2)}, ${vel.z().toFixed(2)})`);
+                }
             }
         } catch (err) {
             error('Error applying movement velocity', err);

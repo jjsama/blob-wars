@@ -95,7 +95,7 @@ export class PredictionSystem {
      * @param {Number} deltaTime - The time elapsed since the last frame
      */
     applyInput(input, deltaTime) {
-        if (!this.game.player) return;
+        if (!this.game.player || !this.game.player.body) return;
 
         // Apply movement based on input
         if (input.movement) {
@@ -106,17 +106,43 @@ export class PredictionSystem {
             if (input.movement.left) direction.x -= 1;
             if (input.movement.right) direction.x += 1;
 
-            // Only apply if there's actual movement input
+            // Get camera's forward and right vectors to move relative to camera orientation
+            const camera = this.game.scene.camera;
+            if (!camera) return;
+
+            // Get forward and right vectors from camera (but ignore y-component for horizontal movement)
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            right.y = 0;
+            right.normalize();
+
+            // Calculate final direction by combining forward/back and left/right components
+            const finalDirection = new THREE.Vector3();
+            finalDirection.addScaledVector(forward, -direction.z); // Forward is -Z
+            finalDirection.addScaledVector(right, direction.x);
+            finalDirection.normalize();
+
+            // Get current velocity to preserve Y component
+            const velocity = this.game.player.body.getLinearVelocity();
+            const currentVelY = velocity.y();
+
+            // Use a fixed speed for consistent movement
+            const MOVE_SPEED = 15;
+
             if (direction.x !== 0 || direction.z !== 0) {
-                this.game.player.applyMovementForce(
-                    direction,
-                    this.game.moveForce,
-                    this.game.maxVelocity
+                // Set velocity directly for movement
+                const newVelocity = new Ammo.btVector3(
+                    finalDirection.x * MOVE_SPEED,
+                    currentVelY,
+                    finalDirection.z * MOVE_SPEED
                 );
+                this.game.player.body.setLinearVelocity(newVelocity);
+                Ammo.destroy(newVelocity);
             } else {
                 // Stop player by setting velocity to zero
-                const velocity = this.game.player.body.getLinearVelocity();
-                const currentVelY = velocity.y();
                 const zeroVelocity = new Ammo.btVector3(0, currentVelY, 0);
                 this.game.player.body.setLinearVelocity(zeroVelocity);
                 Ammo.destroy(zeroVelocity);

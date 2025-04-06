@@ -45,16 +45,7 @@ export class Game {
         this.predictionSystem = new PredictionSystem(this);
 
         // Reduce movement speed for better gameplay
-        this.moveForce = 15; // Reduced from 20
-        this.maxVelocity = 18; // Reduced from 25
-        this.jumpForce = 10; // Keep jump force the same
-
-        this.canJump = true;
-        this.lastJumpTime = 0;
-        this.bhopWindow = 300;
-
-        // Store projectile class for enemies to use
-        this.projectileClass = Projectile;
+        this.moveForce = 15;
 
         // Make game instance globally available for enemies
         window.game = this;
@@ -64,9 +55,6 @@ export class Game {
 
         // Initialize UI
         this.initUI();
-
-        // Initialize console system
-        this.initConsole();
     }
 
     initUI() {
@@ -158,24 +146,6 @@ export class Game {
             log('Setting up input handlers');
             this.setupInputHandlers();
             log('Input handlers set up');
-
-            // Register debug keyboard commands for prediction system
-            document.addEventListener('keydown', (event) => {
-                // J key - toggle prediction (changed from P)
-                if (event.key === 'j') {
-                    this.predictionSystem.togglePrediction();
-                }
-                // K key - toggle reconciliation (changed from R)
-                if (event.key === 'k') {
-                    this.predictionSystem.toggleReconciliation();
-                }
-                // L key - toggle debug display (changed from D)
-                if (event.key === 'l') {
-                    this.predictionSystem.toggleDebugMode();
-                    log('Debug display toggled');
-                }
-            });
-            log('Debug commands registered (J: toggle prediction, K: toggle reconciliation, L: toggle debug display)');
 
             // Start the game loop before attempting to connect
             // This ensures the game is playable even if connection fails
@@ -432,40 +402,31 @@ export class Game {
      */
     handleGameStateUpdate(gameState) {
         try {
-            if (!gameState.players) {
-                console.warn('Received gameState without players property');
+            if (!gameState || !gameState.players) {
+                console.warn('Received invalid game state:', gameState);
                 return;
             }
 
-            // Process local player state if it exists in the update
-            const localPlayerId = this.networkManager.playerId;
-            if (localPlayerId && gameState.players[localPlayerId] && this.player) {
-                const localPlayerData = gameState.players[localPlayerId];
+            // Validate and process local player data first
+            if (this.networkManager.playerId && gameState.players[this.networkManager.playerId]) {
+                const myData = gameState.players[this.networkManager.playerId];
+                if (myData && myData.position && this.player) {
+                    // Validate position data
+                    if (this.isValidPosition(myData.position)) {
+                        // Update local player position if significantly different
+                        const currentPos = this.player.getPosition();
+                        const posDiff = new THREE.Vector3(
+                            myData.position.x - currentPos.x,
+                            myData.position.y - currentPos.y,
+                            myData.position.z - currentPos.z
+                        );
 
-                // Process server update through prediction system for smooth reconciliation
-                if (this.predictionSystem) {
-                    this.predictionSystem.processServerUpdate(gameState);
-                } else {
-                    // If no prediction system, directly update the position
-                    this.player.setPosition(localPlayerData.position);
-                }
-
-                // Update health if server says it has changed and client-side prediction didn't catch it
-                if (localPlayerData.health !== undefined && this.player.health !== localPlayerData.health) {
-                    this.player.health = localPlayerData.health;
-                    this.player.updateHealthUI();
-                }
-
-                // Update death state if server says it has changed
-                if (localPlayerData.isDead !== undefined && this.player.isDead !== localPlayerData.isDead) {
-                    this.player.isDead = localPlayerData.isDead;
-
-                    // If newly dead according to server, trigger death if we didn't already
-                    if (localPlayerData.isDead && !this.player.isDead) {
-                        this.player.die();
-                    } else if (!localPlayerData.isDead && this.player.isDead) {
-                        // If server says we're alive but we think we're dead, respawn
-                        this.player.respawn();
+                        // Only reconcile if difference is significant
+                        if (posDiff.lengthSq() > 1) {
+                            this.player.setPosition(myData.position);
+                        }
+                    } else {
+                        console.warn('Received invalid position for local player:', myData.position);
                     }
                 }
             }
@@ -474,140 +435,121 @@ export class Game {
 
             // Process remote players
             for (const id in gameState.players) {
-                // Skip local player (already processed above)
+                // Skip local player
                 if (id === this.networkManager.playerId) {
                     seenPlayerIds.add(id);
                     continue;
                 }
 
                 seenPlayerIds.add(id);
-
                 const playerData = gameState.players[id];
 
                 // Validate player data
-                if (!playerData || !playerData.position) {
-                    console.warn('Received invalid player data:', playerData);
+                if (!this.isValidPlayerData(playerData)) {
+                    console.warn('Invalid player data for ID:', id, playerData);
                     continue;
                 }
 
-                // If player exists, update it
-                if (this.remotePlayers[id]) {
-                    // Debug: log position update occasionally
-                    if (Math.random() < 0.01) {
-                        console.log(`Updating remote player ${id} position: x=${playerData.position.x.toFixed(2)}, y=${playerData.position.y.toFixed(2)}, z=${playerData.position.z.toFixed(2)}`);
-                    }
-
-                    const remotePlayer = this.remotePlayers[id];
-
-                    // Store previous position for movement detection
-                    const prevPos = remotePlayer.getPosition();
-
-                    // Update position with smooth interpolation
-                    remotePlayer.setPosition(playerData.position);
-
-                    // Update rotation if available
-                    if (playerData.rotation) {
-                        remotePlayer.setRotation(playerData.rotation);
-                    }
-
-                    // Handle health updates
-                    if (playerData.health !== undefined && remotePlayer.health !== playerData.health) {
-                        remotePlayer.health = playerData.health;
-                        remotePlayer.updateHealthBar(); // Ensure health bar is updated
-                    }
-
-                    // Handle death state
-                    if (playerData.isDead !== undefined) {
-                        if (playerData.isDead && !remotePlayer.isDead) {
-                            // Player just died
-                            remotePlayer.isDead = true;
-                            remotePlayer.setAnimation('death');
-                            console.log(`Remote player ${id} died`);
-                        } else if (!playerData.isDead && remotePlayer.isDead) {
-                            // Player respawned
-                            remotePlayer.isDead = false;
-                            remotePlayer.setAnimation('idle');
-                            console.log(`Remote player ${id} respawned`);
-                        }
-                    }
-
-                    // Handle attack state
-                    if (playerData.isAttacking && !remotePlayer.isAttacking) {
-                        remotePlayer.attack();
-                        console.log(`Remote player ${id} attacked`);
-                    }
-
-                    // Handle jumping state
-                    if (playerData.isJumping && !remotePlayer.isJumping) {
-                        remotePlayer.setAnimation('jump');
-                        remotePlayer.isJumping = true;
-
-                        // Reset jumping state after a fixed time
-                        setTimeout(() => {
-                            remotePlayer.isJumping = false;
-                            if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
-                                remotePlayer.setAnimation('idle');
-                            }
-                        }, 1000);
-
-                        console.log(`Remote player ${id} jumped`);
-                    }
-
-                    // Handle movement animation based on position changes
-                    if (!remotePlayer.isDead && !remotePlayer.isAttacking && !remotePlayer.isJumping) {
-                        this.detectRemotePlayerMovement(prevPos, playerData.position, remotePlayer);
-                    }
-                } else {
-                    // New player joined, create it
-                    console.log(`Creating new remote player ${id}`);
+                // Create new remote player if doesn't exist
+                if (!this.remotePlayers[id]) {
                     this.addRemotePlayer(id, playerData.position);
-
-                    // Set initial state if provided
-                    const remotePlayer = this.remotePlayers[id];
-                    if (remotePlayer) {
-                        if (playerData.health !== undefined) {
-                            remotePlayer.health = playerData.health;
-                        }
-
-                        if (playerData.isDead) {
-                            remotePlayer.isDead = true;
-                            remotePlayer.setAnimation('death');
-                        }
-
-                        if (playerData.isAttacking) {
-                            remotePlayer.isAttacking = true;
-                            remotePlayer.setAnimation('attack');
-
-                            // Reset attack state after animation duration
-                            setTimeout(() => {
-                                remotePlayer.isAttacking = false;
-                            }, 800);
-                        }
-                    }
+                    continue;
                 }
-            }
 
-            // Remove disconnected players (those not in the current game state)
-            for (const id in this.remotePlayers) {
-                if (!seenPlayerIds.has(id)) {
-                    console.log(`Remote player ${id} not in game state, removing`);
-                    this.removeRemotePlayer(id);
+                const remotePlayer = this.remotePlayers[id];
+
+                // Update position with validation
+                if (this.isValidPosition(playerData.position)) {
+                    remotePlayer.setPosition(playerData.position);
                 }
+
+                // Update rotation if valid
+                if (playerData.rotation !== undefined) {
+                    remotePlayer.setRotation(playerData.rotation);
+                }
+
+                // Update health
+                if (typeof playerData.health === 'number') {
+                    remotePlayer.health = playerData.health;
+                    remotePlayer.updateHealthBar();
+                }
+
+                // Handle state changes
+                this.updateRemotePlayerState(remotePlayer, playerData);
             }
 
-            // Handle projectiles from server
-            if (gameState.projectiles && Array.isArray(gameState.projectiles)) {
-                // Process server-side projectiles
-                this.syncServerProjectiles(gameState.projectiles);
-            }
-
-            // Handle enemies from server
-            if (gameState.enemies && Array.isArray(gameState.enemies)) {
-                // Process server-side enemies
-                this.syncServerEnemies(gameState.enemies);
-            }
+            // Remove disconnected players
+            this.cleanupDisconnectedPlayers(seenPlayerIds);
         } catch (err) {
-            console.error('Error processing game state update:', err);
+            console.error('Error handling game state update:', err);
+        }
+    }
+
+    isValidPosition(position) {
+        return position &&
+            typeof position.x === 'number' && !isNaN(position.x) &&
+            typeof position.y === 'number' && !isNaN(position.y) &&
+            typeof position.z === 'number' && !isNaN(position.z);
+    }
+
+    isValidPlayerData(playerData) {
+        return playerData && this.isValidPosition(playerData.position);
+    }
+
+    updateRemotePlayerState(remotePlayer, playerData) {
+        // Handle death state
+        if (playerData.isDead !== undefined) {
+            if (playerData.isDead && !remotePlayer.isDead) {
+                remotePlayer.die();
+            } else if (!playerData.isDead && remotePlayer.isDead) {
+                remotePlayer.respawn(playerData.position);
+            }
+        }
+
+        // Handle attack state
+        if (playerData.isAttacking && !remotePlayer.isAttacking) {
+            remotePlayer.attack();
+        }
+
+        // Handle jumping state
+        if (playerData.isJumping && !remotePlayer.isJumping) {
+            remotePlayer.setAnimation('jump');
+            remotePlayer.isJumping = true;
+
+            // Reset jumping state after animation
+            setTimeout(() => {
+                remotePlayer.isJumping = false;
+                if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
+                    remotePlayer.setAnimation('idle');
+                }
+            }, 1000);
+        }
+
+        // Update movement animation
+        if (!remotePlayer.isDead && !remotePlayer.isAttacking && !remotePlayer.isJumping) {
+            if (playerData.isMoving) {
+                remotePlayer.setAnimation('walkForward');
+            } else {
+                remotePlayer.setAnimation('idle');
+            }
+        }
+    }
+
+    cleanupDisconnectedPlayers(seenPlayerIds) {
+        for (const id in this.remotePlayers) {
+            if (!seenPlayerIds.has(id)) {
+                // Remove player from scene
+                const player = this.remotePlayers[id];
+                if (player.nameTag) {
+                    player.nameTag.remove();
+                }
+                if (player.healthBar) {
+                    player.healthBar.remove();
+                }
+                this.scene.scene.remove(player);
+                delete this.remotePlayers[id];
+                console.log(`Removed disconnected player: ${id}`);
+            }
         }
     }
 
@@ -705,10 +647,10 @@ export class Game {
         const geometry = new THREE.SphereGeometry(0.08, 16, 16);
         const material = new THREE.MeshStandardMaterial({
             color: projectileColor,
-            emissive: projectileColor,
-            emissiveIntensity: 0.5,
             roughness: 0.3,
-            metalness: 0.0
+            metalness: 0.7,
+            transparent: true,
+            opacity: 0.8
         });
 
         const mesh = new THREE.Mesh(geometry, material);
@@ -1269,35 +1211,29 @@ export class Game {
         }
         this.lastShootTime = now;
 
-        // Get the player's position and facing direction
-        const playerPos = this.player.getPosition();
-        const playerRotation = this.player.getRotation().y;
-
-        // Calculate offset from player center (right hand position)
-        const offsetX = Math.cos(playerRotation + Math.PI / 2) * 0.3; // 0.3 units to the right
-        const offsetZ = Math.sin(playerRotation + Math.PI / 2) * 0.3;
-
-        // Calculate the shooting start position (at hand level with right-side offset)
-        const spawnPos = new THREE.Vector3(
-            playerPos.x + offsetX,
-            playerPos.y + 0.5, // Hand level
-            playerPos.z + offsetZ
-        );
-
         // Get camera position and direction for accurate targeting
         const cameraPos = new THREE.Vector3();
         const cameraDir = new THREE.Vector3();
         this.scene.camera.getWorldPosition(cameraPos);
         this.scene.camera.getWorldDirection(cameraDir);
 
-        // Calculate the exact point where the crosshair is pointing
-        // Use raycasting to find the intersection with a distant plane
-        const distance = 100;
-        const targetPoint = new THREE.Vector3()
-            .copy(cameraPos)
-            .add(cameraDir.multiplyScalar(distance));
+        // Get the player's position
+        const playerPos = this.player.getPosition();
 
-        // Calculate the exact shooting direction from spawn to target
+        // Calculate spawn position (right hand offset)
+        const spawnPos = new THREE.Vector3(playerPos.x, playerPos.y + 0.8, playerPos.z);
+        const playerRotation = this.player.getRotation().y;
+
+        // Apply right-hand offset
+        spawnPos.x += Math.cos(playerRotation + Math.PI / 2) * 0.4;
+        spawnPos.z += Math.sin(playerRotation + Math.PI / 2) * 0.4;
+
+        // Calculate exact target point using raycasting
+        const raycaster = new THREE.Raycaster(cameraPos, cameraDir);
+        const targetPoint = new THREE.Vector3();
+        targetPoint.copy(cameraPos).add(cameraDir.multiplyScalar(1000)); // Project far into the distance
+
+        // Calculate exact shooting direction from spawn to target
         const shootDirection = new THREE.Vector3()
             .subVectors(targetPoint, spawnPos)
             .normalize();
@@ -1305,20 +1241,20 @@ export class Game {
         // Generate a unique ID for this projectile
         const projectileId = `proj_${this.networkManager.playerId || 'local'}_${now}_${Math.floor(Math.random() * 1000)}`;
 
-        // Create a new projectile with player reference for color
+        // Create projectile with exact trajectory
         const projectile = {
             id: projectileId,
             position: spawnPos.clone(),
-            velocity: shootDirection.multiplyScalar(40),
+            velocity: shootDirection.multiplyScalar(60), // Increased speed for better accuracy
             mesh: null,
             ownerId: this.networkManager.playerId || 'local',
             creationTime: now,
             active: true,
-            owner: this.player, // Pass player reference for color
+            owner: this.player,
             update: function (deltaTime) {
                 if (!this.active) return false;
 
-                // Update position using exact velocity without any gravity
+                // Update position using exact velocity
                 this.position.x += this.velocity.x * deltaTime;
                 this.position.y += this.velocity.y * deltaTime;
                 this.position.z += this.velocity.z * deltaTime;
@@ -1328,24 +1264,18 @@ export class Game {
                     this.mesh.position.copy(this.position);
                 }
 
-                // Auto-deactivate old projectiles
-                if (Date.now() - this.creationTime > 3000) {
-                    this.active = false;
-                    return false;
-                }
-
                 return true;
             }
         };
 
-        // Create a sphere mesh for the projectile using player's color
+        // Create projectile mesh
         const geometry = new THREE.SphereGeometry(0.08, 16, 16);
         const material = new THREE.MeshStandardMaterial({
             color: this.player.playerColor,
-            emissive: this.player.playerColor,
-            emissiveIntensity: 0.5,
             roughness: 0.3,
-            metalness: 0.0
+            metalness: 0.7,
+            transparent: true,
+            opacity: 0.8
         });
 
         const mesh = new THREE.Mesh(geometry, material);
@@ -1358,19 +1288,21 @@ export class Game {
         // Add to projectiles array
         this.projectiles.push(projectile);
 
-        // Set player as attacking - do this before sending to server for faster local feedback
+        // Set player as attacking
         this.player.attack();
 
-        // Add muzzle flash immediately for visual feedback
-        this.addMuzzleFlash(spawnPos, direction);
+        // Add muzzle flash
+        this.addMuzzleFlash(spawnPos, shootDirection);
 
-        // Send shoot event to server in multiplayer
-        if (this.isMultiplayer && this.networkManager.connected) {
-            this.networkManager.sendShoot(direction, spawnPos, projectileId);
+        // Send projectile spawn to server in multiplayer
+        if (this.networkManager && this.networkManager.connected) {
+            this.networkManager.sendProjectileSpawn({
+                id: projectileId,
+                position: spawnPos,
+                velocity: projectile.velocity,
+                ownerId: this.networkManager.playerId
+            });
         }
-
-        // Debug info
-        console.log(`Projectile ${projectileId} fired at position: ${spawnPos.x.toFixed(2)}, ${spawnPos.y.toFixed(2)}, ${spawnPos.z.toFixed(2)}`);
     }
 
     addMuzzleFlash(position, direction) {
@@ -1537,14 +1469,46 @@ export class Game {
                 return;
             }
 
-            // Apply movement force with defensive checks
-            if (typeof this.player.applyMovementForce === 'function') {
-                this.player.applyMovementForce(moveDirection, this.moveForce, this.maxVelocity);
+            // Apply movement with direct velocity
+            if (this.player && this.player.body) {
+                // Get camera's forward and right vectors to move relative to camera orientation
+                const camera = this.scene.camera;
+                if (!camera) return;
+
+                // Get forward and right vectors from camera (but ignore y-component for horizontal movement)
+                const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+                forward.y = 0;
+                forward.normalize();
+
+                const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+                right.y = 0;
+                right.normalize();
+
+                // Calculate final direction by combining forward/back and left/right components
+                const finalDirection = new THREE.Vector3();
+                finalDirection.addScaledVector(forward, -moveDirection.z); // Forward is -Z
+                finalDirection.addScaledVector(right, moveDirection.x);
+                finalDirection.normalize();
+
+                // Get current velocity to preserve Y component
+                const velocity = this.player.body.getLinearVelocity();
+                const currentVelY = velocity.y();
+
+                // Use a fixed speed for consistent movement
+                const MOVE_SPEED = 15;
+
+                // Set velocity directly
+                const newVelocity = new Ammo.btVector3(
+                    finalDirection.x * MOVE_SPEED,
+                    currentVelY,
+                    finalDirection.z * MOVE_SPEED
+                );
+
+                this.player.body.setLinearVelocity(newVelocity);
+                Ammo.destroy(newVelocity);
 
                 // Update animation based on movement
-                if (this.player && this.input) {
-                    this.player.updateMovementAnimation(movementState);
-                }
+                this.player.updateMovementAnimation(movementState);
             }
 
             // Handle jumping in single player mode
@@ -1591,96 +1555,8 @@ export class Game {
      * Create or update a debug display for multiplayer information
      */
     updateDebugDisplay() {
-        // Completely disable debug display to avoid interfering with gameplay
+        // Completely disable debug display
         return;
-
-        // Only create/update when debug mode is enabled
-        if (!this.isMultiplayer || !this.predictionSystem || !this.predictionSystem.debugMode) {
-            // If debug display exists but should be hidden, remove it
-            if (this.debugDisplay && this.debugDisplay.container) {
-                this.debugDisplay.container.style.display = 'none';
-            }
-            return;
-        }
-
-        // Create debug display if it doesn't exist
-        if (!this.debugDisplay) {
-            this.debugDisplay = {
-                container: document.createElement('div'),
-                stats: document.createElement('div'),
-                positions: document.createElement('div'),
-                prediction: document.createElement('div'),
-                network: document.createElement('div'),
-                lastUpdateTime: 0
-            };
-
-            // Style the container
-            const container = this.debugDisplay.container;
-            container.style.position = 'fixed';
-            container.style.top = '10px';
-            container.style.right = '10px';
-            container.style.width = '300px';
-            container.style.padding = '10px';
-            container.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-            container.style.color = '#fff';
-            container.style.fontFamily = 'monospace';
-            container.style.fontSize = '12px';
-            container.style.borderRadius = '5px';
-            container.style.zIndex = '1000';
-            container.style.pointerEvents = 'none'; // Don't block mouse clicks
-
-            // Add sections
-            container.appendChild(this.debugDisplay.stats);
-            container.appendChild(this.debugDisplay.positions);
-            container.appendChild(this.debugDisplay.prediction);
-            container.appendChild(this.debugDisplay.network);
-
-            // Add container to document
-            document.body.appendChild(container);
-        }
-
-        // Only update every 200ms for performance
-        const now = Date.now();
-        if (now - this.debugDisplay.lastUpdateTime < 200) {
-            return;
-        }
-        this.debugDisplay.lastUpdateTime = now;
-
-        // Make sure display is visible
-        this.debugDisplay.container.style.display = 'block';
-
-        // Update information
-
-        // 1. General statistics
-        this.debugDisplay.stats.innerHTML = `
-            <h3 style="margin: 0 0 5px 0; color: #4fc3f7;">Multiplayer Stats</h3>
-            <p>Connected: ${this.networkManager.connected ? '✓' : '✘'}</p>
-            <p>Player ID: ${this.networkManager.playerId || 'Unknown'}</p>
-            <p>Remote Players: ${Object.keys(this.remotePlayers).length}</p>
-            <p>Projectiles: ${this.projectiles.length}</p>
-        `;
-
-        // 2. Position information
-        const playerPos = this.player ? this.player.getPosition() : { x: 0, y: 0, z: 0 };
-        this.debugDisplay.positions.innerHTML = `
-            <h3 style="margin: 10px 0 5px 0; color: #4fc3f7;">Position</h3>
-            <p>Local: x=${playerPos.x.toFixed(2)}, y=${playerPos.y.toFixed(2)}, z=${playerPos.z.toFixed(2)}</p>
-        `;
-
-        // 3. Prediction system info
-        if (this.predictionSystem) {
-            const stats = this.predictionSystem.getStats();
-            this.debugDisplay.prediction.innerHTML = `
-                <h3 style="margin: 10px 0 5px 0; color: #4fc3f7;">Prediction</h3>
-                <p>Enabled: ${stats.enabled.prediction ? '✓' : '✘'}</p>
-                <p>Reconciliation: ${stats.enabled.reconciliation ? '✓' : '✘'}</p>
-                <p>Pending Inputs: ${stats.pendingInputCount}</p>
-                <p>Corrections: ${stats.reconciliationCount}</p>
-                <p>Last Correction: ${stats.timeSinceLastReconciliation}ms ago</p>
-                <p>Avg Correction: x=${stats.averageCorrection.x.toFixed(2)}, y=${stats.averageCorrection.y.toFixed(2)}, z=${stats.averageCorrection.z.toFixed(2)}</p>
-                <p>Is Jumping: ${stats.isJumping ? '✓' : '✘'}</p>
-            `;
-        }
     }
 
     // Add the missing method to handle environment elements
@@ -1870,9 +1746,6 @@ export class Game {
             if (this.scene) {
                 this.scene.update();
             }
-
-            // Update debug display
-            this.updateDebugDisplay();
 
             // Track FPS
             this.frameCount++;
