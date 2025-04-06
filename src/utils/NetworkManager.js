@@ -50,7 +50,17 @@ export class NetworkManager {
             }
         }
 
-        console.log(`Attempting to connect to WebSocket server at ${serverUrl}`);
+        console.log(`
+=== WebSocket Connection Attempt ===
+URL: ${serverUrl}
+Protocol: ${window.location.protocol}
+Hostname: ${window.location.hostname}
+Port: ${window.location.port}
+Environment: ${window.location.hostname.includes('digitaloceanspaces.com') ||
+                window.location.hostname.includes('ondigitalocean.app') ? 'Production' : 'Development'}
+Previous Attempts: ${this.reconnectAttempts}
+=================================
+        `);
 
         return new Promise((resolve, reject) => {
             try {
