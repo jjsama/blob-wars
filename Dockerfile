@@ -1,34 +1,34 @@
-FROM oven/bun:1.0
+FROM node:18 as builder
 
 WORKDIR /app
 
 # Copy package management files
-COPY package*.json bun.lockb ./
+COPY package*.json ./
 
-# Copy all configuration files needed for build
-COPY tsconfig.json vite.config.js ./
+# Install dependencies for build
+RUN npm install
 
-# Install ALL dependencies (including devDependencies) needed for building
-RUN bun install
-
-# Copy source files and public assets
-COPY src/ ./src/
-COPY public/ ./public/
-COPY index.html ./
-COPY styles.css ./
-COPY index.ts ./
+# Copy all files needed for build
+COPY . .
 
 # Build the application
-RUN bun run build
+RUN npm run build
 
-# Clean up dev dependencies after build
+# Start fresh with Bun runtime
+FROM oven/bun:1.0
+
+WORKDIR /app
+
+# Copy built files and necessary runtime files
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/server.js ./
+COPY package*.json bun.lockb ./
+
+# Install only production dependencies
 RUN bun install --production
 
 # Expose the port
 EXPOSE 3000
-
-# Copy server files
-COPY server.js ./
 
 # Set production environment
 ENV NODE_ENV=production
