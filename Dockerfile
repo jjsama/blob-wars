@@ -4,7 +4,6 @@ WORKDIR /app
 
 # Copy package management files
 COPY package*.json ./
-COPY bun.lockb ./
 
 # Install dependencies including devDependencies for build
 RUN bun install
@@ -24,7 +23,6 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./
 COPY --from=builder /app/package.json ./
-COPY --from=builder /app/bun.lockb ./
 
 # Install only production dependencies
 RUN bun install --production
