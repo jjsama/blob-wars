@@ -38,12 +38,12 @@ export class NetworkManager {
     async connect(serverUrl = null) {
         // If URL not provided, construct it based on the current hostname
         if (!serverUrl) {
-            const isReplit = window.location.hostname.includes('.repl.co');
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const isRender = window.location.hostname.includes('.onrender.com');
 
-            if (isReplit) {
-                // Use Replit's URL structure
-                serverUrl = `${protocol}//${window.location.hostname}/ws`;
+            if (isRender) {
+                // Use Render's URL structure
+                serverUrl = `${protocol}//${window.location.host}/ws`;
             } else {
                 // Local development
                 serverUrl = 'ws://localhost:3000/ws';
