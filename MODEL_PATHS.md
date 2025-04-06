@@ -15,10 +15,10 @@ In development mode (when running the Bun server directly):
 
 ### Production Mode
 
-When built for production with a tool like Vite:
+When built for production with Bun's bundler:
 - Assets will be processed by the build tool
-- They will be placed in a different location like `/dist/assets`
-- Paths need to be updated accordingly
+- They will be placed in the `/dist` directory
+- Paths are updated accordingly
 
 ## Path Configuration
 
@@ -41,11 +41,11 @@ export const ASSET_PATHS = {
 1. Update `IS_PRODUCTION` flag in `constants.js` to `true`
 2. Run your build command:
    ```
-   npm run build
+   bun run build
    ```
 3. Serve the built assets:
    ```
-   npm run serve:prod
+   bun run start
    ```
 
 ## Folder Structure

@@ -14,8 +14,8 @@ COPY . .
 # Set production environment for build
 ENV NODE_ENV=production
 
-# Build the application using Bun
-RUN bunx --bun vite build
+# Build the application using Bun's native bundler
+RUN bun run build
 
 # Start fresh with Bun runtime for smaller final image
 FROM oven/bun:1.0

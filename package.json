@@ -5,13 +5,12 @@
   "private": true,
   "scripts": {
     "start": "bun run server.js",
-    "dev": "vite",
-    "build": "bunx --bun vite build",
-    "preview": "vite preview"
+    "dev": "bun --watch index.ts",
+    "build": "bun run build.js",
+    "preview": "bun run server.js"
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "vite": "^5.4.15",
     "@types/three": "^0.174.0",
     "@types/ws": "^8.5.10",
     "typescript": "^5"
