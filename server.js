@@ -91,16 +91,32 @@ const server = Bun.serve({
     },
     async fetch(req, server) {
         const url = new URL(req.url);
-        console.log(`Received request for: ${url.pathname}`);
+        console.log(`Received request for: ${url.pathname} [${req.method}]`);
+        console.log('Request headers:', Object.fromEntries(req.headers.entries()));
+        console.log('Request origin:', req.headers.get('origin'));
 
         // Add detailed error handling
         try {
-            // Add CORS headers for all responses
+            // Enhanced CORS headers
             const corsHeaders = {
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-                "Access-Control-Allow-Headers": "Content-Type"
+                "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Requested-With",
+                "Access-Control-Max-Age": "86400", // 24 hours
+                "Access-Control-Allow-Credentials": "true"
             };
+
+            // Log the CORS headers we're sending back
+            console.log('Responding with CORS headers:', corsHeaders);
+
+            // Handle OPTIONS requests (CORS preflight)
+            if (req.method === "OPTIONS") {
+                console.log("Handling CORS preflight request");
+                return new Response(null, {
+                    status: 204,
+                    headers: corsHeaders
+                });
+            }
 
             // Handle WebSocket upgrade requests
             if (url.pathname === "/ws") {
