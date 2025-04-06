@@ -25,10 +25,10 @@ WORKDIR /app
 # Copy built files and necessary runtime files
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/server.js ./
-COPY package*.json bun.lockb ./
+COPY package*.json ./
 
-# Install only production dependencies
-RUN bun install --production
+# Install only production dependencies without using frozen lockfile
+RUN bun install --production --no-frozen-lockfile
 
 # Expose the port
 EXPOSE 3000
