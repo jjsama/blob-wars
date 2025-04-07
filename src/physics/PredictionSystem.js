@@ -30,6 +30,10 @@ export class PredictionSystem {
         this.correctionFactorGround = 0.15; // Slower interpolation on ground
         this.correctionFactorAir = 0.1; // Even slower in air for smoother jumps
 
+        // Velocity interpolation factor for smoother acceleration/deceleration
+        this.velocityInterpolationFactor = 0.2; // Adjust for desired responsiveness vs smoothness
+        this.stopDampingFactor = 0.9; // How quickly the player stops (closer to 1 = slower stop)
+
         // Movement constants
         this.MOVE_SPEED = 15;
         this.JUMP_FORCE = 10;
@@ -129,12 +133,23 @@ export class PredictionSystem {
                     // Get current velocity
                     const velocity = this.game.player.body.getLinearVelocity();
                     const currentVelY = velocity.y();
+                    const currentVelX = velocity.x();
+                    const currentVelZ = velocity.z();
 
-                    // Set new velocity
+                    // Calculate target velocity
+                    const targetVelX = finalDirection.x * this.MOVE_SPEED;
+                    const targetVelZ = finalDirection.z * this.MOVE_SPEED;
+
+                    // Smoothly interpolate towards target velocity
+                    const interpFactor = this.velocityInterpolationFactor;
+                    const newVelX = currentVelX + (targetVelX - currentVelX) * interpFactor;
+                    const newVelZ = currentVelZ + (targetVelZ - currentVelZ) * interpFactor;
+
+                    // Set interpolated velocity
                     const newVelocity = new Ammo.btVector3(
-                        finalDirection.x * this.MOVE_SPEED,
+                        newVelX,
                         currentVelY,
-                        finalDirection.z * this.MOVE_SPEED
+                        newVelZ
                     );
                     this.game.player.body.setLinearVelocity(newVelocity);
                     Ammo.destroy(newVelocity);
@@ -143,13 +158,24 @@ export class PredictionSystem {
                     this.lastInputAppliedTime = Date.now();
                     this.noInputDuration = 0;
                     this.velocityDampingActive = false;
+
+                    // Update animation based on applied movement
+                    if (this.game.player) {
+                        this.game.player.updateMovementAnimation(input.movement);
+                    }
                 } else {
-                    // If no movement input, stop immediately
-                    this.stopMovement();
+                    // No local direction (WASD keys released *this frame*)
+                    // Don't stop movement if player is currently attacking
+                    if (!this.game.player.isAttacking) {
+                        this.stopMovement();
+                    }
                 }
             } else {
-                // No movement input, stop immediately
-                this.stopMovement();
+                // No input.movement object provided at all?
+                // Don't stop movement if player is currently attacking
+                if (!this.game.player.isAttacking) {
+                    this.stopMovement();
+                }
             }
 
             // Handle jumping
@@ -187,14 +213,32 @@ export class PredictionSystem {
         if (!this.game.player || !this.game.player.body) return;
 
         const velocity = this.game.player.body.getLinearVelocity();
+        const currentVelX = velocity.x();
+        const currentVelY = velocity.y();
+        const currentVelZ = velocity.z();
+
+        // Gradually damp horizontal velocity
+        const newVelX = currentVelX * this.stopDampingFactor;
+        const newVelZ = currentVelZ * this.stopDampingFactor;
+
+        // Stop completely if velocity is very small
+        const stopThreshold = 0.1;
+        const finalVelX = Math.abs(newVelX) < stopThreshold ? 0 : newVelX;
+        const finalVelZ = Math.abs(newVelZ) < stopThreshold ? 0 : newVelZ;
+
         const newVelocity = new Ammo.btVector3(
-            0,
-            velocity.y(), // Preserve vertical velocity
-            0
+            finalVelX,
+            currentVelY, // Preserve vertical velocity
+            finalVelZ
         );
         this.game.player.body.setLinearVelocity(newVelocity);
         Ammo.destroy(newVelocity);
         this.velocityDampingActive = true;
+
+        // Ensure idle animation is played when stopping
+        if (this.game.player) {
+            this.game.player.updateMovementAnimation({ isMoving: false });
+        }
     }
 
     /**
@@ -244,20 +288,47 @@ export class PredictionSystem {
 
         // Only reconcile if difference is significant
         if (distanceSquared > this.positionReconciliationThreshold * this.positionReconciliationThreshold) {
+            // Use different correction factors for ground vs air
+            const correctionFactor = this.game.isPlayerOnGround() ?
+                this.correctionFactorGround : this.correctionFactorAir;
+
             // Smoothly interpolate to server position
             const newPosition = {
-                x: clientPos.x + dx * 0.3,
-                y: serverPos.y, // Direct Y position update
-                z: clientPos.z + dz * 0.3
+                x: clientPos.x + dx * correctionFactor,
+                y: clientPos.y + dy * correctionFactor, // Smooth Y interpolation
+                z: clientPos.z + dz * correctionFactor
             };
 
             this.game.player.setPosition(newPosition);
+
+            // Track reconciliation stats
+            this.reconciliationCount++;
+            this.lastReconciliationTime = Date.now();
+            this.averageCorrection = {
+                x: dx,
+                y: dy,
+                z: dz
+            };
+
+            // --- DEBUG LOGGING START ---
+            const preReapplyPos = this.game.player.getPosition();
+            const preReapplyVel = this.game.player.body?.getLinearVelocity();
+            log(`[Reconcile BEFORE Reapply] DistSq: ${distanceSquared.toFixed(4)}, Applying correction: {dx:${dx.toFixed(3)}, dy:${dy.toFixed(3)}, dz:${dz.toFixed(3)}} Factor: ${correctionFactor.toFixed(2)}. Pos: ${JSON.stringify(preReapplyPos)} Vel: ${preReapplyVel ? `(${preReapplyVel.x().toFixed(2)}, ${preReapplyVel.y().toFixed(2)}, ${preReapplyVel.z().toFixed(2)})` : 'N/A'}`);
+            // --- DEBUG LOGGING END ---
 
             // Reapply pending inputs
             for (const inputData of this.pendingInputs) {
                 this.applyInput(inputData.input, 1 / 60);
             }
+
+            // --- DEBUG LOGGING START ---
+            const postReapplyPos = this.game.player.getPosition();
+            const postReapplyVel = this.game.player.body?.getLinearVelocity();
+            log(`[Reconcile AFTER Reapply] Pending: ${this.pendingInputs.length}. Pos: ${JSON.stringify(postReapplyPos)} Vel: ${postReapplyVel ? `(${postReapplyVel.x().toFixed(2)}, ${postReapplyVel.y().toFixed(2)}, ${postReapplyVel.z().toFixed(2)})` : 'N/A'}`);
+            // --- DEBUG LOGGING END ---
         }
+
+        // Optional: Log reconciliation details if debugging
     }
 
     /**

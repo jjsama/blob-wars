@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { initDebug, log, error } from './debug.js';
 import { Game } from './Game.js';
 
+console.log('--- RAW CONSOLE LOG FROM main.js TOP ---'); // Direct console test
+
 // Initialize debug
 initDebug();
 log('Starting game initialization...');

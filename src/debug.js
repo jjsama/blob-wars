@@ -3,6 +3,7 @@ let debugDiv = null;
 let isInitialized = false;
 
 export function initDebug() {
+    console.log('--- RAW CONSOLE LOG FROM initDebug START ---'); // Direct console test inside initDebug
     // Prevent multiple initializations
     if (isInitialized) {
         console.log('Debug system already initialized');
@@ -67,30 +68,11 @@ export function initDebug() {
 }
 
 export function log(message, ...args) {
-    if (!debugDiv) return; // Don't log if debug system isn't initialized
-
     const timestamp = new Date().toLocaleTimeString();
     const formattedMessage = `[${timestamp}] ${message}`;
 
-    // Log to console
+    // Log to console ONLY
     console.log(formattedMessage, ...args);
-
-    // Append to debug div
-    const logLine = document.createElement('div');
-    logLine.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-    logLine.style.padding = '2px 0';
-    logLine.textContent = args.length > 0 ?
-        `${formattedMessage} ${args.map(a => JSON.stringify(a)).join(' ')}` :
-        formattedMessage;
-    debugDiv.appendChild(logLine);
-
-    // Auto-scroll to bottom
-    debugDiv.scrollTop = debugDiv.scrollHeight;
-
-    // Limit the number of lines
-    while (debugDiv.childNodes.length > 1000) {
-        debugDiv.removeChild(debugDiv.firstChild);
-    }
 }
 
 /**
@@ -133,7 +115,7 @@ export function error(message, err) {
     }
 
     debugDiv.appendChild(errorLine);
-    debugDiv.scrollTop = debugDiv.scrollHeight;
+    // debugDiv.scrollTop = debugDiv.scrollHeight; // Disabled auto-scroll
 }
 
 // Export functions to check debug state

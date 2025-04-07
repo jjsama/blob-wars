@@ -112,10 +112,20 @@ export class Player {
                     this.mixer = new THREE.AnimationMixer(model);
 
                     // Process animations
+                    log('--- Loading Animations ---'); // Log header
                     gltf.animations.forEach(animation => {
-                        this.animations[animation.name] = animation;
-                        this.animationActions[animation.name] = this.mixer.clipAction(animation);
+                        // Trim whitespace (like newlines) from the animation name
+                        const originalName = animation.name;
+                        const trimmedName = originalName.trim();
+
+                        log(`Loaded animation clip: "${originalName}" -> Trimmed: "${trimmedName}"`); // Log original and trimmed
+
+                        // Use the trimmed name as the key
+                        this.animations[trimmedName] = animation;
+                        this.animationActions[trimmedName] = this.mixer.clipAction(animation);
                     });
+                    log(`Mapped animations: ${Object.keys(this.animationActions).join(', ')}`); // Log all mapped names
+                    log('--------------------------');
 
                     // Start idle animation
                     this.playAnimation('idle');
@@ -278,6 +288,8 @@ export class Player {
     }
 
     playAnimation(name) {
+        log(`[PlayAnim Attempt] Requested: "${name}", Current: "${this.currentAnimation}", ModelLoaded: ${this.modelLoaded}`);
+
         // Don't attempt to play animations until mesh and mixer are available
         if (!this.modelLoaded || !this.mixer || !this.mesh) {
             // Instead of logging an error, silently return until model is ready
@@ -286,12 +298,19 @@ export class Player {
 
         // Try to find the animation with case-insensitive lookup
         let animName = name;
+
+        // --- DEBUG LOG: Check available actions right before lookup --- 
+        log(`[PlayAnim Check] Available actions keys: ${JSON.stringify(Object.keys(this.animationActions))}`);
+
         if (!this.animations[name] || !this.animationActions[name]) {
+            log(`Animation "${name}" not found directly. Checking variations...`); // Log missing name
             // Try lowercase version
             const lowerName = name.toLowerCase();
             if (this.animations[lowerName] && this.animationActions[lowerName]) {
                 animName = lowerName;
             } else {
+                // Log failure to find any variation
+                console.warn(`Animation "${name}" (or variations) not found. Cannot play. Available: ${Object.keys(this.animationActions).join(', ')}`);
                 // Only log once for better performance
                 if (name.toLowerCase() === 'idle' && !this._loggedMissingIdle) {
                     console.warn(`Idle animation not found, animations may not be properly loaded. Available animations: ${Object.keys(this.animations).join(', ')}`);
@@ -320,6 +339,9 @@ export class Player {
             action.reset();
             action.fadeIn(0.2);
             action.play();
+
+            // Log successful play
+            // log(`[PlayAnim] Successfully playing "${animName}"`);
 
             // Update current animation and action
             this.currentAnimation = animName;
@@ -399,6 +421,7 @@ export class Player {
 
         this.isAttacking = true;
         this.playAnimation('attack');
+        log(`[Attack Start] Set isAttacking=true. Current anim: ${this.currentAnimation}`);
 
         // Send attack event to server if this is the local player in multiplayer mode
         if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
@@ -408,9 +431,11 @@ export class Player {
         // Reset attack state after a fixed time
         setTimeout(() => {
             this.isAttacking = false;
+            log(`[Attack End Timeout] Set isAttacking=false. Current anim: ${this.currentAnimation}`);
 
             // If we're still in attack animation, switch back to idle
             if (this.currentAnimation === 'attack') {
+                log(`[Attack End Timeout] Still in attack anim, switching to idle.`);
                 this.playAnimation('idle');
             }
         }, 800); // Fixed time for attack animation
@@ -551,6 +576,11 @@ export class Player {
             } catch (rotationError) {
                 throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
             }
+
+            // --- Ground Check Logging --- 
+            this.checkGroundContact();
+            // --- End Ground Check --- 
+
         } catch (err) {
             // Ensure we're properly logging the error with details
             error('Error updating player:', err.message || err);
@@ -924,7 +954,15 @@ export class Player {
     }
 
     checkGroundContact() {
-        if (!this.body) return;
+        if (!this.body || typeof Ammo === 'undefined') return;
+
+        // --- Ground Check Logging --- 
+        const transform = this.body.getWorldTransform();
+        const origin = transform.getOrigin();
+        const currentY = origin.y();
+        const currentVelY = this.body.getLinearVelocity().y();
+        let logMsg = `[GroundCheck] Pre-Check | y: ${currentY.toFixed(3)}, velY: ${currentVelY.toFixed(3)}, canJump: ${this.canJump}, isJumping: ${this.isJumping}`;
+        // --- End Ground Check --- 
 
         try {
             // Check if Ammo is defined
@@ -940,20 +978,6 @@ export class Player {
             }
 
             // Cast a ray downward from the player's position to check for ground
-            const transform = this.body.getWorldTransform();
-            if (!transform) {
-                error('Invalid transform in checkGroundContact');
-                return;
-            }
-
-            const origin = transform.getOrigin();
-            if (!origin || typeof origin.x !== 'function') {
-                error('Invalid origin in checkGroundContact');
-                return;
-            }
-
-            // Increased ray length to detect ground more reliably
-            // Start from slightly above the player's feet (adjusted for capsule)
             const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.9, origin.z());
             // Cast ray further down to ensure we detect ground
             const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 3.0, origin.z());
@@ -974,20 +998,32 @@ export class Player {
             const wasOnGround = this.canJump;
             this.canJump = rayCallback.hasHit();
 
+            // --- Ground Check Logging ---
+            const hitResult = rayCallback.hasHit();
+            logMsg += ` | RayHit: ${hitResult}`;
+            // --- End Ground Check --- 
+
             // Additional check: if very close to y=0 (ground level), force canJump to true
             // This helps in case the ray test somehow misses
             if (!this.canJump && origin.y() < 1.5) {
                 this.canJump = true;
+                // --- Ground Check Logging ---
+                logMsg += ` | ForceGround: true (y=${origin.y().toFixed(3)})`;
+                // --- End Ground Check --- 
                 console.log('Force setting canJump=true because player is close to ground');
             }
 
             // Log when ground state changes
             if (wasOnGround !== this.canJump) {
+                logMsg += ` | StateChange: ${wasOnGround} -> ${this.canJump}`;
                 if (this.canJump) {
                     log('Player touched ground');
 
                     // Reset jump state for player when touching ground
-                    this.isJumping = false;
+                    if (this.isJumping) {
+                        log('[GroundCheck] Resetting isJumping to false on ground contact.');
+                        this.isJumping = false;
+                    }
 
                     // If we were falling, play land animation
                     const velocity = this.body.getLinearVelocity();
@@ -1005,7 +1041,13 @@ export class Player {
             Ammo.destroy(rayEnd);
             Ammo.destroy(rayCallback);
         } catch (err) {
+            logMsg += ` | ERROR: ${err.message}`;
             error('Error in checkGroundContact:', err);
+        } finally {
+            // Log the final message regardless of errors
+            if (Math.random() < 0.1) { // Log only 10% of the time to reduce spam
+                log(logMsg);
+            }
         }
     }
 

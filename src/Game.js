@@ -1033,8 +1033,18 @@ export class Game {
         });
 
         // Handle mouse down events
+        let lastMouseDownTime = 0; // Add a timestamp to prevent rapid double calls
         this.input.onMouseDown((event) => {
+            const now = Date.now();
+            log(`[onMouseDown Listener] Fired. Button: ${event.button}, Time since last: ${now - lastMouseDownTime}ms`); // Log listener trigger
+
             if (event.button === 0) { // Left mouse button
+                if (now - lastMouseDownTime < 100) { // Cooldown: Ignore if less than 100ms since last call
+                    log('[onMouseDown Listener] Cooldown active, ignoring call.');
+                    return;
+                }
+                lastMouseDownTime = now;
+
                 console.log('Left mouse button pressed, shooting');
                 this.shootProjectile();
                 if (this.player) this.player.playAnimation('attack');
@@ -1185,6 +1195,7 @@ export class Game {
     }
 
     shootProjectile() {
+        log(`[shootProjectile] Function called. isDead: ${this.player?.isDead}, lastShootTime: ${this.lastShootTime}`);
         if (!this.player) return;
 
         // Don't allow shooting while dead
@@ -1426,8 +1437,10 @@ export class Game {
             const moveDirection = this.input.getMovementDirection();
             const movementState = this.input.getMovementState();
 
-            // Check for jump input
-            const isJumping = this.input.keys.space && this.canJump;
+            // Get jump state correctly using the unified input state
+            // Also ensure player exists and check player's canJump state
+            const jumpInputPressed = this.input.getInputState().jump;
+            const isJumping = jumpInputPressed && this.player && this.player.canJump;
 
             // If in multiplayer mode, use prediction system
             if (this.isMultiplayer && this.predictionSystem) {
