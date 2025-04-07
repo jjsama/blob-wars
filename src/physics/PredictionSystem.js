@@ -27,8 +27,8 @@ export class PredictionSystem {
         this.jumpStartTime = 0;
 
         // Interpolation factors for smoother corrections
-        this.correctionFactorGround = 0.15; // Slower interpolation on ground
-        this.correctionFactorAir = 0.1; // Even slower in air for smoother jumps
+        this.correctionFactorGround = 0.1; // Further reduced for smoother ground correction
+        this.correctionFactorAir = 0.05; // Further reduced for smoother air correction
 
         // Velocity interpolation factor for smoother acceleration/deceleration
         this.velocityInterpolationFactor = 0.2; // Adjust for desired responsiveness vs smoothness
@@ -101,7 +101,16 @@ export class PredictionSystem {
     applyInput(input, deltaTime) {
         if (!this.game.player || !this.game.player.body) return;
 
+        // --- DEBUG LOG: Log received input state ---
+        log(`[applyInput] Received input: ${JSON.stringify(input)}`);
+
         try {
+            // --- Ensure physics body is active --- 
+            if (this.game.player.body && !this.game.player.body.isActive()) {
+                log('[applyInput] Reactivating physics body.');
+                this.game.player.body.activate(true);
+            }
+
             // Handle movement
             if (input.movement) {
                 const direction = { x: 0, z: 0 };

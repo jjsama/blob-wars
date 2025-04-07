@@ -442,6 +442,7 @@ export class Player {
     }
 
     jump() {
+        log(`[Jump Attempt] isJumping: ${this.isJumping}, canJump: ${this.canJump}, body exists: ${!!this.body}`); // Log jump state before attempt
         if (this.isJumping) {
             log('Jump requested but already jumping');
             return;
@@ -1019,12 +1020,6 @@ export class Player {
                 if (this.canJump) {
                     log('Player touched ground');
 
-                    // Reset jump state for player when touching ground
-                    if (this.isJumping) {
-                        log('[GroundCheck] Resetting isJumping to false on ground contact.');
-                        this.isJumping = false;
-                    }
-
                     // If we were falling, play land animation
                     const velocity = this.body.getLinearVelocity();
                     if (velocity.y() < -5) {
@@ -1035,6 +1030,15 @@ export class Player {
                     log('Player left ground');
                 }
             }
+
+            // --- More Robust isJumping Reset ---
+            // If we are on the ground now, ensure isJumping is false.
+            if (this.canJump && this.isJumping) {
+                log('[GroundCheck] Confirmed on ground, ensuring isJumping is false.');
+                this.isJumping = false;
+                logMsg += ` | Reset isJumping`;
+            }
+            // --- End Robust Reset ---
 
             // Clean up Ammo.js objects to prevent memory leaks
             Ammo.destroy(rayStart);
