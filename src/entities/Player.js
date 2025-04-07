@@ -278,6 +278,12 @@ export class Player {
             // Activate the body so it's affected by physics immediately
             this.body.activate(true);
 
+            // --- Prevent automatic sleeping --- 
+            const DISABLE_DEACTIVATION = 4;
+            this.body.setActivationState(DISABLE_DEACTIVATION);
+            log('Player physics body set to never deactivate.');
+            // --- End prevent sleeping ---
+
             this.canJump = false;
             this.physicsWorld.addRigidBody(this.body);
 

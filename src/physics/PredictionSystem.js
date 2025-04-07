@@ -15,7 +15,7 @@ export class PredictionSystem {
         this.lastProcessedInput = -1;
 
         // Thresholds for position reconciliation
-        this.positionReconciliationThreshold = 0.1; // Only reconcile when diff > 0.1 units
+        this.positionReconciliationThreshold = 0.2; // Further increased threshold
         this.velocityDampingThreshold = 0.1;
 
         // State tracking
@@ -27,8 +27,8 @@ export class PredictionSystem {
         this.jumpStartTime = 0;
 
         // Interpolation factors for smoother corrections
-        this.correctionFactorGround = 0.1; // Further reduced for smoother ground correction
-        this.correctionFactorAir = 0.05; // Further reduced for smoother air correction
+        this.correctionFactorGround = 0.15; // Reverted to original baseline
+        this.correctionFactorAir = 0.1; // Reverted to original baseline
 
         // Velocity interpolation factor for smoother acceleration/deceleration
         this.velocityInterpolationFactor = 0.2; // Adjust for desired responsiveness vs smoothness

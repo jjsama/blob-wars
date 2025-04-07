@@ -282,12 +282,14 @@ const server = Bun.serve({
 const gameState = {
     players: {}, // Map of player IDs to player objects
     connections: {}, // Map of player IDs to WebSocket connections
-    projectiles: [], // Array of projectiles
+    projectiles: [], // Array of active projectiles
     enemies: [], // Array of enemies
     lastUpdateTime: Date.now(),
     lastStatsTime: Date.now(),
     lastCleanupTime: Date.now(), // Initialize lastCleanupTime
-    gameLoopActive: false // Flag to track if game loop is running
+    gameLoopActive: false, // Flag to track if game loop is running
+    lastBroadcastState: null, // Store the state from the last broadcast for delta calculation
+    broadcastCounter: 0 // Counter for sending periodic full updates
 };
 
 // Function to generate a unique player ID
@@ -622,28 +624,27 @@ function handleClientMessage(ws, data) {
 // Broadcast game state to all connected clients
 function broadcastGameState() {
     try {
-        // Create a sanitized version of the game state to broadcast
-        const sanitizedPlayers = {};
+        let payloadObject = {};
+        let sendFullState = false;
 
-        // Sanitize player data to ensure valid structure
+        // Periodically send full state as a fallback/keyframe
+        gameState.broadcastCounter++;
+        if (!gameState.lastBroadcastState || gameState.broadcastCounter >= 100) { // Send full state every 100 ticks (5 seconds)
+            sendFullState = true;
+            gameState.broadcastCounter = 0;
+            console.log('[Broadcast] Sending full state update.');
+        }
+
+        // --- Prepare Current Sanitized State (Needed for both full and delta) ---
+        const currentPlayersState = {};
         for (const playerId in gameState.players) {
             const player = gameState.players[playerId];
-
-            // Only include connected players with valid data
-            if (player && player.connected) {
-                // Ensure player has valid position and rotation
-                sanitizedPlayers[playerId] = {
+            if (player && player.connected) { // Only consider connected players
+                // Basic validation/sanitization
+                currentPlayersState[playerId] = {
                     id: playerId,
-                    position: {
-                        x: typeof player.position?.x === 'number' ? player.position.x : 0,
-                        y: typeof player.position?.y === 'number' ? player.position.y : 5,
-                        z: typeof player.position?.z === 'number' ? player.position.z : 0
-                    },
-                    rotation: {
-                        x: typeof player.rotation?.x === 'number' ? player.rotation.x : 0,
-                        y: typeof player.rotation?.y === 'number' ? player.rotation.y : 0,
-                        z: typeof player.rotation?.z === 'number' ? player.rotation.z : 0
-                    },
+                    position: player.position || { x: 0, y: 5, z: 0 },
+                    rotation: player.rotation || { x: 0, y: 0, z: 0 },
                     health: typeof player.health === 'number' ? player.health : 100,
                     isDead: Boolean(player.isDead),
                     isAttacking: Boolean(player.isAttacking),
@@ -652,24 +653,82 @@ function broadcastGameState() {
                 };
             }
         }
+        // TODO: Add projectile state processing here later
 
-        // Limit projectiles to active ones
-        const activeProjectiles = gameState.projectiles.filter(p => p.active);
+        if (sendFullState) {
+            payloadObject = {
+                type: 'GAME_STATE',
+                data: {
+                    players: currentPlayersState,
+                    // projectiles: currentProjectilesState, // Add later
+                    enemies: gameState.enemies, // Send enemies always for now
+                    timestamp: Date.now()
+                }
+            };
+        } else {
+            // --- Calculate Delta --- 
+            const playerDeltas = {};
+            const removedPlayerIds = [];
 
-        const payload = JSON.stringify({
-            type: 'GAME_STATE',
-            data: {
-                players: sanitizedPlayers,
-                projectiles: activeProjectiles,
-                enemies: gameState.enemies,
-                timestamp: Date.now()
+            // Check for changed/new players
+            for (const playerId in currentPlayersState) {
+                const currentPlayer = currentPlayersState[playerId];
+                const lastPlayer = gameState.lastBroadcastState?.players?.[playerId];
+
+                if (!lastPlayer) {
+                    // New player: send full data
+                    playerDeltas[playerId] = currentPlayer;
+                } else {
+                    // Existing player: check for changes
+                    const delta = {};
+                    let changed = false;
+                    for (const key in currentPlayer) {
+                        if (!deepCompare(currentPlayer[key], lastPlayer[key])) {
+                            delta[key] = currentPlayer[key];
+                            changed = true;
+                        }
+                    }
+                    if (changed) {
+                        // Important: Always include ID in delta for identification
+                        delta.id = playerId;
+                        playerDeltas[playerId] = delta;
+                    }
+                }
             }
-        });
 
-        // Count active connections - properly initialized
+            // Check for removed players
+            for (const playerId in gameState.lastBroadcastState?.players) {
+                if (!currentPlayersState[playerId]) {
+                    removedPlayerIds.push(playerId);
+                }
+            }
+
+            // Only send delta if there are actual changes
+            if (Object.keys(playerDeltas).length > 0 || removedPlayerIds.length > 0 /* || projectile changes later */) {
+                payloadObject = {
+                    type: 'GAME_STATE_DELTA',
+                    data: {
+                        playerDeltas: playerDeltas,
+                        removedPlayerIds: removedPlayerIds,
+                        // projectileDeltas... // Add later
+                        timestamp: Date.now()
+                    }
+                };
+            } else {
+                // No changes, don't send anything this tick
+                // Update lastBroadcastState anyway to reflect no changes needed sending
+                gameState.lastBroadcastState = {
+                    players: JSON.parse(JSON.stringify(currentPlayersState))
+                    // projectiles: JSON.parse(JSON.stringify(currentProjectilesState)) // Add later
+                };
+                return; // Exit early
+            }
+        }
+
+        // --- Send Payload --- 
+        const payload = JSON.stringify(payloadObject);
         let activeConnections = 0;
 
-        // Send to each client directly
         for (const playerId in gameState.connections) {
             const ws = gameState.connections[playerId];
             // WebSocket.OPEN is 1
@@ -699,6 +758,14 @@ function broadcastGameState() {
         // Log active connections count
         if (Math.random() < 0.1) { // Log only occasionally
             console.log(`Broadcast complete, sent to ${activeConnections} active connections`);
+        }
+
+        // --- Update lastBroadcastState AFTER sending --- 
+        if (payloadObject.type) { // Only update if we actually sent something
+            gameState.lastBroadcastState = {
+                players: JSON.parse(JSON.stringify(currentPlayersState))
+                // projectiles: JSON.parse(JSON.stringify(currentProjectilesState)) // Add later
+            };
         }
     } catch (err) {
         console.error('Error in broadcastGameState:', err);
@@ -1166,4 +1233,11 @@ function spawnEnemy() {
 // Start the game loop
 startGameLoop();
 
-console.log(`Server running at http://localhost:${server.port} with WebSocket support`); 
+console.log(`Server running at http://localhost:${server.port} with WebSocket support`);
+
+// --- Helper function for simple deep comparison --- 
+function deepCompare(obj1, obj2) {
+    // Basic comparison for this use case (position, rotation, primitive values)
+    // Not a fully robust deep comparison, but sufficient here.
+    return JSON.stringify(obj1) === JSON.stringify(obj2);
+} 

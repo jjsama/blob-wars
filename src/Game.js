@@ -288,9 +288,19 @@ export class Game {
             }
         });
 
-        // Register event handler for game state updates
-        this.networkManager.on('gameStateUpdate', (gameState) => {
-            this.handleGameStateUpdate(gameState);
+        // Updated handler to process both full state and deltas
+        this.networkManager.on('gameStateUpdate', (message) => {
+            // Log received message size for verification
+            const messageSize = JSON.stringify(message).length;
+            log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
+
+            if (message.type === 'GAME_STATE') {
+                this.handleFullGameStateUpdate(message.data); // Handle full state
+            } else if (message.type === 'GAME_STATE_DELTA') {
+                this.handleGameStateDeltaUpdate(message.data); // Handle delta update
+            } else {
+                console.warn('Received unknown message type from server:', message.type);
+            }
         });
 
         // Register event handler for player damage
@@ -443,7 +453,7 @@ export class Game {
      * Handle a game state update from the server
      * @param {Object} gameState - The game state
      */
-    handleGameStateUpdate(gameState) {
+    handleFullGameStateUpdate(gameState) {
         try {
             if (!gameState || !gameState.players) {
                 console.warn('Received invalid game state:', gameState);
@@ -510,6 +520,61 @@ export class Game {
             });
         } catch (err) {
             console.error('Error handling game state update:', err);
+        }
+    }
+
+    /**
+     * Handle a game state delta update from the server
+     * @param {Object} deltaData - The delta update data
+     */
+    handleGameStateDeltaUpdate(deltaData) {
+        try {
+            // --- Process Player Deltas ---
+            if (deltaData.playerDeltas) {
+                for (const playerId in deltaData.playerDeltas) {
+                    const delta = deltaData.playerDeltas[playerId];
+
+                    if (playerId === this.networkManager.playerId) {
+                        // Apply server correction to local player (prediction handles this mostly)
+                        if (this.player && delta.position && this.predictionSystem) {
+                            // Pass relevant state to prediction system for reconciliation
+                            // We structure it like a mini serverState update
+                            this.predictionSystem.processServerUpdate({
+                                players: { [playerId]: delta }
+                            });
+                        }
+                    } else {
+                        // Apply updates to remote players
+                        let remotePlayer = this.remotePlayers[playerId];
+                        if (!remotePlayer) {
+                            // If player doesn't exist, delta should contain full state for creation
+                            log(`[Delta] Creating new remote player: ${playerId}`);
+                            remotePlayer = this.addRemotePlayer(playerId, delta.position);
+                            if (remotePlayer) { // Ensure player was created successfully
+                                this.updateRemotePlayerState(remotePlayer, delta); // Apply remaining state
+                            }
+                        } else {
+                            // Player exists, apply partial updates
+                            this.updateRemotePlayerState(remotePlayer, delta);
+                        }
+                    }
+                }
+            }
+
+            // --- Process Removed Players ---
+            if (deltaData.removedPlayerIds && deltaData.removedPlayerIds.length > 0) {
+                deltaData.removedPlayerIds.forEach(playerId => {
+                    if (playerId !== this.networkManager.playerId) {
+                        log(`[Delta] Removing player: ${playerId}`);
+                        this.removeRemotePlayer(playerId);
+                    }
+                });
+            }
+
+            // TODO: Process Projectile Deltas later
+
+        } catch (err) {
+            console.error('Error handling game state delta update:', err);
         }
     }
 
