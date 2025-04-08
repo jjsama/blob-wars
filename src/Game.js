@@ -55,6 +55,127 @@ export class Game {
             }
         });
 
+        // Updated handler to process full state messages
+        this.networkManager.on('gameStateUpdate', (message) => {
+            // Log received message size for verification
+            const messageSize = JSON.stringify(message).length;
+            log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
+
+            // Ensure this only handles full GAME_STATE messages
+            if (message.type === 'GAME_STATE') {
+                this.handleFullGameStateUpdate(message.data); // Handle full state
+            } else {
+                console.warn('gameStateUpdate listener received non-GAME_STATE message:', message.type);
+            }
+        });
+
+        // Add new handler specifically for delta updates
+        this.networkManager.on('gameStateDeltaUpdate', (deltaData) => {
+            log(`[Network] Received GAME_STATE_DELTA.`);
+            this.handleGameStateDeltaUpdate(deltaData); // Handle delta update
+        });
+
+        // Register event handler for player damage
+        this.networkManager.on('playerDamage', (data) => {
+            // Check if the damage is for our local player
+            if (data.targetId === this.networkManager.playerId && this.player) {
+                log(`Local player took ${data.amount} damage`);
+
+                // Apply damage to local player
+                this.player.takeDamage(data.amount, data.attackerId);
+            }
+            // Check if it's a remote player we have
+            else if (this.remotePlayers[data.targetId]) {
+                log(`Remote player ${data.targetId} took ${data.amount} damage`);
+
+                // Apply damage to remote player
+                this.remotePlayers[data.targetId].takeDamage(data.amount);
+            }
+        });
+
+        // Register event handler for player death
+        this.networkManager.on('playerDeath', (data) => {
+            log(`Player death event for ${data.playerId}`);
+
+            // If it's our player, handle local death
+            if (data.playerId === this.networkManager.playerId && this.player) {
+                log('Local player died');
+
+                // Only update local player if not already dead
+                if (!this.player.isDead) {
+                    this.player.isDead = true;
+                    this.player.health = 0;
+                    this.player.die();
+                }
+            }
+            // If it's a remote player, handle remote death
+            else if (this.remotePlayers[data.playerId]) {
+                log(`Remote player ${data.playerId} died`);
+
+                // Only update remote player if not already dead
+                if (!this.remotePlayers[data.playerId].isDead) {
+                    this.remotePlayers[data.playerId].isDead = true;
+                    this.remotePlayers[data.playerId].health = 0;
+                    this.remotePlayers[data.playerId].die();
+                }
+            }
+        });
+
+        // Register event handler for player respawn
+        this.networkManager.on('playerRespawn', (data) => {
+            log(`Player respawn event for ${data.playerId}`);
+
+            // If it's our player, handle local respawn
+            if (data.playerId === this.networkManager.playerId && this.player) {
+                log('Local player respawned');
+
+                // Apply respawn to local player
+                this.player.health = 100;
+                this.player.isDead = false;
+
+                // Use server position if provided
+                if (data.position) {
+                    this.player.setPosition(data.position);
+                }
+
+                // Reset to idle animation
+                this.player.playAnimation('idle');
+            }
+            // If it's a remote player, handle remote respawn
+            else if (this.remotePlayers[data.playerId]) {
+                log(`Remote player ${data.playerId} respawned`);
+
+                // Apply respawn to remote player
+                const remotePlayer = this.remotePlayers[data.playerId];
+                remotePlayer.health = 100;
+                remotePlayer.isDead = false;
+
+                // Use server position if provided
+                if (data.position) {
+                    remotePlayer.setPosition(data.position);
+                }
+
+                // Reset to idle animation
+                remotePlayer.playAnimation('idle');
+            }
+        });
+
+        // Connect to server
+        this.networkManager.connect()
+            .then(() => {
+                log('Connected to server successfully');
+            })
+            .catch((error) => {
+                error('Failed to connect to server:', error);
+                this.showConnectionStatus('Connection failed. Running in single player mode.');
+                this.isMultiplayer = false;
+
+                // Hide message after 5 seconds
+                setTimeout(() => {
+                    document.getElementById('connection-status')?.remove();
+                }, 5000);
+            });
+
         // Reduce movement speed for better gameplay
         this.moveForce = 15;
 
@@ -592,11 +713,11 @@ export class Game {
     updateRemotePlayerState(remotePlayer, playerData) {
         if (!remotePlayer || !playerData) return;
 
-        // Update position and rotation if provided
-        if (playerData.position) {
+        // Update position and rotation if provided and valid
+        if (playerData.position && this.isValidPosition(playerData.position)) {
             remotePlayer.setPosition(playerData.position);
         }
-        if (playerData.rotation) {
+        if (playerData.rotation) { // Consider adding isValidRotation if needed
             remotePlayer.setRotation(playerData.rotation);
         }
 
@@ -1123,8 +1244,8 @@ export class Game {
             }
         });
 
-        // Add a regular check for jump key
-        // This helps if the key event was missed or there are issues with key events
+        // -- REMOVED Redundant Interval Check for Jump --
+        /*
         setInterval(() => {
             const inputState = this.input.getInputState();
             if (inputState.jump && this.isPlayerOnGround()) {
@@ -1137,6 +1258,7 @@ export class Game {
                 }
             }
         }, 100); // Check every 100ms
+        */
     }
 
     handleJump() {

@@ -16,6 +16,7 @@ export class NetworkManager {
             'playerConnected': [],
             'playerDisconnected': [],
             'gameStateUpdate': [],
+            'gameStateDeltaUpdate': [],
             'playerDamage': [],
             'playerDeath': [],
             'playerRespawn': [],
@@ -563,10 +564,19 @@ Previous Attempts: ${this.reconnectAttempts}
                     break;
 
                 case 'GAME_STATE':
-                    // Process game state update - the most important message type for sync
+                    // Process full game state update
                     if (message.data) {
-                        console.log('Received game state update with player data:', Object.keys(message.data.players).length);
-                        this._emitEvent('gameStateUpdate', message.data);
+                        // Pass the full message including type for context
+                        this._emitEvent('gameStateUpdate', message);
+                    }
+                    break;
+
+                case 'GAME_STATE_DELTA':
+                    // Process delta game state update
+                    if (message.data) {
+                        console.log('Received game state delta update with player data:', Object.keys(message.data.playerDeltas || {}).length);
+                        // Emit only the data part for delta updates
+                        this._emitEvent('gameStateDeltaUpdate', message.data);
                     }
                     break;
 

@@ -32,6 +32,11 @@ export class Player {
         // Use the provided color or fallback to teal
         this.playerColor = playerColor || 0x00d2d3; // Bright teal as default
 
+        // NEW Animation State Properties
+        this.intendedAnimation = 'idle'; // What animation the input *wants*
+        this.lastMovementInputTime = 0;  // Timestamp of the last movement input intent
+        this.idleDelay = 150; // ms delay before switching back to idle
+
         log(`Player created with ID: ${this.playerId}, color: ${this.playerColor.toString(16)}`);
 
         // Create physics body
@@ -326,15 +331,23 @@ export class Player {
             }
         }
 
-        // Don't restart the same animation unless it's a jump or attack
-        if (this.currentAnimation === animName && animName !== 'jump' && animName !== 'attack') return;
+        // Prevent restart ONLY if the same animation is requested AND its action is currently running.
+        // (Except for one-shot animations like jump/attack which should always restart).
+        if (
+            this.currentAnimation === animName &&
+            this.currentAction &&
+            this.currentAction.isRunning() &&
+            animName !== 'jump' && animName !== 'attack'
+        ) {
+            return; // Animation is already playing and looping correctly, do nothing.
+        }
+
+        // If we reach here, it means we need to start or transition to the requested animation.
 
         try {
-            // For attack and jump animations, we want to make sure they complete
-            const isOneShot = (animName === 'attack' || animName === 'jump');
-
-            // If we have a current action, fade it out
-            if (this.currentAction) {
+            // Fade out the previous action *unless* it's the same action we're about to play
+            // (handles cases where the action might exist but wasn't running).
+            if (this.currentAction && this.currentAction !== this.animationActions[animName]) {
                 this.currentAction.fadeOut(0.2);
             }
 
@@ -355,145 +368,6 @@ export class Player {
         } catch (err) {
             console.error(`Error playing animation '${animName}':`, err);
         }
-    }
-
-    updateMovementAnimation(movementState) {
-        try {
-            // Don't attempt to play animations until mesh and mixer are available
-            if (!this.modelLoaded || !this.mixer || !this.mesh) {
-                return;
-            }
-
-            // If player is jumping, play jump animation regardless of other movements
-            if (movementState.isJumping) {
-                this.playAnimation('jump');
-                return;
-            }
-
-            // If player is attacking, don't override the animation
-            if (this.isAttacking) {
-                return;
-            }
-
-            // Determine which animation to play based on the specific keys pressed
-            if (movementState.isMoving) {
-                // Priority for animations:
-                // 1. Strafe left/right takes precedence if only those keys are pressed
-                // 2. Forward/backward if only those keys are pressed
-                // 3. Otherwise combination movements use forward/backward
-
-                // Check for pure strafing (left or right without forward/backward)
-                if (movementState.left && !movementState.right && !movementState.forward && !movementState.backward) {
-                    this.playAnimation('strafeLeft');
-                    return;
-                }
-
-                if (movementState.right && !movementState.left && !movementState.forward && !movementState.backward) {
-                    this.playAnimation('strafeRight');
-                    return;
-                }
-
-                // Forward/backward movement
-                if (movementState.forward && !movementState.backward) {
-                    this.playAnimation('walkForward');
-                    return;
-                }
-
-                if (movementState.backward && !movementState.forward) {
-                    this.playAnimation('walkBackward');
-                    return;
-                }
-
-                // Combination - default to forward/backward depending on which is active
-                if (movementState.forward) {
-                    this.playAnimation('walkForward');
-                } else if (movementState.backward) {
-                    this.playAnimation('walkBackward');
-                } else {
-                    // This case shouldn't really happen given the isMoving check
-                    this.playAnimation('idle');
-                }
-            } else {
-                // No movement, play idle
-                this.playAnimation('idle');
-            }
-        } catch (err) {
-            console.error('Error updating movement animation:', err);
-        }
-    }
-
-    attack() {
-        if (this.isAttacking) return;
-
-        this.isAttacking = true;
-        this.playAnimation('attack');
-        log(`[Attack Start] Set isAttacking=true. Current anim: ${this.currentAnimation}`);
-
-        // Send attack event to server if this is the local player in multiplayer mode
-        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
-            window.game.networkManager.sendAttack();
-        }
-
-        // Reset attack state after a fixed time
-        setTimeout(() => {
-            this.isAttacking = false;
-            log(`[Attack End Timeout] Set isAttacking=false. Current anim: ${this.currentAnimation}`);
-
-            // If we're still in attack animation, switch back to idle
-            if (this.currentAnimation === 'attack') {
-                log(`[Attack End Timeout] Still in attack anim, switching to idle.`);
-                this.playAnimation('idle');
-            }
-        }, 800); // Fixed time for attack animation
-    }
-
-    jump() {
-        log(`[Jump Attempt] isJumping: ${this.isJumping}, canJump: ${this.canJump}, body exists: ${!!this.body}`); // Log jump state before attempt
-        if (this.isJumping) {
-            log('Jump requested but already jumping');
-            return;
-        }
-
-        log('JUMP INITIATED - Playing jump animation');
-        this.isJumping = true;
-
-        // Play the jump animation first
-        this.playAnimation('jump');
-
-        // Apply physics for the jump with a slight delay to match animation
-        setTimeout(() => {
-            if (this.body) {
-                this.body.activate(true);
-
-                // Get current velocity to preserve horizontal components
-                const velocity = this.body.getLinearVelocity();
-                const currentVelX = velocity.x();
-                const currentVelZ = velocity.z();
-
-                // Set velocity directly instead of applying force
-                const jumpVelocity = new Ammo.btVector3(
-                    currentVelX,
-                    10.0, // Upward velocity for jump
-                    currentVelZ
-                );
-
-                this.body.setLinearVelocity(jumpVelocity);
-                Ammo.destroy(jumpVelocity);
-                log('Jump velocity set: x=' + currentVelX + ', y=10.0, z=' + currentVelZ);
-            }
-        }, 50); // Small delay to sync with animation start
-
-        // Get exact animation duration from the clip
-        const jumpDuration = this.animations.jump ?
-            (this.animations.jump.duration * 1000) : 833; // 0.833 seconds as fallback
-
-        log(`Jump animation duration: ${jumpDuration}ms`);
-
-        // Reset jump state after animation completes
-        setTimeout(() => {
-            this.isJumping = false;
-            log('Jump state reset - player can jump again');
-        }, jumpDuration);
     }
 
     update(deltaTime) {
@@ -586,7 +460,47 @@ export class Player {
 
             // --- Ground Check Logging --- 
             this.checkGroundContact();
-            // --- End Ground Check --- 
+            // --- End Ground Check ---
+
+            // --- NEW: Debounced Animation Logic --- 
+            try {
+                if (this.modelLoaded && this.mixer) {
+                    let targetAnimation = 'idle'; // Default to idle
+
+                    // Check special states first
+                    if (this.isDead) {
+                        targetAnimation = 'death';
+                    } else if (this.isAttacking) {
+                        // Let attack() handle finishing the attack animation
+                        targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
+                    } else if (this.isJumping) {
+                        targetAnimation = 'jump';
+                    } else {
+                        // Not dead, attacking, or jumping - check movement intent
+                        const now = Date.now();
+                        if (this.intendedAnimation !== 'idle') {
+                            // If intent is movement, use that
+                            targetAnimation = this.intendedAnimation;
+                        } else {
+                            // Intent is idle. Only switch to idle if enough time has passed
+                            // or if we are already idle.
+                            if (this.currentAnimation === 'idle' || now - this.lastMovementInputTime > this.idleDelay) {
+                                targetAnimation = 'idle';
+                            }
+                            else {
+                                // Not enough time passed, keep the current (likely movement) animation
+                                targetAnimation = this.currentAnimation;
+                            }
+                        }
+                    }
+
+                    // Play the determined animation (playAnimation handles preventing restarts)
+                    this.playAnimation(targetAnimation);
+                }
+            } catch (animationUpdateError) {
+                error(`Error updating animation based on intent: ${animationUpdateError.message || animationUpdateError}`);
+            }
+            // --- END NEW Animation Logic ---
 
         } catch (err) {
             // Ensure we're properly logging the error with details
@@ -1095,5 +1009,30 @@ export class Player {
         setTimeout(() => {
             document.body.removeChild(indicator);
         }, 1000);
+    }
+
+    // NEW Method to set animation intent based on input state
+    setMovementIntent(movementState) {
+        let intent = 'idle';
+
+        if (movementState.isMoving) {
+            // Determine intended animation based on specific keys pressed
+            if (movementState.left && !movementState.right && !movementState.forward && !movementState.backward) {
+                intent = 'strafeLeft';
+            } else if (movementState.right && !movementState.left && !movementState.forward && !movementState.backward) {
+                intent = 'strafeRight';
+            } else if (movementState.forward && !movementState.backward) {
+                intent = 'walkForward';
+            } else if (movementState.backward && !movementState.forward) {
+                intent = 'walkBackward';
+            } else if (movementState.forward) {
+                intent = 'walkForward'; // Default to forward/backward for combinations
+            } else if (movementState.backward) {
+                intent = 'walkBackward';
+            }
+            this.lastMovementInputTime = Date.now(); // Update timestamp when moving
+        }
+
+        this.intendedAnimation = intent;
     }
 }

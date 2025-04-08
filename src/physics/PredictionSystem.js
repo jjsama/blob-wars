@@ -97,8 +97,9 @@ export class PredictionSystem {
      * Apply an input to the local player - handles actual movement
      * @param {Object} input - The input to apply
      * @param {Number} deltaTime - The time elapsed since the last frame
+     * @param {Boolean} isReconciliation - Flag indicating if called during reconciliation
      */
-    applyInput(input, deltaTime) {
+    applyInput(input, deltaTime, isReconciliation = false) {
         if (!this.game.player || !this.game.player.body) return;
 
         // --- DEBUG LOG: Log received input state ---
@@ -168,9 +169,11 @@ export class PredictionSystem {
                     this.noInputDuration = 0;
                     this.velocityDampingActive = false;
 
-                    // Update animation based on applied movement
-                    if (this.game.player) {
-                        this.game.player.updateMovementAnimation(input.movement);
+                    // -- Set Movement Intent on Player (gated by !isReconciliation) --
+                    if (!isReconciliation && this.game.player) {
+                        // Instead of calling updateMovementAnimation directly,
+                        // set the intent on the player object.
+                        this.game.player.setMovementIntent(input.movement);
                     }
                 } else {
                     // No local direction (WASD keys released *this frame*)
@@ -246,7 +249,8 @@ export class PredictionSystem {
 
         // Ensure idle animation is played when stopping
         if (this.game.player) {
-            this.game.player.updateMovementAnimation({ isMoving: false });
+            // Also set intent to idle when stopping explicitly
+            this.game.player.setMovementIntent({ isMoving: false });
         }
     }
 
@@ -325,9 +329,9 @@ export class PredictionSystem {
             log(`[Reconcile BEFORE Reapply] DistSq: ${distanceSquared.toFixed(4)}, Applying correction: {dx:${dx.toFixed(3)}, dy:${dy.toFixed(3)}, dz:${dz.toFixed(3)}} Factor: ${correctionFactor.toFixed(2)}. Pos: ${JSON.stringify(preReapplyPos)} Vel: ${preReapplyVel ? `(${preReapplyVel.x().toFixed(2)}, ${preReapplyVel.y().toFixed(2)}, ${preReapplyVel.z().toFixed(2)})` : 'N/A'}`);
             // --- DEBUG LOGGING END ---
 
-            // Reapply pending inputs
+            // Reapply pending inputs without triggering animations directly
             for (const inputData of this.pendingInputs) {
-                this.applyInput(inputData.input, 1 / 60);
+                this.applyInput(inputData.input, 1 / 60, true); // Pass true for isReconciliation
             }
 
             // --- DEBUG LOGGING START ---
