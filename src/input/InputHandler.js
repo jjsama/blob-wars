@@ -76,7 +76,7 @@ export class InputHandler {
     resetKeys() {
         this.keyStates = {}; // Clear all key states
         this.mouseButtons.clear();
-        log('--- [InputHandler] resetKeys called (window blur) ---'); // Use log for consistency
+        console.log('--- [InputHandler] resetKeys called (window blur) ---'); // Use console.log
     }
 
     // Check if a specific key is currently pressed

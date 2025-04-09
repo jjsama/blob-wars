@@ -14,7 +14,7 @@ import { PredictionSystem } from './physics/PredictionSystem.js';
 
 export class Game {
     constructor() {
-        log('Game constructor called');
+        console.log('Game constructor called');
         this.physics = new PhysicsWorld();
         this.scene = new GameScene();
         this.input = new InputHandler();
@@ -59,7 +59,7 @@ export class Game {
         this.networkManager.on('gameStateUpdate', (message) => {
             // Log received message size for verification
             const messageSize = JSON.stringify(message).length;
-            log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
+            console.log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
 
             // Ensure this only handles full GAME_STATE messages
             if (message.type === 'GAME_STATE') {
@@ -71,7 +71,7 @@ export class Game {
 
         // Add new handler specifically for delta updates
         this.networkManager.on('gameStateDeltaUpdate', (deltaData) => {
-            log(`[Network] Received GAME_STATE_DELTA.`);
+            console.log(`[Network] Received GAME_STATE_DELTA.`);
             this.handleGameStateDeltaUpdate(deltaData); // Handle delta update
         });
 
@@ -79,14 +79,14 @@ export class Game {
         this.networkManager.on('playerDamage', (data) => {
             // Check if the damage is for our local player
             if (data.targetId === this.networkManager.playerId && this.player) {
-                log(`Local player took ${data.amount} damage`);
+                console.log(`Local player took ${data.amount} damage`);
 
                 // Apply damage to local player
                 this.player.takeDamage(data.amount, data.attackerId);
             }
             // Check if it's a remote player we have
             else if (this.remotePlayers[data.targetId]) {
-                log(`Remote player ${data.targetId} took ${data.amount} damage`);
+                console.log(`Remote player ${data.targetId} took ${data.amount} damage`);
 
                 // Apply damage to remote player
                 this.remotePlayers[data.targetId].takeDamage(data.amount);
@@ -95,11 +95,11 @@ export class Game {
 
         // Register event handler for player death
         this.networkManager.on('playerDeath', (data) => {
-            log(`Player death event for ${data.playerId}`);
+            console.log(`Player death event for ${data.playerId}`);
 
             // If it's our player, handle local death
             if (data.playerId === this.networkManager.playerId && this.player) {
-                log('Local player died');
+                console.log('Local player died');
 
                 // Only update local player if not already dead
                 if (!this.player.isDead) {
@@ -110,7 +110,7 @@ export class Game {
             }
             // If it's a remote player, handle remote death
             else if (this.remotePlayers[data.playerId]) {
-                log(`Remote player ${data.playerId} died`);
+                console.log(`Remote player ${data.playerId} died`);
 
                 // Only update remote player if not already dead
                 if (!this.remotePlayers[data.playerId].isDead) {
@@ -123,11 +123,11 @@ export class Game {
 
         // Register event handler for player respawn
         this.networkManager.on('playerRespawn', (data) => {
-            log(`Player respawn event for ${data.playerId}`);
+            console.log(`Player respawn event for ${data.playerId}`);
 
             // If it's our player, handle local respawn
             if (data.playerId === this.networkManager.playerId && this.player) {
-                log('Local player respawned');
+                console.log('Local player respawned');
 
                 // Apply respawn to local player
                 this.player.health = 100;
@@ -143,7 +143,7 @@ export class Game {
             }
             // If it's a remote player, handle remote respawn
             else if (this.remotePlayers[data.playerId]) {
-                log(`Remote player ${data.playerId} respawned`);
+                console.log(`Remote player ${data.playerId} respawned`);
 
                 // Apply respawn to remote player
                 const remotePlayer = this.remotePlayers[data.playerId];
@@ -163,7 +163,7 @@ export class Game {
         // Connect to server
         this.networkManager.connect()
             .then(() => {
-                log('Connected to server successfully');
+                console.log('Connected to server successfully');
             })
             .catch((error) => {
                 error('Failed to connect to server:', error);
@@ -237,38 +237,38 @@ export class Game {
 
     async init() {
         try {
-            log('Initializing game systems');
+            console.log('Initializing game systems');
 
             // Initialize systems
-            log('Initializing scene');
+            console.log('Initializing scene');
             this.scene.init();
-            log('Scene initialized');
+            console.log('Scene initialized');
 
-            log('Initializing physics');
+            console.log('Initializing physics');
             this.physics.init();
-            log('Physics initialized');
+            console.log('Physics initialized');
 
-            log('Initializing input');
+            console.log('Initializing input');
             this.input.init();
-            log('Input initialized');
+            console.log('Input initialized');
 
             // Create game objects first to ensure animations work properly
-            log('Creating ground');
+            console.log('Creating ground');
             this.ground = new Ground(this.scene.scene, this.physics.physicsWorld);
             this.ground.create();
-            log('Ground created');
+            console.log('Ground created');
 
             // Add environment elements
-            log('Adding environment elements');
+            console.log('Adding environment elements');
             this.addEnvironmentElements();
-            log('Environment elements added');
+            console.log('Environment elements added');
 
             // Add invisible walls
-            log('Adding invisible walls');
+            console.log('Adding invisible walls');
             this.addInvisibleWalls();
-            log('Invisible walls added');
+            console.log('Invisible walls added');
 
-            log('Creating player');
+            console.log('Creating player');
             // Use the network ID if available, otherwise create with default local ID
             const playerId = this.networkManager.playerId || 'local-' + Math.random().toString(36).substring(2, 9);
             // Get a unique color for this player
@@ -281,27 +281,27 @@ export class Game {
                 playerColor
             );
             this.physics.registerRigidBody(this.player.mesh, this.player.body);
-            log(`Player created with ID: ${playerId} and color: ${playerColor.toString(16)}`);
+            console.log(`Player created with ID: ${playerId} and color: ${playerColor.toString(16)}`);
 
             // Set up input handlers
-            log('Setting up input handlers');
+            console.log('Setting up input handlers');
             this.setupInputHandlers();
-            log('Input handlers set up');
+            console.log('Input handlers set up');
 
             // Start the game loop before attempting to connect
             // This ensures the game is playable even if connection fails
-            log('Starting animation loop');
+            console.log('Starting animation loop');
             this.animate();
-            log('Animation loop started');
+            console.log('Animation loop started');
 
             // Enable multiplayer and connect to server
             this.isMultiplayer = true;
-            log('Enabling multiplayer mode');
-            log('Initializing network connection (non-blocking)');
+            console.log('Enabling multiplayer mode');
+            console.log('Initializing network connection (non-blocking)');
 
             try {
                 await this.initNetworkAsync();
-                log('Network connection successful');
+                console.log('Network connection successful');
             } catch (networkError) {
                 error('Network connection failed:', networkError);
                 // Show a more user-friendly error message
@@ -323,7 +323,7 @@ export class Game {
                 this.isMultiplayer = false;
             }
 
-            log('Game initialization complete');
+            console.log('Game initialization complete');
         } catch (err) {
             error('Error in Game.init', err);
             throw err;
@@ -336,11 +336,11 @@ export class Game {
     initNetworkAsync() {
         // Set a temporary message
         this.showConnectionStatus('Connecting to server...');
-        log('Initializing network connection...');
+        console.log('Initializing network connection...');
 
         // Register event handlers before connecting
         this.networkManager.on('connect', () => {
-            log('Connected to game server successfully');
+            console.log('Connected to game server successfully');
             document.getElementById('connection-status')?.remove();
 
             // Update UI to show connected status
@@ -354,7 +354,7 @@ export class Game {
         });
 
         this.networkManager.on('disconnect', () => {
-            log('Disconnected from game server');
+            console.log('Disconnected from game server');
             // Clear remote players on disconnect
             this.clearRemotePlayers();
 
@@ -373,9 +373,9 @@ export class Game {
         });
 
         this.networkManager.on('playerConnected', (data) => {
-            log(`Player connected: ${data.id}`);
+            console.log(`Player connected: ${data.id}`);
             if (data.id === this.networkManager.playerId) {
-                log('Received our player ID from server');
+                console.log('Received our player ID from server');
 
                 // Update player color with the network ID if we have a player already created
                 if (this.player) {
@@ -389,7 +389,7 @@ export class Game {
 
                         // Always get a fresh new color for the real network ID
                         const playerColor = this.colorManager.getNewColorForId(data.id);
-                        log(`Updating local player color to ${playerColor.toString(16)} based on ID: ${data.id}`);
+                        console.log(`Updating local player color to ${playerColor.toString(16)} based on ID: ${data.id}`);
 
                         // Update player color and refresh the model
                         this.player.playerColor = playerColor;
@@ -413,7 +413,7 @@ export class Game {
         this.networkManager.on('gameStateUpdate', (message) => {
             // Log received message size for verification
             const messageSize = JSON.stringify(message).length;
-            log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
+            console.log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
 
             if (message.type === 'GAME_STATE') {
                 this.handleFullGameStateUpdate(message.data); // Handle full state
@@ -428,14 +428,14 @@ export class Game {
         this.networkManager.on('playerDamage', (data) => {
             // Check if the damage is for our local player
             if (data.targetId === this.networkManager.playerId && this.player) {
-                log(`Local player took ${data.amount} damage`);
+                console.log(`Local player took ${data.amount} damage`);
 
                 // Apply damage to local player
                 this.player.takeDamage(data.amount, data.attackerId);
             }
             // Check if it's a remote player we have
             else if (this.remotePlayers[data.targetId]) {
-                log(`Remote player ${data.targetId} took ${data.amount} damage`);
+                console.log(`Remote player ${data.targetId} took ${data.amount} damage`);
 
                 // Apply damage to remote player
                 this.remotePlayers[data.targetId].takeDamage(data.amount);
@@ -444,11 +444,11 @@ export class Game {
 
         // Register event handler for player death
         this.networkManager.on('playerDeath', (data) => {
-            log(`Player death event for ${data.playerId}`);
+            console.log(`Player death event for ${data.playerId}`);
 
             // If it's our player, handle local death
             if (data.playerId === this.networkManager.playerId && this.player) {
-                log('Local player died');
+                console.log('Local player died');
 
                 // Only update local player if not already dead
                 if (!this.player.isDead) {
@@ -459,7 +459,7 @@ export class Game {
             }
             // If it's a remote player, handle remote death
             else if (this.remotePlayers[data.playerId]) {
-                log(`Remote player ${data.playerId} died`);
+                console.log(`Remote player ${data.playerId} died`);
 
                 // Only update remote player if not already dead
                 if (!this.remotePlayers[data.playerId].isDead) {
@@ -472,11 +472,11 @@ export class Game {
 
         // Register event handler for player respawn
         this.networkManager.on('playerRespawn', (data) => {
-            log(`Player respawn event for ${data.playerId}`);
+            console.log(`Player respawn event for ${data.playerId}`);
 
             // If it's our player, handle local respawn
             if (data.playerId === this.networkManager.playerId && this.player) {
-                log('Local player respawned');
+                console.log('Local player respawned');
 
                 // Apply respawn to local player
                 this.player.health = 100;
@@ -492,7 +492,7 @@ export class Game {
             }
             // If it's a remote player, handle remote respawn
             else if (this.remotePlayers[data.playerId]) {
-                log(`Remote player ${data.playerId} respawned`);
+                console.log(`Remote player ${data.playerId} respawned`);
 
                 // Apply respawn to remote player
                 const remotePlayer = this.remotePlayers[data.playerId];
@@ -512,7 +512,7 @@ export class Game {
         // Connect to server
         this.networkManager.connect()
             .then(() => {
-                log('Connected to server successfully');
+                console.log('Connected to server successfully');
             })
             .catch((error) => {
                 error('Failed to connect to server:', error);
@@ -540,7 +540,7 @@ export class Game {
             this.sendPlayerState();
         }, this.networkUpdateInterval);
 
-        log(`Started sending position updates every ${this.networkUpdateInterval}ms`);
+        console.log(`Started sending position updates every ${this.networkUpdateInterval}ms`);
     }
 
     /**
@@ -627,10 +627,6 @@ export class Game {
                         if (this.remotePlayers[id].nameTag) {
                             document.body.removeChild(this.remotePlayers[id].nameTag);
                         }
-                        // Remove health bar if it exists
-                        if (this.remotePlayers[id].healthBar) {
-                            this.scene.scene.remove(this.remotePlayers[id].healthBar);
-                        }
                         // Remove the player model from the scene
                         this.scene.scene.remove(this.remotePlayers[id]);
                         // Delete the player reference
@@ -669,7 +665,7 @@ export class Game {
                         let remotePlayer = this.remotePlayers[playerId];
                         if (!remotePlayer) {
                             // If player doesn't exist, delta should contain full state for creation
-                            log(`[Delta] Creating new remote player: ${playerId}`);
+                            console.log(`[Delta] Creating new remote player: ${playerId}`);
                             remotePlayer = this.addRemotePlayer(playerId, delta.position);
                             if (remotePlayer) { // Ensure player was created successfully
                                 this.updateRemotePlayerState(remotePlayer, delta); // Apply remaining state
@@ -686,7 +682,7 @@ export class Game {
             if (deltaData.removedPlayerIds && deltaData.removedPlayerIds.length > 0) {
                 deltaData.removedPlayerIds.forEach(playerId => {
                     if (playerId !== this.networkManager.playerId) {
-                        log(`[Delta] Removing player: ${playerId}`);
+                        console.log(`[Delta] Removing player: ${playerId}`);
                         this.removeRemotePlayer(playerId);
                     }
                 });
@@ -721,39 +717,63 @@ export class Game {
             remotePlayer.setRotation(playerData.rotation);
         }
 
-        // Handle death state
+        // Handle death state BEFORE animation updates
         if (playerData.isDead !== undefined) {
             if (playerData.isDead && !remotePlayer.isDead) {
                 remotePlayer.die();
             } else if (!playerData.isDead && remotePlayer.isDead) {
+                // Pass server position to ensure correct respawn location
                 remotePlayer.respawn(playerData.position);
             }
         }
 
-        // Handle attack state
+        // Handle attack state BEFORE animation updates
         if (playerData.isAttacking && !remotePlayer.isAttacking) {
             remotePlayer.attack();
         }
 
-        // Handle jumping state
+        // Handle jumping state BEFORE general animation updates
         if (playerData.isJumping && !remotePlayer.isJumping) {
-            remotePlayer.setAnimation('jump');
-            remotePlayer.isJumping = true;
-
-            // Reset jumping state after animation
-            setTimeout(() => {
-                remotePlayer.isJumping = false;
-                if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
-                    remotePlayer.setAnimation(remotePlayer.isMoving ? 'walkForward' : 'idle');
-                }
-            }, 1000);
+            // Setting isJumping flag and playing animation are handled
+            // within the animation logic below to avoid conflicting plays.
+            remotePlayer.isJumping = true; // Set state flag
+            // Remove setTimeout here, let animation logic handle the transition back
+        }
+        // Ensure isJumping state is reset if server says not jumping
+        else if (playerData.isJumping === false && remotePlayer.isJumping) {
+            remotePlayer.isJumping = false;
         }
 
-        // Update animation based on movement state
-        if (!remotePlayer.isDead && !remotePlayer.isAttacking && !remotePlayer.isJumping) {
-            if (playerData.animation) {
-                remotePlayer.setAnimation(playerData.animation);
+
+        // Update animation based on server state, respecting current action states
+        let targetAnimation = remotePlayer.currentAnimation; // Default to current
+        if (playerData.animation) {
+            targetAnimation = playerData.animation; // Prefer server animation if provided
+        }
+
+        // Override animation if jumping
+        if (remotePlayer.isJumping) {
+            targetAnimation = 'jump';
+        }
+
+        // Play the target animation if it's different from the current one,
+        // unless it's an attack (which manages its own duration)
+        // Also, don't change animation if dead or attacking
+        if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
+            if (remotePlayer.currentAnimation !== targetAnimation || !remotePlayer.currentAction?.isRunning()) {
+                remotePlayer.playAnimation(targetAnimation);
             }
+        }
+
+        // Update health (if provided) - Do this AFTER state changes like die/respawn
+        if (playerData.health !== undefined && remotePlayer.health !== playerData.health) {
+            remotePlayer.health = playerData.health;
+            remotePlayer.updateHealthBar(); // Update visual
+        }
+
+        // Update movement state flag for interpolation/animation purposes
+        if (playerData.isMoving !== undefined) {
+            remotePlayer.isMoving = playerData.isMoving;
         }
     }
 
@@ -764,9 +784,6 @@ export class Game {
                 const player = this.remotePlayers[id];
                 if (player.nameTag) {
                     player.nameTag.remove();
-                }
-                if (player.healthBar) {
-                    player.healthBar.remove();
                 }
                 this.scene.scene.remove(player);
                 delete this.remotePlayers[id];
@@ -1006,11 +1023,11 @@ export class Game {
      * Add a remote player to the game
      */
     addRemotePlayer(id, position) {
-        log(`Adding remote player: ${id}`);
+        console.log(`[Game] Adding remote player: ${id} at ${JSON.stringify(position)}`);
 
         // First, check if a player with this ID already exists and remove it
         if (this.remotePlayers[id]) {
-            log(`Remote player ${id} already exists, removing old instance first`);
+            console.log(`Remote player ${id} already exists, removing old instance first`);
             this.removeRemotePlayer(id);
         }
 
@@ -1021,12 +1038,12 @@ export class Game {
                 y: 5, // Place above ground
                 z: 0
             };
-            log(`Using default position for remote player ${id} due to invalid position`);
+            console.log(`Using default position for remote player ${id} due to invalid position`);
         }
 
         // Get a unique color for this remote player from the color manager
         const playerColor = this.colorManager.getColorForId(id);
-        log(`Assigning color ${playerColor.toString(16)} to remote player ${id}`);
+        console.log(`Assigning color ${playerColor.toString(16)} to remote player ${id}`);
 
         // Add small random offset to prevent players from spawning on top of each other
         const spawnOffset = {
@@ -1059,7 +1076,7 @@ export class Game {
                 }
             }, 100);
 
-            log(`Remote player ${id} created at position: x=${offsetPosition.x.toFixed(2)}, y=${offsetPosition.y.toFixed(2)}, z=${offsetPosition.z.toFixed(2)}`);
+            console.log(`[Game] Remote player ${id} created at final offset position: x=${offsetPosition.x.toFixed(2)}, y=${offsetPosition.y.toFixed(2)}, z=${offsetPosition.z.toFixed(2)}`);
             return this.remotePlayers[id];
         } catch (err) {
             error(`Failed to create remote player ${id}:`, err);
@@ -1134,7 +1151,7 @@ export class Game {
      * Remove a remote player from the game
      */
     removeRemotePlayer(id) {
-        log(`Removing remote player: ${id}`);
+        console.log(`[Game] Removing remote player: ${id}`);
 
         if (this.remotePlayers[id]) {
             // Get reference to the remote player
@@ -1155,7 +1172,7 @@ export class Game {
             // Remove from our tracking
             delete this.remotePlayers[id];
 
-            log(`Remote player ${id} successfully removed`);
+            console.log(`[Game] Remote player ${id} successfully removed`);
         }
     }
 
@@ -1222,11 +1239,11 @@ export class Game {
         let lastMouseDownTime = 0; // Add a timestamp to prevent rapid double calls
         this.input.onMouseDown((event) => {
             const now = Date.now();
-            log(`[onMouseDown Listener] Fired. Button: ${event.button}, Time since last: ${now - lastMouseDownTime}ms`); // Log listener trigger
+            console.log(`[onMouseDown Listener] Fired. Button: ${event.button}, Time since last: ${now - lastMouseDownTime}ms`); // Use console.log
 
             if (event.button === 0) { // Left mouse button
                 if (now - lastMouseDownTime < 100) { // Cooldown: Ignore if less than 100ms since last call
-                    log('[onMouseDown Listener] Cooldown active, ignoring call.');
+                    console.log('[onMouseDown Listener] Cooldown active, ignoring call.'); // Use console.log
                     return;
                 }
                 lastMouseDownTime = now;
@@ -1382,7 +1399,7 @@ export class Game {
     }
 
     shootProjectile() {
-        log(`[shootProjectile] Function called. isDead: ${this.player?.isDead}, lastShootTime: ${this.lastShootTime}`);
+        console.log(`[shootProjectile] Function called. isDead: ${this.player?.isDead}, lastShootTime: ${this.lastShootTime}`);
         if (!this.player) return;
 
         // Don't allow shooting while dead
@@ -1642,7 +1659,7 @@ export class Game {
 
                 // Update animation separately from physics
                 if (this.player) {
-                    this.player.updateMovementAnimation(movementState);
+                    this.player.setMovementIntent(movementState);
                 }
 
                 return; // Exit early - prediction system handles the actual movement
@@ -1703,7 +1720,7 @@ export class Game {
                 Ammo.destroy(newVelocity);
 
                 // Update animation based on movement
-                this.player.updateMovementAnimation(movementState);
+                this.player.setMovementIntent(movementState);
             }
 
             // Handle jumping in single player mode
@@ -1761,7 +1778,7 @@ export class Game {
         };
 
         if (Math.random() < 0.1) { // Log only occasionally to prevent spam
-            log(`Network Stats: ${JSON.stringify(stats)}`);
+            console.log(`Network Stats: ${JSON.stringify(stats)}`);
         }
     }
 
@@ -2111,7 +2128,7 @@ export class Game {
             // Create new remote player
             const remotePlayer = new RemotePlayer(this, id, position, color);
             this.remotePlayers[id] = remotePlayer;
-            log(`Remote player ${id} spawned at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+            console.log(`Remote player ${id} spawned at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
         } catch (err) {
             error(`Failed to spawn remote player ${id}:`, err);
         }
@@ -2124,7 +2141,7 @@ export class Game {
                 // Clean up the remote player
                 remotePlayer.destroy();
                 delete this.remotePlayers[playerId];
-                log(`Remote player ${playerId} disconnected and cleaned up`);
+                console.log(`Remote player ${playerId} disconnected and cleaned up`);
             }
         } catch (err) {
             error(`Error cleaning up remote player ${playerId}:`, err);

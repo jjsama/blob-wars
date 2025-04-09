@@ -14,11 +14,12 @@ const server = Bun.serve({
                 // Add player to the connected players with proper initialization
                 gameState.players[playerId] = {
                     id: playerId,
-                    position: { x: 0, y: 0, z: 0 }, // Start at ground level
+                    position: { x: 0, y: 5, z: 0 }, // Start slightly above ground
                     rotation: { x: 0, y: 0, z: 0 },
                     health: 100,
                     isDead: false,
                     isAttacking: false,
+                    isJumping: false, // *** Initialize isJumping ***
                     animation: 'idle',
                     lastProcessedInput: 0,
                     connected: true
@@ -306,22 +307,13 @@ function handleClientMessage(ws, data) {
     }
 
     const playerId = ws.data.playerId;
+    const player = gameState.players[playerId]; // Get player object reference
 
     // Check if player exists in gameState
-    if (!gameState.players[playerId]) {
-        console.log(`Player ${playerId} not found in gameState, recreating player`);
-        // Recreate player in gameState
-        gameState.players[playerId] = {
-            id: playerId,
-            position: { x: 0, y: 0, z: 0 }, // Start at ground level
-            rotation: { x: 0, y: 0, z: 0 },
-            health: 100,
-            isDead: false,
-            isAttacking: false,
-            animation: 'idle',
-            lastProcessedInput: 0,
-            connected: true
-        };
+    if (!player) { // Use the reference
+        console.log(`Player ${playerId} not found in gameState, ignoring message type: ${data.type}`);
+        // Don't recreate player here, rely on open() handler
+        return;
     }
 
     switch (data.type) {
@@ -331,58 +323,59 @@ function handleClientMessage(ws, data) {
                 if (data.position && typeof data.position === 'object') {
                     // Ensure position has valid properties
                     const position = {
-                        x: typeof data.position.x === 'number' ? data.position.x : gameState.players[playerId].position.x,
-                        y: typeof data.position.y === 'number' ? Math.max(0, data.position.y) : gameState.players[playerId].position.y, // Ensure Y is never negative
-                        z: typeof data.position.z === 'number' ? data.position.z : gameState.players[playerId].position.z
+                        x: typeof data.position.x === 'number' ? data.position.x : player.position.x,
+                        y: typeof data.position.y === 'number' ? Math.max(0, data.position.y) : player.position.y, // Ensure Y is never negative
+                        z: typeof data.position.z === 'number' ? data.position.z : player.position.z
                     };
 
                     // Apply basic speed check to prevent teleporting/speedhacking
-                    const prevPos = gameState.players[playerId].position;
+                    const prevPos = player.position;
                     const distance = Math.sqrt(
                         Math.pow(position.x - prevPos.x, 2) +
                         Math.pow(position.y - prevPos.y, 2) +
                         Math.pow(position.z - prevPos.z, 2)
                     );
 
-                    // If distance is too large, reject the update (10 units max per update)
-                    const MAX_MOVEMENT_PER_UPDATE = 10;
+                    // If distance is too large, reject the update
+                    // *** Increased threshold slightly ***
+                    const MAX_MOVEMENT_PER_UPDATE = 15; // Increased from 10
                     if (distance > MAX_MOVEMENT_PER_UPDATE) {
                         console.log(`Rejecting movement from ${playerId}: distance ${distance.toFixed(2)} exceeds limit`);
                     } else {
-                        gameState.players[playerId].position = position;
+                        player.position = position;
                     }
                 }
 
                 if (data.rotation && typeof data.rotation === 'object') {
                     // Ensure rotation has valid properties
                     const rotation = {
-                        x: typeof data.rotation.x === 'number' ? data.rotation.x : gameState.players[playerId].rotation.x,
-                        y: typeof data.rotation.y === 'number' ? data.rotation.y : gameState.players[playerId].rotation.y,
-                        z: typeof data.rotation.z === 'number' ? data.rotation.z : gameState.players[playerId].rotation.z
+                        x: typeof data.rotation.x === 'number' ? data.rotation.x : player.rotation.x,
+                        y: typeof data.rotation.y === 'number' ? data.rotation.y : player.rotation.y,
+                        z: typeof data.rotation.z === 'number' ? data.rotation.z : player.rotation.z
                     };
-                    gameState.players[playerId].rotation = rotation;
+                    player.rotation = rotation;
                 }
 
                 // Update player state if provided
                 if (data.health !== undefined && typeof data.health === 'number') {
-                    gameState.players[playerId].health = data.health;
+                    player.health = data.health;
                 }
 
                 if (data.isDead !== undefined) {
-                    gameState.players[playerId].isDead = Boolean(data.isDead);
+                    player.isDead = Boolean(data.isDead);
                 }
 
                 if (data.animation) {
-                    gameState.players[playerId].animation = data.animation;
+                    player.animation = data.animation;
                 }
 
                 if (data.isAttacking !== undefined) {
-                    gameState.players[playerId].isAttacking = Boolean(data.isAttacking);
+                    player.isAttacking = Boolean(data.isAttacking);
                 }
 
                 // Store sequence number for client-side prediction
                 if (data.sequence !== undefined && typeof data.sequence === 'number') {
-                    gameState.players[playerId].lastProcessedInput = data.sequence;
+                    player.lastProcessedInput = data.sequence;
                 }
             } catch (err) {
                 console.error(`Error updating player ${playerId}:`, err);
@@ -435,6 +428,26 @@ function handleClientMessage(ws, data) {
             }
             break;
 
+        case 'PLAYER_JUMP':
+            console.log(`Player ${playerId} jumped`);
+            if (player && !player.isJumping && !player.isDead) {
+                player.isJumping = true;
+
+                // Reset isJumping after a short delay (e.g., 1 second)
+                // Store the timeout ID on the player object to prevent multiple resets
+                if (player.jumpTimeoutId) {
+                    clearTimeout(player.jumpTimeoutId);
+                }
+                player.jumpTimeoutId = setTimeout(() => {
+                    if (player) { // Check if player still exists
+                        player.isJumping = false;
+                        player.jumpTimeoutId = null; // Clear the stored ID
+                        console.log(`Player ${playerId} jump state reset`);
+                    }
+                }, 1000); // 1 second duration for jump state
+            }
+            break;
+
         case 'PLAYER_SHOOT':
             // Handle player shooting
             console.log(`Player ${playerId} fired a projectile`);
@@ -460,12 +473,12 @@ function handleClientMessage(ws, data) {
         case 'PLAYER_ATTACK':
             // Handle player attack
             console.log(`Player ${playerId} attacked`);
-            gameState.players[playerId].isAttacking = true;
+            player.isAttacking = true;
 
             // Reset attack state after animation duration
             setTimeout(() => {
-                if (gameState.players[playerId]) {
-                    gameState.players[playerId].isAttacking = false;
+                if (player) { // Check player still exists
+                    player.isAttacking = false;
                 }
             }, 800);
             break;
@@ -477,8 +490,8 @@ function handleClientMessage(ws, data) {
                 const amount = data.amount;
 
                 // Validate target exists
-                if (gameState.players[targetId]) {
-                    const targetPlayer = gameState.players[targetId];
+                const targetPlayer = gameState.players[targetId]; // Use reference
+                if (targetPlayer) {
 
                     // Apply damage only if player is alive
                     if (!targetPlayer.isDead) {
@@ -541,9 +554,9 @@ function handleClientMessage(ws, data) {
 
         case 'PLAYER_DEATH':
             // Player reported their own death
-            if (!gameState.players[playerId].isDead) {
-                gameState.players[playerId].isDead = true;
-                gameState.players[playerId].health = 0;
+            if (!player.isDead) {
+                player.isDead = true;
+                player.health = 0;
 
                 console.log(`Player ${playerId} reported death`);
 
@@ -557,10 +570,10 @@ function handleClientMessage(ws, data) {
 
                 // Schedule respawn
                 setTimeout(() => {
-                    if (gameState.players[playerId]) {
-                        gameState.players[playerId].health = 100;
-                        gameState.players[playerId].isDead = false;
-                        gameState.players[playerId].position = {
+                    if (player) { // Check player still exists
+                        player.health = 100;
+                        player.isDead = false;
+                        player.position = {
                             x: Math.random() * 20 - 10,
                             y: 5,
                             z: Math.random() * 20 - 10
@@ -573,7 +586,7 @@ function handleClientMessage(ws, data) {
                             type: 'PLAYER_RESPAWN',
                             data: {
                                 playerId: playerId,
-                                position: gameState.players[playerId].position
+                                position: player.position
                             }
                         });
                     }
@@ -583,16 +596,16 @@ function handleClientMessage(ws, data) {
 
         case 'PLAYER_RESPAWN':
             // Player is requesting a respawn
-            if (gameState.players[playerId].isDead) {
+            if (player.isDead) {
                 const respawnPos = data.position || {
                     x: Math.random() * 20 - 10,
                     y: 5,
                     z: Math.random() * 20 - 10
                 };
 
-                gameState.players[playerId].health = 100;
-                gameState.players[playerId].isDead = false;
-                gameState.players[playerId].position = respawnPos;
+                player.health = 100;
+                player.isDead = false;
+                player.position = respawnPos;
 
                 console.log(`Player ${playerId} manually respawned`);
 
@@ -611,7 +624,7 @@ function handleClientMessage(ws, data) {
             // Handle ping from client (keep-alive)
             ws.send(JSON.stringify({
                 type: 'PONG',
-                timestamp: Date.now(),
+                timestamp: data.timestamp, // Echo back client timestamp for RTT calc
                 serverTime: Date.now()
             }));
             break;
@@ -648,6 +661,7 @@ function broadcastGameState() {
                     health: typeof player.health === 'number' ? player.health : 100,
                     isDead: Boolean(player.isDead),
                     isAttacking: Boolean(player.isAttacking),
+                    isJumping: Boolean(player.isJumping), // *** Include isJumping flag ***
                     animation: player.animation || 'idle',
                     lastProcessedInput: player.lastProcessedInput || 0
                 };
@@ -683,7 +697,8 @@ function broadcastGameState() {
                     const delta = {};
                     let changed = false;
                     for (const key in currentPlayer) {
-                        if (!deepCompare(currentPlayer[key], lastPlayer[key])) {
+                        // Check if key exists in lastPlayer to avoid errors if state structure changes
+                        if (!lastPlayer.hasOwnProperty(key) || !deepCompare(currentPlayer[key], lastPlayer[key])) {
                             delta[key] = currentPlayer[key];
                             changed = true;
                         }
@@ -757,7 +772,7 @@ function broadcastGameState() {
 
         // Log active connections count
         if (Math.random() < 0.1) { // Log only occasionally
-            console.log(`Broadcast complete, sent to ${activeConnections} active connections`);
+            console.log(`Broadcast complete. Sent ${payloadObject.type} to ${activeConnections} active connections`);
         }
 
         // --- Update lastBroadcastState AFTER sending --- 

@@ -1,5 +1,4 @@
 import { PLAYER_COLORS } from './constants.js';
-import { log } from '../debug.js';
 
 export class ColorManager {
     constructor() {
@@ -38,7 +37,6 @@ export class ColorManager {
         this.assignedColors.set(id, color);
         this.usedColors.add(color);
 
-        log(`Assigned color ${color.toString(16)} to entity ${id}`);
         return color;
     }
 
@@ -48,7 +46,6 @@ export class ColorManager {
             const color = this.assignedColors.get(id);
             this.usedColors.delete(color);
             this.assignedColors.delete(id);
-            log(`Released color ${color.toString(16)} from entity ${id}`);
         }
     }
 
@@ -56,7 +53,7 @@ export class ColorManager {
     reset() {
         this.assignedColors.clear();
         this.usedColors.clear();
-        log('Color manager reset, all colors released');
+        this.colors = [...PLAYER_COLORS];
     }
 
     // Get a new color when restarting a session for the same entity

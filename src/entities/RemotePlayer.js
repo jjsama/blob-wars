@@ -52,9 +52,14 @@ export class RemotePlayer extends THREE.Object3D {
         // Store the player's color
         this.playerColor = color;
 
-        // Add to scene
-        this.scene.scene.add(this);
-        log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+        // Add to scene ONLY if the scene exists
+        if (scene && scene.scene) {
+            scene.scene.add(this);
+            console.log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
+        } else {
+            error(`RemotePlayer ${id}: Cannot add to scene because scene or scene.scene is null/undefined.`);
+            // Consider queuing the addition or handling this case appropriately
+        }
 
         // Load model
         this.loadModel();
@@ -155,17 +160,50 @@ export class RemotePlayer extends THREE.Object3D {
 
                     // Process any queued position updates
                     if (this.positionQueue.length > 0) {
-                        console.log(`RemotePlayer ${this.remoteId}: Processing ${this.positionQueue.length} queued positions`);
+                        console.log(`RemotePlayer ${this.remoteId}: Processing ${this.positionQueue.length} queued positions after model load`);
                         const latestPosition = this.positionQueue.pop();
                         this.setPosition(latestPosition);
                         this.positionQueue = []; // Clear the queue
                     }
 
-                    log(`Remote player ${this.remoteId} model loaded and positioned`);
+                    log(`Remote player ${this.remoteId} model loaded and positioned successfully`); // Log success
                 },
                 undefined,
-                (error) => {
-                    error(`Failed to load remote player model: ${error.message}`);
+                (loadError) => {
+                    // --- Improved Error Handling ---
+                    error(`
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+Failed to load remote player model for ID: ${this.remoteId}
+Error: ${loadError.message || 'Unknown loading error'}
+URL attempted: ${modelPath}
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+`);
+
+                    // Add a placeholder visual to indicate the player exists but model failed
+                    console.log(`Adding placeholder geometry for failed model load: ${this.remoteId}`);
+                    const placeholderGeometry = new THREE.BoxGeometry(0.7, 1.8, 0.7); // Similar size to player
+                    const placeholderMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, roughness: 0.8 }); // Red color
+                    const placeholderMesh = new THREE.Mesh(placeholderGeometry, placeholderMaterial);
+                    placeholderMesh.position.set(0, 0.9, 0); // Position roughly where player would be
+
+                    // Add placeholder as child only if scene exists
+                    if (this.scene && this.scene.scene) {
+                        this.add(placeholderMesh);
+                        console.log(`Added placeholder for ${this.remoteId} to parent object.`);
+                    } else {
+                        error(`RemotePlayer ${this.remoteId}: Cannot add placeholder because scene or scene.scene is null/undefined.`);
+                    }
+                    this.model = placeholderMesh; // Use placeholder as the 'model' for positioning
+                    this.modelLoaded = true; // Set to true so position updates apply to placeholder
+
+                    // Process queued positions for the placeholder
+                    if (this.positionQueue.length > 0) {
+                        console.log(`Processing ${this.positionQueue.length} queued positions for placeholder: ${this.remoteId}`);
+                        const latestPosition = this.positionQueue.pop();
+                        this.setPosition(latestPosition); // Apply position to parent RemotePlayer object
+                        this.positionQueue = [];
+                    }
+                    // --- End Improved Error Handling ---
                 }
             );
         } catch (err) {
@@ -179,7 +217,7 @@ export class RemotePlayer extends THREE.Object3D {
             return;
         }
 
-        console.log(`Setting up ${gltf.animations.length} animations for remote player`);
+        console.log(`Setting up ${gltf.animations.length} animations for remote player ${this.remoteId}`);
 
         // Create animation mixer
         this.mixer = new THREE.AnimationMixer(this.model);
@@ -187,29 +225,57 @@ export class RemotePlayer extends THREE.Object3D {
         // Clear existing animations
         this.animations = {};
         this.animationActions = {};
+        let foundIdle = false; // Flag to track if idle was found
 
-        // Process animations with proper name normalization
+        // Process animations with proper name normalization (trimming)
         gltf.animations.forEach(anim => {
-            // Store with original name
-            this.animations[anim.name] = anim;
-            this.animationActions[anim.name] = this.mixer.clipAction(anim);
+            // *** Trim whitespace/newlines from the name before storing ***
+            const originalName = anim.name;
+            const trimmedName = originalName.trim();
 
-            // Also store with lowercase name for case-insensitive lookup
-            const lowerName = anim.name.toLowerCase();
-            if (lowerName !== anim.name) {
-                this.animations[lowerName] = anim;
-                this.animationActions[lowerName] = this.mixer.clipAction(anim);
+            // Store with trimmed name
+            this.animations[trimmedName] = anim;
+            this.animationActions[trimmedName] = this.mixer.clipAction(anim);
+
+            // Log if name was trimmed (for debugging)
+            if (originalName !== trimmedName) {
+                console.log(`[${this.remoteId}] RemotePlayer Animation: Trimmed '${originalName}' to '${trimmedName}'`);
+            }
+
+            // ALSO store with lowercase name for case-insensitive lookup (keep this part)
+            const lowerTrimmedName = trimmedName.toLowerCase();
+            if (lowerTrimmedName !== trimmedName) {
+                this.animations[lowerTrimmedName] = anim;
+                this.animationActions[lowerTrimmedName] = this.mixer.clipAction(anim);
             }
         });
 
-        // Start idle animation by default
-        const idleAnimationNames = ['idle', 'Idle', 'IDLE'];
+        // Start idle animation by default (using trimmed lowercase for robustness)
+        const idleAnimationNames = ['idle', 'Idle', 'IDLE']; // Add variations if needed
         for (const name of idleAnimationNames) {
-            if (this.animations[name]) {
-                this.playAnimation(name);
-                console.log(`Started remote player animation: ${name}`);
+            const potentialName = name.trim(); // Use trimmed name for lookup
+            if (this.animationActions[potentialName]) { // Check action map
+                console.log(`[${this.remoteId}] Found default idle: '${potentialName}'. Playing.`);
+                this.playAnimation(potentialName); // Play using the found name
+                foundIdle = true;
                 break;
             }
+            // Also check lowercase version
+            const lowerPotentialName = potentialName.toLowerCase();
+            if (lowerPotentialName !== potentialName && this.animationActions[lowerPotentialName]) {
+                console.log(`[${this.remoteId}] Found default idle (lowercase): '${lowerPotentialName}'. Playing.`);
+                this.playAnimation(lowerPotentialName);
+                foundIdle = true;
+                break;
+            }
+        }
+
+        if (!foundIdle) {
+            console.warn(`[${this.remoteId}] RemotePlayer: Could not find any default idle animation. Available: ${Object.keys(this.animationActions).join(', ')}`);
+            // Fallback: Play the first animation found? Or leave it?
+            // For now, leave it, the first state update should correct it.
+            this.currentAnimation = null; // Indicate no animation is set
+            this.currentAction = null;
         }
     }
 
@@ -221,39 +287,47 @@ export class RemotePlayer extends THREE.Object3D {
 
         // Try to find the animation with case-insensitive lookup
         let animName = name;
-        if (!this.animations[name] || !this.animationActions[name]) {
-            // Try lowercase version
+        // Use the name directly first (assuming it was trimmed during setup)
+        let actionToPlay = this.animationActions[animName];
+
+        if (!actionToPlay) {
+            // Try lowercase version if original fails
             const lowerName = name.toLowerCase();
-            if (this.animations[lowerName] && this.animationActions[lowerName]) {
+            actionToPlay = this.animationActions[lowerName];
+            if (actionToPlay) {
                 animName = lowerName;
             } else {
-                console.warn(`Animation '${name}' not found for remote player`);
+                console.warn(`Animation '${name}' (or variations) not found for remote player. Available: ${Object.keys(this.animationActions).join(', ')}`);
                 return;
             }
         }
 
         // Don't restart the same animation unless it's a jump or attack
-        if (this.currentAnimation === animName && animName !== 'jump' && animName !== 'attack') return;
+        // Check if the currentAction is actually running
+        if (this.currentAction && this.currentAnimation === animName && this.currentAction.isRunning() && animName !== 'jump' && animName !== 'attack') {
+            return;
+        }
 
         try {
             // If we have a current action, fade it out
-            if (this.currentAction) {
+            // Only fade if it's different from the action we want to play
+            if (this.currentAction && this.currentAction !== actionToPlay) {
                 this.currentAction.fadeOut(0.2);
             }
 
-            // Get the new action
-            const action = this.animationActions[animName];
+            // Get the new action (we already found it above)
+            const action = actionToPlay;
 
             // Reset and play the new action
             action.reset();
-            action.fadeIn(0.2);
+            action.fadeIn(0.2); // Use fadeIn for smooth transition
             action.play();
 
             // Update current animation and action
             this.currentAnimation = animName;
             this.currentAction = action;
 
-            console.log(`Remote player ${this.remoteId} playing animation: ${animName}`);
+            // console.log(`Remote player ${this.remoteId} playing animation: ${animName}`); // Reduced logging
         } catch (err) {
             console.error(`Error playing animation '${animName}' for remote player:`, err);
         }
@@ -339,20 +413,25 @@ export class RemotePlayer extends THREE.Object3D {
         }
 
         // Update visual elements
-        this.updateVisualElements();
+        // this.updateVisualElements(); // This call was causing the error, handle updates within updateHealthBarPosition
+        this.updateHealthBarPosition(); // Call the correct function to update DOM position
     }
 
     updateVisualElements() {
+        // This function is now effectively replaced by updateHealthBarPosition
+        // and the name tag update logic within Game.js
+        // We can potentially remove this later if nothing else uses it.
         if (!this.modelLoaded) {
             return;
         }
 
-        // Update health bar position
-        if (this.healthBar) {
-            const worldPos = this.getWorldPosition(new THREE.Vector3());
-            this.healthBar.position.set(worldPos.x, worldPos.y + 2, worldPos.z);
-            this.healthBar.updateHealth(this.health);
-        }
+        // // Update health bar position - INCORRECT LOGIC REMOVED
+        // if (this.healthBar) {
+        //     const worldPos = this.getWorldPosition(new THREE.Vector3());
+        //     // INCORRECT: this.healthBar is a DOM object container, not a THREE object
+        //     // this.healthBar.position.set(worldPos.x, worldPos.y + 2, worldPos.z); 
+        //     // this.healthBar.updateHealth(this.health); // Health update is handled by updateHealthBar
+        // }
     }
 
     // Update nametag position to follow the player
@@ -453,7 +532,7 @@ export class RemotePlayer extends THREE.Object3D {
         this.animations = {};
         this.animationActions = {};
 
-        log(`Remote player ${this.remoteId} removed and cleaned up`);
+        console.log(`Remote player ${this.remoteId} removed and cleaned up`);
     }
 
     attack() {
@@ -496,12 +575,11 @@ export class RemotePlayer extends THREE.Object3D {
 
         this.isDead = true;
         console.log(`Remote player ${this.remoteId} died`);
-
-        // Play death animation if available
-        this.playAnimation('death');
+        console.log(`[RemotePlayer ${this.remoteId}] die() called. isDead set to true.`);
     }
 
     respawn(position) {
+        console.log(`[RemotePlayer ${this.remoteId}] respawn() called. Position: ${JSON.stringify(position)}`);
         this.isDead = false;
         this.health = 100;
 
@@ -624,7 +702,14 @@ export class RemotePlayer extends THREE.Object3D {
     }
 
     updateHealthBarPosition() {
-        if (!this.healthBar || !this.healthBar.container || !this.scene || !this.scene.camera) return;
+        // 1. Guard Clause: Checks if required objects exist
+        if (!this.healthBar || !this.healthBar.container || !this.scene || !this.scene.camera) {
+            // Add logging here
+            if (Math.random() < 0.05) { // Log occasionally to avoid spam
+                console.log(`[RemotePlayer ${this.remoteId}] updateHealthBarPosition exiting early. HealthBar: ${!!this.healthBar}, Container: ${!!this.healthBar?.container}, Scene: ${!!this.scene}, Camera: ${!!this.scene?.camera}`); // Use console.log
+            }
+            return;
+        }
 
         try {
             // Get position in world space
@@ -670,45 +755,5 @@ export class RemotePlayer extends THREE.Object3D {
         } catch (err) {
             console.error('Error updating health bar position:', err);
         }
-    }
-
-    destroy() {
-        // Remove from scene
-        if (this.scene && this.scene.scene) {
-            this.scene.scene.remove(this);
-        }
-
-        // Clean up health bar
-        if (this.healthBar) {
-            this.healthBar.destroy();
-            this.healthBar = null;
-        }
-
-        // Clean up animations
-        if (this.mixer) {
-            this.mixer.stopAllAction();
-            this.mixer = null;
-        }
-
-        // Clean up model
-        if (this.model) {
-            this.model.traverse((child) => {
-                if (child.isMesh) {
-                    child.geometry.dispose();
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(m => m.dispose());
-                    } else {
-                        child.material.dispose();
-                    }
-                }
-            });
-            this.model = null;
-        }
-
-        // Clear references
-        this.scene = null;
-        this.animations = null;
-        this.animationActions = null;
-        this.currentAction = null;
     }
 } 

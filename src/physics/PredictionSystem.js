@@ -103,12 +103,12 @@ export class PredictionSystem {
         if (!this.game.player || !this.game.player.body) return;
 
         // --- DEBUG LOG: Log received input state ---
-        log(`[applyInput] Received input: ${JSON.stringify(input)}`);
+        // console.log(`[applyInput] Received input: ${JSON.stringify(input)}`);
 
         try {
             // --- Ensure physics body is active --- 
             if (this.game.player.body && !this.game.player.body.isActive()) {
-                log('[applyInput] Reactivating physics body.');
+                console.log('[applyInput] Reactivating physics body.');
                 this.game.player.body.activate(true);
             }
 
@@ -323,22 +323,10 @@ export class PredictionSystem {
                 z: dz
             };
 
-            // --- DEBUG LOGGING START ---
-            const preReapplyPos = this.game.player.getPosition();
-            const preReapplyVel = this.game.player.body?.getLinearVelocity();
-            log(`[Reconcile BEFORE Reapply] DistSq: ${distanceSquared.toFixed(4)}, Applying correction: {dx:${dx.toFixed(3)}, dy:${dy.toFixed(3)}, dz:${dz.toFixed(3)}} Factor: ${correctionFactor.toFixed(2)}. Pos: ${JSON.stringify(preReapplyPos)} Vel: ${preReapplyVel ? `(${preReapplyVel.x().toFixed(2)}, ${preReapplyVel.y().toFixed(2)}, ${preReapplyVel.z().toFixed(2)})` : 'N/A'}`);
-            // --- DEBUG LOGGING END ---
-
             // Reapply pending inputs without triggering animations directly
             for (const inputData of this.pendingInputs) {
                 this.applyInput(inputData.input, 1 / 60, true); // Pass true for isReconciliation
             }
-
-            // --- DEBUG LOGGING START ---
-            const postReapplyPos = this.game.player.getPosition();
-            const postReapplyVel = this.game.player.body?.getLinearVelocity();
-            log(`[Reconcile AFTER Reapply] Pending: ${this.pendingInputs.length}. Pos: ${JSON.stringify(postReapplyPos)} Vel: ${postReapplyVel ? `(${postReapplyVel.x().toFixed(2)}, ${postReapplyVel.y().toFixed(2)}, ${postReapplyVel.z().toFixed(2)})` : 'N/A'}`);
-            // --- DEBUG LOGGING END ---
         }
 
         // Optional: Log reconciliation details if debugging
@@ -378,7 +366,7 @@ export class PredictionSystem {
      */
     togglePrediction() {
         this.predictionEnabled = !this.predictionEnabled;
-        log(`Client-side prediction: ${this.predictionEnabled ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`Client-side prediction: ${this.predictionEnabled ? 'ENABLED' : 'DISABLED'}`);
     }
 
     /**
@@ -386,7 +374,7 @@ export class PredictionSystem {
      */
     toggleReconciliation() {
         this.reconciliationEnabled = !this.reconciliationEnabled;
-        log(`Server reconciliation: ${this.reconciliationEnabled ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`Server reconciliation: ${this.reconciliationEnabled ? 'ENABLED' : 'DISABLED'}`);
     }
 
     /**
@@ -394,6 +382,6 @@ export class PredictionSystem {
      */
     toggleDebugMode() {
         this.debugMode = !this.debugMode;
-        log(`Prediction debug mode: ${this.debugMode ? 'ENABLED' : 'DISABLED'}`);
+        console.log(`Prediction debug mode: ${this.debugMode ? 'ENABLED' : 'DISABLED'}`);
     }
 } 

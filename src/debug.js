@@ -69,10 +69,41 @@ export function initDebug() {
 
 export function log(message, ...args) {
     const timestamp = new Date().toLocaleTimeString();
-    const formattedMessage = `[${timestamp}] ${message}`;
+    const formattedMessage = `[${timestamp}] ${message}`; // Use timestamp for console
+    const overlayMessage = `[${timestamp.split(':').slice(1).join(':')}] ${message}`; // Shorter timestamp for overlay
 
-    // Log to console ONLY
+    // Log to console ALWAYS
     console.log(formattedMessage, ...args);
+
+    // Add to debug overlay IF debugDiv exists
+    if (debugDiv) {
+        const logLine = document.createElement('div');
+        logLine.style.color = '#eeeeee'; // Light gray for regular logs
+        logLine.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
+        logLine.style.padding = '1px 0';
+        logLine.textContent = overlayMessage; // Use shorter message
+
+        // Append arguments to overlay if any
+        if (args.length > 0) {
+            const argsString = args.map(arg => {
+                if (typeof arg === 'object') {
+                    try {
+                        return JSON.stringify(arg);
+                    } catch (e) {
+                        return '[Unserializable Object]';
+                    }
+                } else {
+                    return String(arg);
+                }
+            }).join(' ');
+            logLine.textContent += ' ' + argsString;
+        }
+
+        debugDiv.appendChild(logLine);
+
+        // Optional: Keep overlay scrolled to bottom (can be annoying)
+        // debugDiv.scrollTop = debugDiv.scrollHeight;
+    }
 }
 
 /**

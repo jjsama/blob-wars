@@ -37,7 +37,7 @@ export class Player {
         this.lastMovementInputTime = 0;  // Timestamp of the last movement input intent
         this.idleDelay = 150; // ms delay before switching back to idle
 
-        log(`Player created with ID: ${this.playerId}, color: ${this.playerColor.toString(16)}`);
+        console.log(`Player created with ID: ${this.playerId}, color: ${this.playerColor.toString(16)}`);
 
         // Create physics body
         this.createPhysics();
@@ -53,7 +53,7 @@ export class Player {
             }
         });
 
-        log('Player created with direct space key listener');
+        console.log('Player created with direct space key listener');
     }
 
     loadModel() {
@@ -117,20 +117,15 @@ export class Player {
                     this.mixer = new THREE.AnimationMixer(model);
 
                     // Process animations
-                    log('--- Loading Animations ---'); // Log header
                     gltf.animations.forEach(animation => {
                         // Trim whitespace (like newlines) from the animation name
                         const originalName = animation.name;
                         const trimmedName = originalName.trim();
 
-                        log(`Loaded animation clip: "${originalName}" -> Trimmed: "${trimmedName}"`); // Log original and trimmed
-
                         // Use the trimmed name as the key
                         this.animations[trimmedName] = animation;
                         this.animationActions[trimmedName] = this.mixer.clipAction(animation);
                     });
-                    log(`Mapped animations: ${Object.keys(this.animationActions).join(', ')}`); // Log all mapped names
-                    log('--------------------------');
 
                     // Start idle animation
                     this.playAnimation('idle');
@@ -146,7 +141,7 @@ export class Player {
                         this.setPosition(this.position);
                     }
 
-                    log('Player model loaded and initialized');
+                    console.log('Player model loaded and initialized');
                 },
                 // Progress callback
                 (xhr) => {
@@ -199,11 +194,8 @@ export class Player {
     // Separate method to set up animations
     setupAnimations(animations) {
         if (!animations || animations.length === 0) {
-            log('No animations found in player model');
             return;
         }
-
-        log(`Setting up ${animations.length} animations for player`);
 
         // Create animation mixer
         this.mixer = new THREE.AnimationMixer(this.mesh);
@@ -229,7 +221,6 @@ export class Player {
             const clip = animations[i];
 
             if (clip) {
-                log(`Mapping player animation ${i}: ${clip.name} -> ${name}`);
                 this.animations[name] = clip;
                 this.animationActions[name] = this.mixer.clipAction(clip);
             }
@@ -237,16 +228,13 @@ export class Player {
 
         // Start with idle animation if available
         if (this.animations.idle && this.animationActions.idle) {
-            log('Starting with idle animation');
             this.playAnimation('idle');
-        } else {
-            log('No idle animation found, cannot start animations');
         }
     }
 
     createPhysics() {
         try {
-            log('Creating player physics');
+            console.log('Creating player physics');
 
             // Create physics body for player with simplified properties
             const shape = new Ammo.btCapsuleShape(0.5, 1);
@@ -286,21 +274,19 @@ export class Player {
             // --- Prevent automatic sleeping --- 
             const DISABLE_DEACTIVATION = 4;
             this.body.setActivationState(DISABLE_DEACTIVATION);
-            log('Player physics body set to never deactivate.');
+            console.log('Player physics body set to never deactivate.');
             // --- End prevent sleeping ---
 
             this.canJump = false;
             this.physicsWorld.addRigidBody(this.body);
 
-            log('Player physics created');
+            console.log('Player physics created');
         } catch (err) {
             error('Error creating physics', err);
         }
     }
 
     playAnimation(name) {
-        log(`[PlayAnim Attempt] Requested: "${name}", Current: "${this.currentAnimation}", ModelLoaded: ${this.modelLoaded}`);
-
         // Don't attempt to play animations until mesh and mixer are available
         if (!this.modelLoaded || !this.mixer || !this.mesh) {
             // Instead of logging an error, silently return until model is ready
@@ -310,11 +296,7 @@ export class Player {
         // Try to find the animation with case-insensitive lookup
         let animName = name;
 
-        // --- DEBUG LOG: Check available actions right before lookup --- 
-        log(`[PlayAnim Check] Available actions keys: ${JSON.stringify(Object.keys(this.animationActions))}`);
-
         if (!this.animations[name] || !this.animationActions[name]) {
-            log(`Animation "${name}" not found directly. Checking variations...`); // Log missing name
             // Try lowercase version
             const lowerName = name.toLowerCase();
             if (this.animations[lowerName] && this.animationActions[lowerName]) {
@@ -358,9 +340,6 @@ export class Player {
             action.reset();
             action.fadeIn(0.2);
             action.play();
-
-            // Log successful play
-            // log(`[PlayAnim] Successfully playing "${animName}"`);
 
             // Update current animation and action
             this.currentAnimation = animName;
@@ -468,9 +447,7 @@ export class Player {
                     let targetAnimation = 'idle'; // Default to idle
 
                     // Check special states first
-                    if (this.isDead) {
-                        targetAnimation = 'death';
-                    } else if (this.isAttacking) {
+                    if (this.isAttacking) {
                         // Let attack() handle finishing the attack animation
                         targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
                     } else if (this.isJumping) {
@@ -779,9 +756,7 @@ export class Player {
 
     die(attackerId = null) {
         this.isDead = true;
-
-        // Play death animation
-        this.playAnimation('death');
+        console.log(`[Player ${this.playerId}] Died. Attacker: ${attackerId || 'None'}`);
 
         // Send death event to server if this is the local player
         if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
@@ -814,7 +789,7 @@ export class Player {
      * Respawn the player
      */
     respawn() {
-        log(`Player respawning`);
+        console.log(`Player respawning`);
 
         // Reset health
         this.health = 100;
@@ -848,26 +823,36 @@ export class Player {
                 }
 
                 // Create a new physics body
-                this.position = { ...spawnPosition };
-                this.createPhysics();
+                this.position = { ...spawnPosition }; // Update internal position tracking
+                this.createPhysics(); // Recreates the body at this.position
 
-                // Update mesh position
+                // *** Explicitly reset velocity after recreating the body ***
+                if (this.body) {
+                    const zeroVelocity = new Ammo.btVector3(0, 0, 0);
+                    this.body.setLinearVelocity(zeroVelocity);
+                    this.body.setAngularVelocity(zeroVelocity); // Also reset angular velocity
+                    Ammo.destroy(zeroVelocity);
+                    this.body.activate(true); // Ensure it's active
+                }
+                // *** End velocity reset ***
+
+                // Update mesh position (should align with physics body)
                 if (this.mesh) {
-                    this.mesh.position.set(spawnPosition.x, spawnPosition.y, spawnPosition.z);
+                    this.mesh.position.set(spawnPosition.x, spawnPosition.y - 1.0, spawnPosition.z); // Apply model offset
                 }
 
-                log(`Player physics reset at position: x=${spawnPosition.x.toFixed(2)}, y=${spawnPosition.y.toFixed(2)}, z=${spawnPosition.z.toFixed(2)}`);
+                console.log(`Player physics reset at position: x=${spawnPosition.x.toFixed(2)}, y=${spawnPosition.y.toFixed(2)}, z=${spawnPosition.z.toFixed(2)}`);
             } catch (err) {
                 error('Error recreating physics on respawn:', err);
             }
         } else {
-            // Just update position if no physics body
+            // Just update position if no physics body (less likely now)
             this.setPosition(spawnPosition);
         }
 
         // Play idle animation
         this.playAnimation('idle');
-        log('Player respawn complete');
+        console.log('Player respawn complete');
     }
 
     setAnimation(name) {
@@ -1035,4 +1020,58 @@ export class Player {
 
         this.intendedAnimation = intent;
     }
+
+    // Added attack method for local player
+    attack() {
+        if (this.isAttacking || this.isDead) return; // Don't attack if already attacking or dead
+
+        console.log(`[Player ${this.playerId}] attack() called.`);
+        this.isAttacking = true;
+        this.playAnimation('attack'); // Play the attack animation
+
+        // Reset attack state after a short duration (e.g., animation length)
+        // Adjust timing as needed (e.g., 800ms)
+        setTimeout(() => {
+            this.isAttacking = false;
+            console.log(`[Player ${this.playerId}] attack() finished.`);
+            // Optionally, ensure we transition back to idle/movement animation if needed
+            // The main update loop should handle this via setMovementIntent
+        }, 800);
+    }
+
+    // *** Add the missing jump method back ***
+    jump() {
+        // Basic jump implementation: apply an upward force
+        try {
+            // Check if we can jump (on ground) and not already jumping
+            if (this.canJump && !this.isJumping) {
+                // Apply vertical impulse
+                const impulse = new Ammo.btVector3(0, 7, 0); // Reduced force from 10 to 7
+                this.body.applyCentralImpulse(impulse);
+                Ammo.destroy(impulse);
+
+                // Set jump state
+                this.isJumping = true;
+                this.canJump = false; // Can't jump again until grounded
+
+                // Play jump animation
+                this.playAnimation('jump');
+
+                console.log(`[Player ${this.playerId}] Jump initiated. isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
+
+                // Optional: Reset jump state after a delay (if animation doesn't handle it)
+                // The checkGroundContact method should handle resetting isJumping when grounded
+                // setTimeout(() => {
+                //     this.isJumping = false;
+                // }, 1000); // Adjust timing based on animation
+            } else {
+                console.log(`[Player ${this.playerId}] Jump prevented. canJump: ${this.canJump}, isJumping: ${this.isJumping}`);
+            }
+        } catch (err) {
+            error(`Error during jump:`, err);
+            // Make sure jump state is reset on error
+            this.isJumping = false;
+        }
+    }
+    // *** End of added jump method ***
 }
