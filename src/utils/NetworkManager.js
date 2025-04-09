@@ -215,20 +215,28 @@ Previous Attempts: ${this.reconnectAttempts}
                 };
 
                 this.socket.onerror = (error) => {
-                    console.error('WebSocket error:', error);
-                    console.log(`Connection details:
-                        URL: ${this.socket.url}
-                        Ready State: ${this.socket.readyState}
-                        Connecting: ${this.socket.connecting}
-                        Protocol: ${this.socket.protocol}
-                        Extensions: ${this.socket.extensions || 'none'}`);
+                    // *** Add detailed logging here ***
+                    console.error('WebSocket onerror event fired:');
+                    // Attempt to log the error object itself
+                    console.error(error);
+                    // Log details about the socket state if available
+                    if (this.socket) {
+                        console.error(`Socket URL: ${this.socket.url}`);
+                        console.error(`Socket readyState: ${this.socket.readyState}`);
+                        console.error(`Socket connecting flag: ${this.socket.connecting}`);
+                    } else {
+                        console.error('Socket object was null during error handling.');
+                    }
+                    // *** End added logging ***
 
                     if (this.socket.connecting) {
                         this.socket.connecting = false;
                         clearTimeout(connectionTimeout);
                         this.reconnectAttempts++;
-                        reject(error);
+                        reject(error); // Reject the initial connect promise
                     }
+                    // Note: We don't reject here if the error happens *after* initial connection
+                    // The onclose handler will manage reconnections.
                 };
             } catch (error) {
                 console.error('Failed to connect to server:', error);
