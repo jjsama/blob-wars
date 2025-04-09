@@ -43,7 +43,8 @@ const server = Bun.serve({
                 // Broadcast state to all clients
                 broadcastGameState();
             } catch (err) {
-                console.error('Error in WebSocket open handler:', err);
+                console.error('[!!!] Critical Error in WebSocket open handler:', err);
+                try { ws.close(1011, "Server error during connection setup"); } catch (closeErr) { }
             }
         },
 
@@ -59,7 +60,9 @@ const server = Bun.serve({
 
                 handleClientMessage(ws, data);
             } catch (error) {
-                console.error('Error parsing WebSocket message:', error);
+                console.error('[!!!] Critical Error parsing/handling WebSocket message:', error);
+                console.error('Offending message content (raw):', message);
+                try { ws.close(1008, "Server error processing message"); } catch (closeErr) { }
             }
         },
 
@@ -636,6 +639,7 @@ function handleClientMessage(ws, data) {
 
 // Broadcast game state to all connected clients
 function broadcastGameState() {
+    // *** Wrap entire function logic in try...catch ***
     try {
         let payloadObject = {};
         let sendFullState = false;
@@ -645,7 +649,8 @@ function broadcastGameState() {
         if (!gameState.lastBroadcastState || gameState.broadcastCounter >= 100) { // Send full state every 100 ticks (5 seconds)
             sendFullState = true;
             gameState.broadcastCounter = 0;
-            console.log('[Broadcast] Sending full state update.');
+            // Minimal logging inside loop
+            // console.log('[Broadcast] Sending full state update.');
         }
 
         // --- Prepare Current Sanitized State (Needed for both full and delta) ---
@@ -741,6 +746,12 @@ function broadcastGameState() {
         }
 
         // --- Send Payload --- 
+        // Ensure payload has a type before attempting to stringify/send
+        if (!payloadObject.type) {
+            // console.log('[Broadcast] No payload type determined, skipping send.');
+            return;
+        }
+
         const payload = JSON.stringify(payloadObject);
         let activeConnections = 0;
 
@@ -751,28 +762,35 @@ function broadcastGameState() {
                 try {
                     ws.send(payload);
                     activeConnections++;
-                } catch (error) {
-                    console.error(`Error sending to player ${playerId}:`, error);
+                } catch (sendError) {
+                    console.error(`[Broadcast] Error sending to player ${playerId}:`, sendError);
                     // Remove the connection if we can't send to it
                     try {
-                        ws.close();
+                        ws.close(1011, "Error during broadcast");
                     } catch (closeError) {
                         // Ignore close errors
                     }
-                    delete gameState.connections[playerId];
-                    delete gameState.players[playerId];
+                    // Safely delete references
+                    if (gameState.connections[playerId]) delete gameState.connections[playerId];
+                    if (gameState.players[playerId]) delete gameState.players[playerId];
                 }
             } else if (ws) {
-                console.log(`Socket for player ${playerId} not open (readyState: ${ws.readyState}), removing`);
-                // Clean up non-open connections
-                delete gameState.connections[playerId];
-                delete gameState.players[playerId];
+                // Clean up non-open connections proactively
+                console.log(`[Broadcast] Socket for player ${playerId} not open (readyState: ${ws.readyState}), removing`);
+                try { ws.close(1001, "Socket not open"); } catch (closeErr) { }
+                if (gameState.connections[playerId]) delete gameState.connections[playerId];
+                if (gameState.players[playerId]) delete gameState.players[playerId];
+            } else {
+                // Clean up null/undefined connection entries
+                console.warn(`[Broadcast] Found null/undefined connection for Player ID: ${playerId}. Cleaning up.`);
+                if (gameState.connections[playerId]) delete gameState.connections[playerId];
+                if (gameState.players[playerId]) delete gameState.players[playerId];
             }
         }
 
-        // Log active connections count
-        if (Math.random() < 0.1) { // Log only occasionally
-            console.log(`Broadcast complete. Sent ${payloadObject.type} to ${activeConnections} active connections`);
+        // Log active connections count - Reduce frequency
+        if (gameState.broadcastCounter % 50 === 0) { // Log every 50 broadcasts (~2.5 seconds)
+            console.log(`[Broadcast] Sent ${payloadObject.type} to ${activeConnections} active connections (Counter: ${gameState.broadcastCounter})`);
         }
 
         // --- Update lastBroadcastState AFTER sending --- 
@@ -783,7 +801,8 @@ function broadcastGameState() {
             };
         }
     } catch (err) {
-        console.error('Error in broadcastGameState:', err);
+        // *** Log any error during broadcast ***
+        console.error('[!!!] Critical Error in broadcastGameState:', err);
     }
 }
 
