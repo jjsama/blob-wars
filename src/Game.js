@@ -589,28 +589,17 @@ export class Game {
                 seenPlayerIds.add(id);
 
                 if (id === this.networkManager.playerId) {
-                    // Handle local player updates
-                    if (playerData && playerData.position && this.player) {
-                        if (this.isValidPosition(playerData.position)) {
-                            const currentPos = this.player.getPosition();
-                            const posDiff = new THREE.Vector3(
-                                playerData.position.x - currentPos.x,
-                                playerData.position.y - currentPos.y,
-                                playerData.position.z - currentPos.z
-                            );
-
-                            if (posDiff.lengthSq() > 1) {
-                                this.player.setPosition(playerData.position);
-                            }
-                        }
-                    }
+                    // Handle local player updates (minimal correction for now)
+                    // If needed, re-implement prediction system reconciliation here
                 } else {
                     // Handle remote player updates
                     let remotePlayer = this.remotePlayers[id];
                     if (!remotePlayer && playerData) {
                         // Create new remote player if it doesn't exist
+                        console.log(`[Game] handleFullGameStateUpdate: Player ${id} not found locally, adding.`);
                         remotePlayer = this.addRemotePlayer(id, playerData.position);
                     }
+                    // IMPORTANT: Update player state EVEN IF just added
                     if (remotePlayer && playerData) {
                         // Update remote player
                         this.updateRemotePlayerState(remotePlayer, playerData);
@@ -618,21 +607,16 @@ export class Game {
                 }
             });
 
+            // *** Add Logging before cleanup ***
+            console.log(`[Game] Cleanup Check: Seen IDs: ${Array.from(seenPlayerIds).join(', ')}`);
+            console.log(`[Game] Cleanup Check: Current Remote Players: ${Object.keys(this.remotePlayers).join(', ')}`);
+            // *** End Logging ***
+
             // Clean up disconnected players
             Object.keys(this.remotePlayers).forEach(id => {
                 if (!seenPlayerIds.has(id)) {
-                    // Remove player's visual elements
-                    if (this.remotePlayers[id]) {
-                        // Remove name tag if it exists
-                        if (this.remotePlayers[id].nameTag) {
-                            document.body.removeChild(this.remotePlayers[id].nameTag);
-                        }
-                        // Remove the player model from the scene
-                        this.scene.scene.remove(this.remotePlayers[id]);
-                        // Delete the player reference
-                        delete this.remotePlayers[id];
-                        console.log(`Cleaned up disconnected player: ${id}`);
-                    }
+                    console.warn(`[Game] Player ${id} not in latest state. Removing.`);
+                    this.removeRemotePlayer(id); // Use the proper removal function
                 }
             });
         } catch (err) {
@@ -665,7 +649,7 @@ export class Game {
                         let remotePlayer = this.remotePlayers[playerId];
                         if (!remotePlayer) {
                             // If player doesn't exist, delta should contain full state for creation
-                            console.log(`[Delta] Creating new remote player: ${playerId}`);
+                            console.log(`[Game] handleGameStateDeltaUpdate: Player ${playerId} not found locally, adding.`);
                             remotePlayer = this.addRemotePlayer(playerId, delta.position);
                             if (remotePlayer) { // Ensure player was created successfully
                                 this.updateRemotePlayerState(remotePlayer, delta); // Apply remaining state
@@ -680,9 +664,13 @@ export class Game {
 
             // --- Process Removed Players ---
             if (deltaData.removedPlayerIds && deltaData.removedPlayerIds.length > 0) {
+                // *** Add Logging before removal ***
+                console.log(`[Game] Delta Removal Check: IDs to remove: ${deltaData.removedPlayerIds.join(', ')}`);
+                console.log(`[Game] Delta Removal Check: Current Remote Players: ${Object.keys(this.remotePlayers).join(', ')}`);
+                // *** End Logging ***
                 deltaData.removedPlayerIds.forEach(playerId => {
-                    if (playerId !== this.networkManager.playerId) {
-                        console.log(`[Delta] Removing player: ${playerId}`);
+                    if (playerId !== this.networkManager.playerId && this.remotePlayers[playerId]) { // Check if player exists before removing
+                        console.warn(`[Game] Removing player ${playerId} based on delta update.`);
                         this.removeRemotePlayer(playerId);
                     }
                 });
@@ -709,8 +697,17 @@ export class Game {
     updateRemotePlayerState(remotePlayer, playerData) {
         if (!remotePlayer || !playerData) return;
 
+        // *** Add Logging ***
+        if (Math.random() < 0.1) { // Log occasionally to avoid spam
+            console.log(`[Game] Updating RemotePlayer ${remotePlayer.remoteId} with data:`, JSON.stringify(playerData));
+        }
+        // *** End Logging ***
+
         // Update position and rotation if provided and valid
         if (playerData.position && this.isValidPosition(playerData.position)) {
+            // *** Add Logging ***
+            // console.log(`[Game] Calling setPosition for ${remotePlayer.remoteId} with:`, JSON.stringify(playerData.position));
+            // *** End Logging ***
             remotePlayer.setPosition(playerData.position);
         }
         if (playerData.rotation) { // Consider adding isValidRotation if needed
@@ -734,13 +731,12 @@ export class Game {
 
         // Handle jumping state BEFORE general animation updates
         if (playerData.isJumping && !remotePlayer.isJumping) {
-            // Setting isJumping flag and playing animation are handled
-            // within the animation logic below to avoid conflicting plays.
+            // Server says jumping, client thought not jumping
             remotePlayer.isJumping = true; // Set state flag
-            // Remove setTimeout here, let animation logic handle the transition back
         }
         // Ensure isJumping state is reset if server says not jumping
         else if (playerData.isJumping === false && remotePlayer.isJumping) {
+            // Server says not jumping, client thought jumping
             remotePlayer.isJumping = false;
         }
 
@@ -748,10 +744,13 @@ export class Game {
         // Update animation based on server state, respecting current action states
         let targetAnimation = remotePlayer.currentAnimation; // Default to current
         if (playerData.animation) {
-            targetAnimation = playerData.animation; // Prefer server animation if provided
+            // Prefer server animation if provided, unless we know we should be jumping
+            if (!remotePlayer.isJumping) {
+                targetAnimation = playerData.animation;
+            }
         }
 
-        // Override animation if jumping
+        // Override animation if jumping state is true
         if (remotePlayer.isJumping) {
             targetAnimation = 'jump';
         }
@@ -760,7 +759,9 @@ export class Game {
         // unless it's an attack (which manages its own duration)
         // Also, don't change animation if dead or attacking
         if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
-            if (remotePlayer.currentAnimation !== targetAnimation || !remotePlayer.currentAction?.isRunning()) {
+            // Ensure we play 'jump' if isJumping is true, even if targetAnimation was already 'jump' but wasn't running
+            const needsToPlay = remotePlayer.currentAnimation !== targetAnimation || (targetAnimation === 'jump' && !remotePlayer.currentAction?.isRunning());
+            if (needsToPlay) {
                 remotePlayer.playAnimation(targetAnimation);
             }
         }

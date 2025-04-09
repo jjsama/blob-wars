@@ -75,34 +75,43 @@ export class RemotePlayer extends THREE.Object3D {
         }
 
         // Store position update if model isn't loaded yet
-        if (!this.modelLoaded) {
+        if (!this.modelLoaded || !this.mesh) {
             this.positionQueue.push({
                 x: position.x,
                 y: position.y,
                 z: position.z
             });
+            // console.log(`[RemotePlayer ${this.remoteId}] Model not loaded, queued position. Queue size: ${this.positionQueue.length}`); // Reduce noise
             return;
         }
+
+        // *** Add Logging ***
+        if (Math.random() < 0.1) { // Log occasionally
+            console.log(`[RemotePlayer ${this.remoteId}] setPosition called. Mesh exists: ${!!this.mesh}. Pos:`, JSON.stringify(position));
+        }
+        // *** End Logging ***
 
         // Update interpolation targets
         this.previousPosition.copy(this.position);
         this.targetPosition.set(position.x, position.y, position.z);
         this.interpolationFactor = 0;
 
-        // Detect movement for animation
-        const dx = position.x - this.lastPosition.x;
-        const dz = position.z - this.lastPosition.z;
-        const distanceSquared = dx * dx + dz * dz;
+        // Detect movement for animation (based on target, not interpolated position)
+        const dx = this.targetPosition.x - this.lastPosition.x;
+        const dy = this.targetPosition.y - this.lastPosition.y; // Include Y for jumping detection
+        const dz = this.targetPosition.z - this.lastPosition.z;
+        const distanceSquared = dx * dx + dy * dy + dz * dz;
 
         const wasMoving = this.isMoving;
         this.isMoving = distanceSquared > this.movementThreshold;
 
-        // Update animation if movement state changed
-        if (this.isMoving !== wasMoving && !this.isAttacking && !this.isJumping && !this.isDead) {
-            this.playAnimation(this.isMoving ? 'walkForward' : 'idle');
-        }
+        // Update animation based on state flags (isJumping, isAttacking, etc.)
+        // This is handled in updateRemotePlayerState now, relying on server state.
+        // if (this.isMoving !== wasMoving && !this.isAttacking && !this.isJumping && !this.isDead) {
+        //     this.playAnimation(this.isMoving ? 'walkForward' : 'idle');
+        // }
 
-        this.lastPosition.set(position.x, position.y, position.z);
+        this.lastPosition.copy(this.targetPosition); // Update lastPosition based on target
     }
 
     loadModel() {

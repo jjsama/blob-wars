@@ -559,8 +559,10 @@ Previous Attempts: ${this.reconnectAttempts}
                 return;
             }
 
-            // Log message reception
-            console.log(`Received message: ${message.type}`);
+            // Reduce noisy logging for frequent messages
+            if (message.type !== 'GAME_STATE_DELTA' && message.type !== 'PONG' && message.type !== 'SERVER_PING') {
+                console.log(`Received message: ${message.type}`);
+            }
 
             switch (message.type) {
                 case 'PLAYER_CONNECTED':
@@ -582,7 +584,7 @@ Previous Attempts: ${this.reconnectAttempts}
                 case 'GAME_STATE_DELTA':
                     // Process delta game state update
                     if (message.data) {
-                        console.log('Received game state delta update with player data:', Object.keys(message.data.playerDeltas || {}).length);
+                        // console.log('Received game state delta update with player data:', Object.keys(message.data.playerDeltas || {}).length); // Reduce noise
                         // Emit only the data part for delta updates
                         this._emitEvent('gameStateDeltaUpdate', message.data);
                     }
@@ -630,9 +632,16 @@ Previous Attempts: ${this.reconnectAttempts}
                         // Calculate time offset between client and server
                         this.serverTimeOffset = serverTime - (now - roundTripTime / 2);
 
-                        console.log(`Ping response received. Round trip time: ${roundTripTime}ms, Server time offset: ${this.serverTimeOffset}ms`);
+                        // console.log(`Ping response received. Round trip time: ${roundTripTime}ms, Server time offset: ${this.serverTimeOffset}ms`); // Reduce noise
                     }
                     break;
+
+                // *** Add Case for SERVER_PING ***
+                case 'SERVER_PING':
+                    // Server is just checking if client is alive, no action needed
+                    // console.log('Received SERVER_PING from server.'); // Optional debug log
+                    break;
+                // *** End SERVER_PING Case ***
 
                 default:
                     console.log(`Unhandled message type: ${message.type}`);
