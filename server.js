@@ -4,6 +4,7 @@ const server = Bun.serve({
     websocket: {
         // Handle new WebSocket connections
         open(ws) {
+            // *** Wrap entire handler in try...catch ***
             try {
                 console.log(`WebSocket connection opened: ${ws.remoteAddress}`);
 
@@ -40,10 +41,18 @@ const server = Bun.serve({
                 // Log active connections after new connection
                 logConnectionStats(true);
 
-                // Broadcast state to all clients
-                broadcastGameState();
+                // --- Temporarily delay the first broadcast --- 
+                // Broadcast state to all clients (might error if called too early?)
+                // Consider adding a small delay or ensuring state is ready
+                // broadcastGameState(); 
+                console.log(`[Open] Skipping immediate broadcast for ${playerId}`);
+                // The regular game loop will eventually broadcast the state.
+                // --- End temporary delay ---
+
             } catch (err) {
+                // *** Log any error during open ***
                 console.error('[!!!] Critical Error in WebSocket open handler:', err);
+                // Optionally try to close the connection gracefully on error
                 try { ws.close(1011, "Server error during connection setup"); } catch (closeErr) { }
             }
         },
