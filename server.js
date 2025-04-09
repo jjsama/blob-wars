@@ -88,7 +88,7 @@ const server = Bun.serve({
         },
 
         // Define ping interval to keep connections alive
-        idleTimeout: 120, // Seconds until inactive connections are closed
+        idleTimeout: 300, // Increased from 120 seconds to 300 seconds (5 minutes)
     },
     async fetch(req, server) {
         const url = new URL(req.url);
@@ -819,7 +819,7 @@ function logConnectionStats(force = false) {
 // Check for inactive connections and remove them
 function cleanupInactiveConnections() {
     const now = Date.now();
-    const timeout = 30000; // 30 seconds timeout
+    const timeout = 300000; // Increased from 30000 (30 seconds) to 300000 (5 minutes)
 
     for (const playerId in gameState.connections) {
         const ws = gameState.connections[playerId];
