@@ -77,25 +77,38 @@ const server = Bun.serve({
 
         // Handle WebSocket connection close
         close(ws, code, reason) {
-            console.log(`WebSocket connection closed: ${ws.remoteAddress} (Code: ${code}, Reason: ${reason || 'None'})`);
+            const remoteAddr = ws.remoteAddress || 'Unknown Address'; // Get address before potential data loss
+            const playerId = ws.data?.playerId || 'Unknown Player ID'; // Get Player ID safely
+            console.log(`WebSocket connection closed for Player: ${playerId} (${remoteAddr}) - Code: ${code}, Reason: ${reason || 'None'})`);
 
+            // Clean up if player data exists
             if (ws.data && ws.data.playerId) {
-                const playerId = ws.data.playerId;
+                const pid = ws.data.playerId; // Use local var for clarity
 
                 // Remove player from game state and connections map
-                if (gameState.players[playerId]) {
-                    delete gameState.players[playerId];
+                if (gameState.players[pid]) {
+                    console.log(`Removing player ${pid} from gameState.players`);
+                    delete gameState.players[pid];
+                } else {
+                    console.log(`Player ${pid} not found in gameState.players during close`);
                 }
 
-                if (gameState.connections[playerId]) {
-                    delete gameState.connections[playerId];
+                if (gameState.connections[pid]) {
+                    console.log(`Removing player ${pid} from gameState.connections`);
+                    delete gameState.connections[pid];
+                } else {
+                    console.log(`Player ${pid} not found in gameState.connections during close`);
                 }
 
                 // Log active connections after disconnection
                 logConnectionStats(true);
 
-                // Notify other clients that a player disconnected
-                broadcastGameState();
+                // Notify other clients that a player disconnected (consider delaying slightly?)
+                // Use pid here
+                // TODO: Broadcasting here might cause issues if server is shutting down. Re-evaluate.
+                broadcastGameState(); // Let broadcast handle filtering disconnected players
+            } else {
+                console.log(`Closing connection did not have associated player data.`);
             }
         },
 
@@ -883,6 +896,7 @@ function startGameLoop() {
 
     console.log('Starting game tick loop');
     gameState.gameLoopActive = true;
+    let serverPingCounter = 0; // Counter for server pings
 
     // Store interval ID so we can clear it if needed
     gameState.tickInterval = setInterval(() => {
@@ -898,6 +912,14 @@ function startGameLoop() {
 
             // Log stats periodically
             logConnectionStats();
+
+            // Send server pings periodically
+            serverPingCounter++;
+            if (serverPingCounter >= 400) { // Send approx every 20 seconds (400 ticks * 50ms/tick)
+                sendServerPings();
+                serverPingCounter = 0;
+            }
+
         } catch (err) {
             // Log error but continue game loop
             console.error('Error in game tick loop:', err);
@@ -1283,4 +1305,34 @@ function deepCompare(obj1, obj2) {
     // Basic comparison for this use case (position, rotation, primitive values)
     // Not a fully robust deep comparison, but sufficient here.
     return JSON.stringify(obj1) === JSON.stringify(obj2);
-} 
+}
+
+// --- New Function to Send Server Pings ---
+function sendServerPings() {
+    const pingMessage = JSON.stringify({ type: 'SERVER_PING' });
+    let pingCount = 0;
+    try {
+        for (const playerId in gameState.connections) {
+            const ws = gameState.connections[playerId];
+            if (ws && ws.readyState === 1) { // WebSocket.OPEN
+                try {
+                    ws.send(pingMessage);
+                    pingCount++;
+                } catch (pingErr) {
+                    console.error(`Error sending server ping to player ${playerId}:`, pingErr);
+                    // Close potentially broken connection
+                    try { ws.close(1011, "Server ping failed"); } catch (closeErr) { }
+                    // Clean up immediately
+                    if (gameState.connections[playerId]) delete gameState.connections[playerId];
+                    if (gameState.players[playerId]) delete gameState.players[playerId];
+                }
+            }
+        }
+        if (pingCount > 0) {
+            console.log(`[ServerPing] Sent ping to ${pingCount} clients.`);
+        }
+    } catch (err) {
+        console.error('[!!!] Critical Error in sendServerPings loop:', err);
+    }
+}
+// --- End New Function --- 
