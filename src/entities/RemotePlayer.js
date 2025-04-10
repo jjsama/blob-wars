@@ -51,14 +51,15 @@ export class RemotePlayer extends THREE.Object3D {
 
         // Store the player's color
         this.playerColor = color;
+        this.needsSceneAdd = false; // Flag for delayed addition
 
         // Add to scene ONLY if the scene exists
         if (this.scene && this.scene.scene) {
             this.scene.scene.add(this);
             console.log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
         } else {
-            error(`RemotePlayer ${id}: Cannot add to scene because this.scene or this.scene.scene is null/undefined.`);
-            // Consider queuing the addition or handling this case appropriately
+            error(`RemotePlayer ${id}: Cannot add to scene because this.scene or this.scene.scene is null/undefined. Will attempt later.`); // Update error message
+            this.needsSceneAdd = true; // Set flag to add later
         }
 
         // Load model
@@ -336,7 +337,10 @@ URL attempted: ${modelPath}
             this.currentAnimation = animName;
             this.currentAction = action;
 
-            // console.log(`Remote player ${this.remoteId} playing animation: ${animName}`); // Reduced logging
+            // Log the animation being played
+            if (Math.random() < 0.05) { // Log occasionally
+                console.log(`[Client PlayAnim] ID: ${this.remoteId} - Playing: ${animName}`);
+            }
         } catch (err) {
             console.error(`Error playing animation '${animName}' for remote player:`, err);
         }
@@ -396,6 +400,21 @@ URL attempted: ${modelPath}
             newPosition.lerpVectors(this.previousPosition, this.targetPosition, this.interpolationFactor);
             this.position.copy(newPosition);
         }
+
+        // --- Delayed Scene Add --- 
+        if (this.needsSceneAdd) {
+            if (this.scene && this.scene.scene) {
+                this.scene.scene.add(this);
+                this.needsSceneAdd = false; // Successfully added
+                console.log(`RemotePlayer ${this.remoteId} added to scene (delayed).`);
+            } else {
+                // Log only occasionally if still waiting
+                if (Math.random() < 0.01) {
+                    console.log(`RemotePlayer ${this.remoteId} still waiting for scene to be ready...`);
+                }
+            }
+        }
+        // --- End Delayed Scene Add --- 
 
         // Interpolate rotation
         if (this.rotationInterpolationFactor < 1 && this.model) {
@@ -549,16 +568,6 @@ URL attempted: ${modelPath}
 
         this.isAttacking = true;
         this.playAnimation('attack');
-
-        // Reset attack state after a fixed time
-        setTimeout(() => {
-            this.isAttacking = false;
-
-            // If we're still in attack animation, switch back to idle
-            if (this.currentAnimation === 'attack' && !this.isDead) {
-                this.playAnimation('idle');
-            }
-        }, 800); // Fixed time for attack animation
     }
 
     takeDamage(amount) {

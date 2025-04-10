@@ -393,13 +393,16 @@ Previous Attempts: ${this.reconnectAttempts}
             console.log(`Sending position update: x=${position.x.toFixed(2)}, y=${position.y.toFixed(2)}, z=${position.z.toFixed(2)}`);
         }
 
+        // Ensure playerState.animation reflects the *current* animation
+        const currentAnimation = playerState.animation || 'idle';
+
         this.send('PLAYER_UPDATE', {
             position,
             rotation,
             health: playerState.health,
             isAttacking: playerState.isAttacking,
             isDead: playerState.isDead,
-            animation: playerState.animation,
+            animation: currentAnimation,
             timestamp: Date.now()
         });
     }

@@ -367,25 +367,6 @@ function handleClientMessage(ws, data) {
                         console.log(`Rejecting movement from ${playerId}: distance ${distance.toFixed(2)} exceeds limit`);
                         // Keep previous position, do not update
                     } else {
-                        // --- Server-side Animation Determination ---
-                        // Determine animation based on horizontal movement, ignore jumping/attacking here
-                        const MOVEMENT_THRESHOLD = 0.05; // Minimum distance moved to be considered 'walking'
-                        const horizontalDistance = Math.sqrt(
-                            Math.pow(position.x - prevPos.x, 2) +
-                            Math.pow(position.z - prevPos.z, 2)
-                        );
-
-                        // Only update basic movement animation if not currently jumping or attacking
-                        // (These states are set by specific events like PLAYER_JUMP, PLAYER_ATTACK)
-                        if (!player.isJumping && !player.isAttacking) {
-                            if (horizontalDistance > MOVEMENT_THRESHOLD) {
-                                player.animation = 'walkForward';
-                            } else {
-                                player.animation = 'idle';
-                            }
-                        }
-                        // --- End Server-side Animation Determination ---
-
                         player.position = position; // Apply the validated position
                     }
                 }
@@ -400,24 +381,36 @@ function handleClientMessage(ws, data) {
                     player.rotation = rotation;
                 }
 
-                // Update player state if provided
+                // --- Update Animation based on Client State (unless dead) --- 
+                // Server only overrides for death. Attack animation is initiated by PROJECTILE_SPAWN broadcast.
+                if (!player.isDead && data.animation) {
+                    // Directly use the animation sent by the client 
+                    if (player.animation !== data.animation) {
+                        player.animation = data.animation;
+                        // Log animation change initiated by client update
+                        if (Math.random() < 0.05) {
+                            console.log(`[Server Update] Player ${playerId} - Set Animation: ${player.animation} (from client)`);
+                        }
+                    }
+                } // isAttacking check removed here
+                // --- End Animation Update --- 
+
+                // Update player state if provided (Health, isDead are handled by separate events mostly)
+                /*
                 if (data.health !== undefined && typeof data.health === 'number') {
                     player.health = data.health;
                 }
-
                 if (data.isDead !== undefined) {
                     player.isDead = Boolean(data.isDead);
                 }
+                */
 
-                // We no longer rely on client-sent animation for basic movement.
-                // Server determines 'idle'/'walkForward'. Jumping/Attacking are handled by specific events.
-                // if (data.animation) {
-                //     player.animation = data.animation;
-                // }
-
+                // We now rely on client-sent animation, server only overrides for attack/death
+                /* 
                 if (data.isAttacking !== undefined) {
-                    player.isAttacking = Boolean(data.isAttacking);
+                    player.isAttacking = Boolean(data.isAttacking); 
                 }
+                */
 
                 // Store sequence number for client-side prediction
                 if (data.sequence !== undefined && typeof data.sequence === 'number') {
@@ -462,6 +455,16 @@ function handleClientMessage(ws, data) {
                 // Add to game state
                 gameState.projectiles.push(projectile);
 
+                // --- Set Attacker State --- 
+                const attacker = gameState.players[data.ownerId];
+                if (attacker && !attacker.isDead) { // Check attacker exists and is not dead
+                    // Set animation to attack FOR THIS BROADCAST CYCLE
+                    // Subsequent PLAYER_UPDATE from client will dictate idle/walk etc.
+                    attacker.animation = 'attack';
+                    console.log(`[Server Broadcast] Player ${data.ownerId} - Setting Animation: attack (from projectile spawn)`);
+                }
+                // --- End Set Attacker State --- 
+
                 // Broadcast to all clients including sender for confirmation
                 broadcastToAll({
                     type: 'PROJECTILE_SPAWN',
@@ -479,19 +482,7 @@ function handleClientMessage(ws, data) {
             if (player && !player.isJumping && !player.isDead) {
                 player.isJumping = true;
                 player.animation = 'jump'; // Set animation state
-
-                // Reset isJumping after a short delay (e.g., 1 second)
-                // Store the timeout ID on the player object to prevent multiple resets
-                if (player.jumpTimeoutId) {
-                    clearTimeout(player.jumpTimeoutId);
-                }
-                player.jumpTimeoutId = setTimeout(() => {
-                    if (player) { // Check if player still exists
-                        player.isJumping = false;
-                        player.jumpTimeoutId = null; // Clear the stored ID
-                        console.log(`Player ${playerId} jump state reset`);
-                    }
-                }, 1000); // 1 second duration for jump state
+                console.log(`[Server Update] Player ${playerId} - Set Animation: jump`); // Log jump anim
             }
             break;
 
@@ -520,15 +511,18 @@ function handleClientMessage(ws, data) {
         case 'PLAYER_ATTACK':
             // Handle player attack
             console.log(`Player ${playerId} attacked`);
-            player.isAttacking = true;
-            player.animation = 'attack'; // Set animation state
+            if (player && !player.isAttacking && !player.isDead) { // Check player exists and state
+                player.isAttacking = true;
+                player.animation = 'attack'; // Set animation state
+                console.log(`[Server Update] Player ${playerId} - Set Animation: attack`); // Log attack anim
 
-            // Reset attack state after animation duration
-            setTimeout(() => {
-                if (player) { // Check player still exists
-                    player.isAttacking = false;
-                }
-            }, 800);
+                // Reset attack state after animation duration
+                setTimeout(() => {
+                    if (player) { // Check player still exists
+                        player.isAttacking = false;
+                    }
+                }, 800);
+            }
             break;
 
         case 'PLAYER_DAMAGE':
@@ -715,6 +709,11 @@ function broadcastGameState() {
                     animation: player.animation || 'idle',
                     lastProcessedInput: player.lastProcessedInput || 0
                 };
+
+                // Log the state being prepared for broadcast occasionally
+                if (Math.random() < 0.01) { // Reduce log frequency
+                    console.log(`[Server Broadcast Prep] Player ${playerId} State: ${JSON.stringify(currentPlayersState[playerId])}`);
+                }
             }
         }
         // TODO: Add projectile state processing here later

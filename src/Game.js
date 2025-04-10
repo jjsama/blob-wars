@@ -44,7 +44,8 @@ export class Game {
         // Initialize prediction system for client-side prediction and server reconciliation
         this.predictionSystem = new PredictionSystem(this);
 
-        // Set up network event handlers
+        // Set up network event handlers (MOVED TO initNetworkAsync)
+        /*
         this.networkManager.on('projectileSpawn', (projectileData) => {
             // Only handle projectiles from other players
             if (projectileData.ownerId !== this.networkManager.playerId) {
@@ -160,7 +161,7 @@ export class Game {
             }
         });
 
-        // Connect to server
+        // Connect to server (MOVED TO initNetworkAsync)
         this.networkManager.connect()
             .then(() => {
                 console.log('Connected to server successfully');
@@ -175,6 +176,7 @@ export class Game {
                     document.getElementById('connection-status')?.remove();
                 }, 5000);
             });
+        */
 
         // Reduce movement speed for better gameplay
         this.moveForce = 15;
@@ -299,46 +301,43 @@ export class Game {
             console.log('Enabling multiplayer mode');
             console.log('Initializing network connection (non-blocking)');
 
-            try {
-                await this.initNetworkAsync();
-                console.log('Network connection successful');
-            } catch (networkError) {
-                error('Network connection failed:', networkError);
-                // Show a more user-friendly error message
-                const errorMessage = document.getElementById('debug');
-                if (errorMessage) {
-                    errorMessage.innerHTML = `
-                        <div style="color: #ff5555; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 5px;">
-                            <h3>Connection Error</h3>
-                            <p>Failed to connect to game server. The game will continue in offline mode.</p>
-                            <p>Error details: ${networkError.message}</p>
-                            <p>URL: ${window.location.href}</p>
-                            <button onclick="window.location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
-                                Retry Connection
-                            </button>
-                        </div>
-                    `;
-                }
-                // Continue in offline mode
-                this.isMultiplayer = false;
-            }
+            // Call the async network initialization
+            await this.initNetworkAsync(); // Await the async function
+            console.log('Network setup attempted.');
 
-            console.log('Game initialization complete');
-        } catch (err) {
-            error('Error in Game.init', err);
-            throw err;
+        } catch (err) { // Single catch block for init errors
+            error('Error during Game initialization:', err);
+            // Show error to user if possible
+            const errorMessage = document.getElementById('debug');
+            if (errorMessage) {
+                errorMessage.innerHTML = `
+                    <div style="color: #ff5555; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 5px;">
+                        <h3>Initialization Error</h3>
+                        <p>Failed to initialize the game.</p>
+                        <p>Error details: ${err.message}</p>
+                        <p>URL: ${window.location.href}</p>
+                        <button onclick="window.location.reload()" style="margin-top: 10px; padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                            Reload Game
+                        </button>
+                    </div>
+                `;
+            }
+            // Optionally rethrow or handle differently
+            // throw err; // Re-throwing might stop execution entirely
         }
-    }
+    } // Closing brace for init method
 
     /**
      * Initialize network connection asynchronously (doesn't block game startup)
      */
-    initNetworkAsync() {
+    async initNetworkAsync() {
         // Set a temporary message
         this.showConnectionStatus('Connecting to server...');
         console.log('Initializing network connection...');
 
-        // Register event handlers before connecting
+        // --- Register event handlers BEFORE connecting ---
+
+        // Handle connection success
         this.networkManager.on('connect', () => {
             console.log('Connected to game server successfully');
             document.getElementById('connection-status')?.remove();
@@ -353,6 +352,7 @@ export class Game {
             this._startPositionUpdates();
         });
 
+        // Handle disconnection
         this.networkManager.on('disconnect', () => {
             console.log('Disconnected from game server');
             // Clear remote players on disconnect
@@ -372,6 +372,7 @@ export class Game {
             }
         });
 
+        // Handle receiving our player ID
         this.networkManager.on('playerConnected', (data) => {
             console.log(`Player connected: ${data.id}`);
             if (data.id === this.networkManager.playerId) {
@@ -409,19 +410,40 @@ export class Game {
             }
         });
 
-        // Updated handler to process both full state and deltas
+        // Handle PROJECTILE spawn events (local and remote)
+        this.networkManager.on('projectileSpawn', (projectileData) => {
+            // Only handle projectiles from other players here visually
+            if (projectileData.ownerId !== this.networkManager.playerId) {
+                console.log('[Network] Received remote projectile spawn:', projectileData.id);
+                this.handleRemoteProjectileSpawn(projectileData);
+            } else {
+                // Log confirmation of our own projectile
+                console.log('[Network] Received confirmation for local projectile:', projectileData.id);
+                // We already created it visually in shootProjectile,
+                // could potentially update its ID or state if needed based on server confirmation
+                // this.handleLocalProjectileSpawn(projectileData); // This might duplicate the projectile if called
+            }
+        });
+
+
+        // Updated handler to process FULL game state messages
         this.networkManager.on('gameStateUpdate', (message) => {
             // Log received message size for verification
             const messageSize = JSON.stringify(message).length;
             console.log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
 
+            // Ensure this only handles full GAME_STATE messages
             if (message.type === 'GAME_STATE') {
                 this.handleFullGameStateUpdate(message.data); // Handle full state
-            } else if (message.type === 'GAME_STATE_DELTA') {
-                this.handleGameStateDeltaUpdate(message.data); // Handle delta update
             } else {
-                console.warn('Received unknown message type from server:', message.type);
+                console.warn('gameStateUpdate listener received non-GAME_STATE message:', message.type);
             }
+        });
+
+        // Add new handler specifically for DELTA updates
+        this.networkManager.on('gameStateDeltaUpdate', (deltaData) => {
+            console.log(`[Network] Received GAME_STATE_DELTA.`);
+            this.handleGameStateDeltaUpdate(deltaData); // Handle delta update
         });
 
         // Register event handler for player damage
@@ -509,21 +531,23 @@ export class Game {
             }
         });
 
-        // Connect to server
-        this.networkManager.connect()
-            .then(() => {
-                console.log('Connected to server successfully');
-            })
-            .catch((error) => {
-                error('Failed to connect to server:', error);
-                this.showConnectionStatus('Connection failed. Running in single player mode.');
-                this.isMultiplayer = false;
+        // --- Connect to server AFTER handlers are registered ---
+        try {
+            await this.networkManager.connect(); // Use await here
+            console.log('Network connection process initiated.');
+            // Success is handled by the 'connect' event listener above
+        } catch (error) {
+            // Handle connection failure
+            console.error('Failed to connect to server:', error);
+            this.showConnectionStatus('Connection failed. Running in single player mode.');
+            this.isMultiplayer = false;
 
-                // Hide message after 5 seconds
-                setTimeout(() => {
-                    document.getElementById('connection-status')?.remove();
-                }, 5000);
-            });
+            // Hide message after 5 seconds
+            setTimeout(() => {
+                document.getElementById('connection-status')?.remove();
+            }, 5000);
+            // No need to throw error here, just fall back to single player
+        }
     }
 
     /**
@@ -714,66 +738,78 @@ export class Game {
             remotePlayer.setRotation(playerData.rotation);
         }
 
-        // Handle death state BEFORE animation updates
-        if (playerData.isDead !== undefined) {
-            if (playerData.isDead && !remotePlayer.isDead) {
-                remotePlayer.die();
-            } else if (!playerData.isDead && remotePlayer.isDead) {
+        // --- 1. Update State Flags based on Server Data --- 
+        let stateChanged = false;
+
+        // Handle death state 
+        if (playerData.isDead !== undefined && remotePlayer.isDead !== playerData.isDead) {
+            if (playerData.isDead) {
+                remotePlayer.die(); // Sets internal flag and might stop animations
+            } else {
                 // Pass server position to ensure correct respawn location
-                remotePlayer.respawn(playerData.position);
+                remotePlayer.respawn(playerData.position); // Resets flags and sets idle animation
             }
+            stateChanged = true;
         }
 
-        // Handle attack state BEFORE animation updates
-        if (playerData.isAttacking && !remotePlayer.isAttacking) {
-            remotePlayer.attack();
+        // Update attacking state flag
+        if (playerData.isAttacking !== undefined && remotePlayer.isAttacking !== playerData.isAttacking) {
+            remotePlayer.isAttacking = playerData.isAttacking;
+            stateChanged = true;
+            console.log(`[Client UpdateRemote] ${remotePlayer.remoteId} isAttacking set to: ${remotePlayer.isAttacking}`);
         }
 
-        // Handle jumping state BEFORE general animation updates
-        if (playerData.isJumping && !remotePlayer.isJumping) {
-            // Server says jumping, client thought not jumping
-            remotePlayer.isJumping = true; // Set state flag
-        }
-        // Ensure isJumping state is reset if server says not jumping
-        else if (playerData.isJumping === false && remotePlayer.isJumping) {
-            // Server says not jumping, client thought jumping
-            remotePlayer.isJumping = false;
+        // Update jumping state flag
+        if (playerData.isJumping !== undefined && remotePlayer.isJumping !== playerData.isJumping) {
+            remotePlayer.isJumping = playerData.isJumping;
+            stateChanged = true;
+            console.log(`[Client UpdateRemote] ${remotePlayer.remoteId} isJumping set to: ${remotePlayer.isJumping}`);
         }
 
+        // --- 2. Determine Target Animation based on Updated Flags --- 
+        let targetAnimation = 'idle'; // Default to idle
 
-        // Update animation based on server state, respecting current action states
-        let targetAnimation = 'idle'; // Default to idle if no other state applies
-
+        // Use server's base animation if provided (usually idle/walk/jump/attack)
         if (playerData.animation) {
             targetAnimation = playerData.animation;
         }
 
-        // Prioritize specific states over generic animation field
-        if (playerData.isDead) {
-            // targetAnimation = 'death'; // Keep death animation disabled for now
-            // Instead, just ensure no other animations play when dead
-        } else if (playerData.isJumping) {
-            targetAnimation = 'jump';
-        } else if (playerData.isAttacking) {
+        // Prioritize specific states determined solely by server flags
+        // (The animation field from server should already reflect jump/attack if applicable)
+        if (remotePlayer.isDead) {
+            // Don't play specific animation, die() or respawn() handles visual state
+            targetAnimation = remotePlayer.currentAnimation; // Keep current anim if dead?
+        } else if (playerData.isAttacking) { // Check the isAttacking flag *from the server data*
+            // Server attack state takes ultimate priority for *this tick*
             targetAnimation = 'attack';
-        } // Add more else if conditions for other priority states if needed (e.g., walking)
+        }
+        // Note: We no longer explicitly check remotePlayer.isJumping here, 
+        // because playerData.animation from the server should already be 'jump' if the server thinks the player is jumping.
+        // If server sends 'idle' or 'walkForward' via playerData.animation, we trust that.
 
-        // Play the target animation if it's different from the current one, unless dead
+        // --- 3. Play Animation if Changed --- 
+        // Play the target animation if it's different from the current one, unless dead (handled above)
         if (!remotePlayer.isDead && remotePlayer.currentAnimation !== targetAnimation) {
             remotePlayer.playAnimation(targetAnimation);
         }
 
+        // --- 4. Update Other Properties --- 
         // Update health (if provided) - Do this AFTER state changes like die/respawn
         if (playerData.health !== undefined && remotePlayer.health !== playerData.health) {
             remotePlayer.health = playerData.health;
             remotePlayer.updateHealthBar(); // Update visual
         }
 
-        // Update movement state flag for interpolation/animation purposes
+        // Update movement state flag (used by RemotePlayer for interpolation/visuals if needed)
         if (playerData.isMoving !== undefined) {
             remotePlayer.isMoving = playerData.isMoving;
         }
-    }
+
+        // Log the final state occasionally
+        if (stateChanged || Math.random() < 0.05) { // Log if state changed or occasionally
+            console.log(`[Client UpdateRemote End] ID: ${remotePlayer.remoteId}, Target Anim: ${targetAnimation}, isDead: ${remotePlayer.isDead}, isJumping: ${remotePlayer.isJumping}, isAttacking: ${remotePlayer.isAttacking}, Serv Anim: ${playerData.animation}`);
+        }
+    }; // Added semicolon
 
     cleanupDisconnectedPlayers(seenPlayerIds) {
         for (const id in this.remotePlayers) {
@@ -953,33 +989,33 @@ export class Game {
         /*
         // In multiplayer mode, we use server-provided enemies
         if (!this.isMultiplayer) return;
-
+    
         try {
             // For simplicity in this implementation, we just handle basic enemy visualization
             // A full implementation would track enemies by ID, interpolate positions, etc.
-
+    
             // For now, we just update existing enemies or create new ones if needed
             for (const serverEnemy of serverEnemies) {
                 // Find if we have this enemy locally
                 const existingEnemy = this.enemies.find(e => e.id === serverEnemy.id);
-
+    
                 if (existingEnemy) {
                     // Update existing enemy
                     existingEnemy.setPosition(serverEnemy.position);
-
+    
                     if (serverEnemy.rotation) {
                         existingEnemy.setRotation(serverEnemy.rotation.y);
                     }
-
+    
                     // Update health and state
                     if (typeof serverEnemy.health === 'number') {
                         existingEnemy.health = serverEnemy.health;
                     }
-
+    
                     if (serverEnemy.isDead) {
                         existingEnemy.die();
                     }
-
+    
                     if (serverEnemy.isAttacking) {
                         existingEnemy.attack();
                     }
@@ -1266,7 +1302,7 @@ export class Game {
             if (inputState.jump && this.isPlayerOnGround()) {
                 console.log('Jump detected from interval check');
                 this.handleJump();
-
+    
                 // Send jump event to server in multiplayer
                 if (this.isMultiplayer && this.networkManager.connected) {
                     this.networkManager.sendJump();
@@ -1313,7 +1349,7 @@ export class Game {
             playerPos.y - 1.1,
             playerPos.z
         );
-
+    
         const rayCallback = this.physics.rayTest(rayStart, rayEnd);
         return rayCallback.hasHit();
         */
@@ -1368,19 +1404,19 @@ export class Game {
             // Add the center dot
             const style = document.createElement('style');
             style.textContent = `
-                #crosshair::after {
-                    content: '';
-                    position: absolute;
-                    top: 50%;
-                    left: 50%;
-                    transform: translate(-50%, -50%);
-                    width: 5px;
-                    height: 5px;
-                    background-color: rgba(255, 0, 0, 0.9);
-                    border-radius: 50%;
-                    box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);
-                }
-            `;
+            #crosshair::after {
+                content: '';
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                width: 5px;
+                height: 5px;
+                background-color: rgba(255, 0, 0, 0.9);
+                border-radius: 50%;
+                box-shadow: 0 0 4px rgba(255, 0, 0, 0.7);
+            }
+        `;
             document.head.appendChild(style);
 
             document.body.appendChild(crosshair);
@@ -1506,7 +1542,7 @@ export class Game {
         // Add to projectiles array
         this.projectiles.push(projectile);
 
-        // Set player as attacking
+        // Set player as attacking (for local player animation)
         this.player.attack();
 
         // Add muzzle flash for visual feedback
