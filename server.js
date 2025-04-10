@@ -362,12 +362,31 @@ function handleClientMessage(ws, data) {
                     );
 
                     // If distance is too large, reject the update
-                    // *** Increased threshold slightly ***
-                    const MAX_MOVEMENT_PER_UPDATE = 15; // Increased from 10
+                    const MAX_MOVEMENT_PER_UPDATE = 15;
                     if (distance > MAX_MOVEMENT_PER_UPDATE) {
                         console.log(`Rejecting movement from ${playerId}: distance ${distance.toFixed(2)} exceeds limit`);
+                        // Keep previous position, do not update
                     } else {
-                        player.position = position;
+                        // --- Server-side Animation Determination ---
+                        // Determine animation based on horizontal movement, ignore jumping/attacking here
+                        const MOVEMENT_THRESHOLD = 0.05; // Minimum distance moved to be considered 'walking'
+                        const horizontalDistance = Math.sqrt(
+                            Math.pow(position.x - prevPos.x, 2) +
+                            Math.pow(position.z - prevPos.z, 2)
+                        );
+
+                        // Only update basic movement animation if not currently jumping or attacking
+                        // (These states are set by specific events like PLAYER_JUMP, PLAYER_ATTACK)
+                        if (!player.isJumping && !player.isAttacking) {
+                            if (horizontalDistance > MOVEMENT_THRESHOLD) {
+                                player.animation = 'walkForward';
+                            } else {
+                                player.animation = 'idle';
+                            }
+                        }
+                        // --- End Server-side Animation Determination ---
+
+                        player.position = position; // Apply the validated position
                     }
                 }
 
@@ -390,9 +409,11 @@ function handleClientMessage(ws, data) {
                     player.isDead = Boolean(data.isDead);
                 }
 
-                if (data.animation) {
-                    player.animation = data.animation;
-                }
+                // We no longer rely on client-sent animation for basic movement.
+                // Server determines 'idle'/'walkForward'. Jumping/Attacking are handled by specific events.
+                // if (data.animation) {
+                //     player.animation = data.animation;
+                // }
 
                 if (data.isAttacking !== undefined) {
                     player.isAttacking = Boolean(data.isAttacking);
