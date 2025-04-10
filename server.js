@@ -478,6 +478,7 @@ function handleClientMessage(ws, data) {
             console.log(`Player ${playerId} jumped`);
             if (player && !player.isJumping && !player.isDead) {
                 player.isJumping = true;
+                player.animation = 'jump'; // Set animation state
 
                 // Reset isJumping after a short delay (e.g., 1 second)
                 // Store the timeout ID on the player object to prevent multiple resets
@@ -520,6 +521,7 @@ function handleClientMessage(ws, data) {
             // Handle player attack
             console.log(`Player ${playerId} attacked`);
             player.isAttacking = true;
+            player.animation = 'attack'; // Set animation state
 
             // Reset attack state after animation duration
             setTimeout(() => {

@@ -53,11 +53,11 @@ export class RemotePlayer extends THREE.Object3D {
         this.playerColor = color;
 
         // Add to scene ONLY if the scene exists
-        if (scene && scene.scene) {
-            scene.scene.add(this);
+        if (this.scene && this.scene.scene) {
+            this.scene.scene.add(this);
             console.log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
         } else {
-            error(`RemotePlayer ${id}: Cannot add to scene because scene or scene.scene is null/undefined.`);
+            error(`RemotePlayer ${id}: Cannot add to scene because this.scene or this.scene.scene is null/undefined.`);
             // Consider queuing the addition or handling this case appropriately
         }
 
