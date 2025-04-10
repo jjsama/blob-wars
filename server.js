@@ -62,16 +62,14 @@ const server = Bun.serve({
             try {
                 const data = JSON.parse(message);
 
-                // Update last ping time for this connection for ANY message received
+                // Update lastPingTime on ALL messages to mark player as active
                 if (ws.data) {
                     ws.data.lastPingTime = Date.now();
                 }
 
                 handleClientMessage(ws, data);
-            } catch (error) {
-                console.error('[!!!] Critical Error parsing/handling WebSocket message:', error);
-                console.error('Offending message content (raw):', message);
-                try { ws.close(1008, "Server error processing message"); } catch (closeErr) { }
+            } catch (err) {
+                console.error('Error handling WebSocket message:', err);
             }
         },
 
@@ -860,42 +858,46 @@ function logConnectionStats(force = false) {
 // Check for inactive connections and remove them
 function cleanupInactiveConnections() {
     const now = Date.now();
-    const timeout = 300000; // Increased from 30000 (30 seconds) to 300000 (5 minutes)
+    const timeout = 300000; // Increased from 30000 (30s) to 300000 (5min)
 
     let cleanedCount = 0;
     for (const playerId in gameState.connections) {
         const ws = gameState.connections[playerId];
-        // Check if ws and ws.data exist, and if lastPingTime exists
-        if (ws && ws.data && typeof ws.data.lastPingTime === 'number') {
-            const lastActive = now - ws.data.lastPingTime;
-            if (lastActive > timeout) {
-                // *** Add Log Here ***
-                console.log(`[Cleanup] Removing inactive player ${playerId} (last active ${Math.round(lastActive / 1000)}s ago > ${timeout / 1000}s)`);
-                cleanedCount++;
 
-                // Close the connection
-                try {
-                    ws.close();
-                } catch (err) {
-                    console.error(`Error closing websocket for player ${playerId}:`, err);
-                }
-
-                // Remove player from game state and connections
-                delete gameState.players[playerId];
-                delete gameState.connections[playerId];
-            }
-        } else if (ws && ws.data && typeof ws.data.lastPingTime !== 'number') {
-            // If lastPingTime is missing, maybe set it now or log a warning
-            console.warn(`[Cleanup] Player ${playerId} missing lastPingTime, setting it now.`);
-            ws.data.lastPingTime = now;
-        } else if (!ws || !ws.data) {
-            // Handle cases where ws or ws.data might be missing unexpectedly
+        // Skip if connection doesn't exist
+        if (!ws || !ws.data) {
             console.warn(`[Cleanup] Found invalid connection data for Player ID: ${playerId}. Removing.`);
             delete gameState.players[playerId];
             delete gameState.connections[playerId];
-            cleanedCount++; // Count this as cleaned
+            cleanedCount++;
+            continue;
+        }
+
+        // If lastPingTime doesn't exist, set it now
+        if (typeof ws.data.lastPingTime !== 'number') {
+            console.warn(`[Cleanup] Player ${playerId} missing lastPingTime, setting it now.`);
+            ws.data.lastPingTime = now;
+            continue;
+        }
+
+        const lastActive = now - ws.data.lastPingTime;
+        if (lastActive > timeout) {
+            console.log(`[Cleanup] Removing inactive player ${playerId} (last active ${Math.round(lastActive / 1000)}s ago > ${timeout / 1000}s)`);
+            cleanedCount++;
+
+            // Close the connection
+            try {
+                ws.close(1000, 'Inactive connection');
+            } catch (err) {
+                console.error(`Error closing connection for ${playerId}:`, err);
+            }
+
+            // Remove player from game state
+            delete gameState.players[playerId];
+            delete gameState.connections[playerId];
         }
     }
+
     if (cleanedCount > 0) {
         console.log(`[Cleanup] Finished cleanup. Removed ${cleanedCount} inactive/invalid connections.`);
     }
