@@ -28,7 +28,7 @@ export class NetworkManager {
         this.MAX_RECONNECT_ATTEMPTS = 3; // Maximum number of reconnect attempts
         this.autoReconnect = true; // Whether to automatically reconnect
         this.pingInterval = null; // Keep track of ping interval
-        this.PING_INTERVAL = 5000; // Send a ping every 5 seconds
+        this.PING_INTERVAL = 1000; // Send a ping every 1 second (was 3000)
     }
 
     /**
