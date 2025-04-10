@@ -742,28 +742,25 @@ export class Game {
 
 
         // Update animation based on server state, respecting current action states
-        let targetAnimation = remotePlayer.currentAnimation; // Default to current
+        let targetAnimation = 'idle'; // Default to idle if no other state applies
+
         if (playerData.animation) {
-            // Prefer server animation if provided, unless we know we should be jumping
-            if (!remotePlayer.isJumping) {
-                targetAnimation = playerData.animation;
-            }
+            targetAnimation = playerData.animation;
         }
 
-        // Override animation if jumping state is true
-        if (remotePlayer.isJumping) {
+        // Prioritize specific states over generic animation field
+        if (playerData.isDead) {
+            // targetAnimation = 'death'; // Keep death animation disabled for now
+            // Instead, just ensure no other animations play when dead
+        } else if (playerData.isJumping) {
             targetAnimation = 'jump';
-        }
+        } else if (playerData.isAttacking) {
+            targetAnimation = 'attack';
+        } // Add more else if conditions for other priority states if needed (e.g., walking)
 
-        // Play the target animation if it's different from the current one,
-        // unless it's an attack (which manages its own duration)
-        // Also, don't change animation if dead or attacking
-        if (!remotePlayer.isDead && !remotePlayer.isAttacking) {
-            // Ensure we play 'jump' if isJumping is true, even if targetAnimation was already 'jump' but wasn't running
-            const needsToPlay = remotePlayer.currentAnimation !== targetAnimation || (targetAnimation === 'jump' && !remotePlayer.currentAction?.isRunning());
-            if (needsToPlay) {
-                remotePlayer.playAnimation(targetAnimation);
-            }
+        // Play the target animation if it's different from the current one, unless dead
+        if (!remotePlayer.isDead && remotePlayer.currentAnimation !== targetAnimation) {
+            remotePlayer.playAnimation(targetAnimation);
         }
 
         // Update health (if provided) - Do this AFTER state changes like die/respawn
