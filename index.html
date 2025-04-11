@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Blob Wars</title>
   <!-- Make sure the path is correct for production -->
-  <link rel="stylesheet" href="./dist/styles.css">
+  <link rel="stylesheet" href="/styles.css">
   <style>
     body {
       margin: 0;
@@ -89,10 +89,10 @@
     function loadGame() {
       const gameScript = document.createElement('script');
       gameScript.type = 'module';
-      gameScript.src = './dist/main.js';
+      gameScript.src = '/main.js';
       gameScript.onerror = function () {
         document.getElementById('debug').innerHTML += '<br><span style="color:red">ERROR: Failed to load game script</span>';
-        console.error('Failed to load game script from ./dist/main.js');
+        console.error('Failed to load game script from /main.js');
       };
       document.body.appendChild(gameScript);
       document.getElementById('debug').innerHTML += '<br>Game script loading...';
