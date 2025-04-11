@@ -1,4 +1,5 @@
 const server = Bun.serve({
+    hostname: "0.0.0.0",
     port: process.env.PORT || 3000,
     // Add WebSocket support
     websocket: {
