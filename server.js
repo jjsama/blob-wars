@@ -163,10 +163,11 @@ const server = Bun.serve({
             if (url.pathname === "/") {
                 console.log("Serving index.html");
                 try {
+                    // Path relative to server.js (already in blob-ville)
                     const file = Bun.file("dist/index.html");
                     const exists = await file.exists();
                     if (!exists) {
-                        console.error("index.html not found in path:", process.cwd());
+                        console.error("index.html not found in path:", process.cwd() + "/dist"); // Log relative path
                         return new Response("index.html not found", {
                             status: 404,
                             headers: corsHeaders
@@ -191,17 +192,17 @@ const server = Bun.serve({
             if (url.pathname === "/ammo.wasm.js" || url.pathname === "/ammo.wasm.wasm") {
                 console.log(`Serving Ammo file: ${url.pathname}`);
                 try {
-                    // Try dist directory first
+                    // Path relative to server.js - Check dist first
                     let file = Bun.file(`dist${url.pathname}`);
                     let exists = await file.exists();
 
                     if (!exists) {
-                        // Try public directory if not in dist
+                        // Path relative to server.js - Check public if not in dist
                         file = Bun.file(`public${url.pathname}`);
                         exists = await file.exists();
 
                         if (!exists) {
-                            console.error(`Ammo file ${url.pathname} not found in dist or public directories`);
+                            console.error(`Ammo file ${url.pathname} not found in dist or public directories`); // Log relative paths
                             return new Response("File not found", {
                                 status: 404,
                                 headers: corsHeaders
@@ -227,26 +228,20 @@ const server = Bun.serve({
                 }
             }
 
-            // Handle JavaScript files
+            // Handle JavaScript files (Look ONLY in dist)
             if (url.pathname.endsWith('.js')) {
                 console.log(`Serving JS file: ${url.pathname}`);
                 try {
-                    // Try dist directory first
+                    // Path relative to server.js
                     let file = Bun.file(`dist${url.pathname}`);
                     let exists = await file.exists();
 
                     if (!exists) {
-                        // Try root directory if not in dist
-                        file = Bun.file(url.pathname.slice(1));
-                        exists = await file.exists();
-
-                        if (!exists) {
-                            console.error(`JS file ${url.pathname} not found in dist or root directories`);
-                            return new Response("File not found", {
-                                status: 404,
-                                headers: corsHeaders
-                            });
-                        }
+                        console.error(`JS file ${url.pathname} not found in dist directory`); // Log relative path
+                        return new Response("File not found", {
+                            status: 404,
+                            headers: corsHeaders
+                        });
                     }
 
                     return new Response(file, {
@@ -264,33 +259,57 @@ const server = Bun.serve({
                 }
             }
 
-            // Handle WASM files
+            // Handle WASM files (Look in dist)
             if (url.pathname.endsWith('.wasm')) {
                 console.log(`Serving WASM file: ${url.pathname}`);
-                const filePath = url.pathname.slice(1);
+                // Path relative to server.js
+                const filePath = `dist${url.pathname}`;
                 try {
                     const file = Bun.file(filePath);
+                    const exists = await file.exists();
+                    if (!exists) {
+                        console.error(`WASM file ${filePath} not found in dist.`); // Log relative path
+                        return new Response("File not found", { status: 404, headers: corsHeaders });
+                    }
                     return new Response(file, {
                         headers: {
                             "Content-Type": "application/wasm",
-                            "Access-Control-Allow-Origin": "*"
+                            ...corsHeaders
                         }
                     });
                 } catch (e) {
                     console.error(`Error serving WASM file ${filePath}:`, e);
-                    return new Response("File not found", { status: 404 });
+                    return new Response("File not found", { status: 404, headers: corsHeaders });
                 }
             }
 
-            // Serve other files
+            // Serve other files (CSS, assets - look in dist)
             try {
-                const filePath = url.pathname.slice(1);
-                console.log(`Attempting to serve: ${filePath}`);
+                // Path relative to server.js
+                const filePath = `dist${url.pathname}`;
+                console.log(`Attempting to serve other file: ${filePath}`);
                 const file = Bun.file(filePath);
-                return new Response(file);
+                const exists = await file.exists();
+                if (!exists) {
+                    console.error(`Other file ${filePath} not found in dist.`); // Log relative path
+                    // Optionally, you could add a fallback check here for root or public if needed
+                    return new Response("Not Found", { status: 404, headers: corsHeaders });
+                }
+
+                // Determine content type (basic example)
+                let contentType = 'application/octet-stream'; // Default
+                if (filePath.endsWith('.css')) contentType = 'text/css';
+                if (filePath.endsWith('.png')) contentType = 'image/png';
+                if (filePath.endsWith('.jpg')) contentType = 'image/jpeg';
+                if (filePath.endsWith('.glb')) contentType = 'model/gltf-binary';
+                if (filePath.endsWith('.gltf')) contentType = 'model/gltf+json';
+                // Add other types as needed
+
+                console.log(`Serving ${filePath} as ${contentType}`);
+                return new Response(file, { headers: { ...corsHeaders, 'Content-Type': contentType } });
             } catch (e) {
                 console.error(`Error serving ${url.pathname}:`, e);
-                return new Response("Not Found", { status: 404 });
+                return new Response("Not Found", { status: 404, headers: corsHeaders });
             }
         } catch (e) {
             console.error("Unhandled server error:", e);
