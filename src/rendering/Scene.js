@@ -10,6 +10,10 @@ export class GameScene {
         this.cameraOffset = new THREE.Vector3(1.0, 2.0, 5.0); // Slightly to the right, good distance
         this.cameraTarget = new THREE.Vector3();
 
+        // Add smooth camera following
+        this.lastTargetPosition = new THREE.Vector3();
+        this.smoothFactor = 0.1; // Lower = smoother camera (0.1 is quite smooth)
+
         // Mouse control variables
         this.mouseX = 0;
         this.mouseY = 0;
@@ -138,7 +142,7 @@ export class GameScene {
             // Apply rotation to the offset
             const rotatedOffset = this.cameraOffset.clone().applyQuaternion(rotationQuaternion);
 
-            // Set camera position and look direction
+            // Set camera position and look direction directly (no smoothing)
             this.camera.position.copy(target).add(rotatedOffset);
 
             // Calculate look target (further ahead of player)

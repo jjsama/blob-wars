@@ -26,6 +26,10 @@ export class Player {
         this._physicsCreated = false;
         this.playerId = playerId || 'local';
 
+        // Add throttling for ground checks to prevent jitter
+        this._lastGroundCheck = 0;
+        this._groundCheckInterval = 50; // Check every 50ms instead of every frame
+
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
 
@@ -234,36 +238,87 @@ export class Player {
 
     createPhysics() {
         try {
-            console.log('Creating player physics');
+            console.log('Creating player physics with compound shape');
 
-            // Create physics body for player with simplified properties
-            const shape = new Ammo.btCapsuleShape(0.5, 1);
+            // Create a compound shape for more realistic physics
+            const compoundShape = new Ammo.btCompoundShape();
+
+            // Define transform for positioning child shapes
+            const localTransform = new Ammo.btTransform();
+            localTransform.setIdentity();
+
+            // 1. Torso (main capsule)
+            const torsoShape = new Ammo.btCapsuleShape(0.4, 0.8); // Slightly smaller than before
+            localTransform.setOrigin(new Ammo.btVector3(0, 0.4, 0)); // Center of torso
+            compoundShape.addChildShape(localTransform, torsoShape);
+
+            // 2. Head (sphere on top)
+            const headShape = new Ammo.btSphereShape(0.25);
+            localTransform.setOrigin(new Ammo.btVector3(0, 1.0, 0)); // Above torso
+            compoundShape.addChildShape(localTransform, headShape);
+
+            // 3. Legs (two thin capsules)
+            const legShape = new Ammo.btCapsuleShape(0.15, 0.8);
+
+            // Left leg
+            localTransform.setOrigin(new Ammo.btVector3(-0.2, -0.3, 0));
+            compoundShape.addChildShape(localTransform, legShape);
+
+            // Right leg
+            localTransform.setOrigin(new Ammo.btVector3(0.2, -0.3, 0));
+            compoundShape.addChildShape(localTransform, legShape);
+
+            // 4. Arms (two thin capsules)
+            const armShape = new Ammo.btCapsuleShape(0.12, 0.6);
+
+            // Left arm
+            localTransform.setOrigin(new Ammo.btVector3(-0.4, 0.4, 0));
+            compoundShape.addChildShape(localTransform, armShape);
+
+            // Right arm
+            localTransform.setOrigin(new Ammo.btVector3(0.4, 0.4, 0));
+            compoundShape.addChildShape(localTransform, armShape);
+
+            // Create the world transform
             const transform = new Ammo.btTransform();
             transform.setIdentity();
 
-            // Position the physics body slightly higher to account for model offset
+            // Position the compound body at the player's position, adjusting the Y-offset.
+            // Using a higher offset (1.2) to prevent sinking into the ground
+            const initialYOffset = 1.2;
             transform.setOrigin(new Ammo.btVector3(
-                this.position.x, this.position.y + 1.0, this.position.z
+                this.position.x, this.position.y + initialYOffset, this.position.z
             ));
 
-            const mass = 1;
+            // Calculate mass and inertia
+            const mass = 1.5; // Increased from 1 for better stability
             const localInertia = new Ammo.btVector3(0, 0, 0);
-            shape.calculateLocalInertia(mass, localInertia);
+            compoundShape.calculateLocalInertia(mass, localInertia);
 
+            // Create motion state and rigid body
             const motionState = new Ammo.btDefaultMotionState(transform);
             const rbInfo = new Ammo.btRigidBodyConstructionInfo(
-                mass, motionState, shape, localInertia
+                mass, motionState, compoundShape, localInertia
             );
 
             this.body = new Ammo.btRigidBody(rbInfo);
             this.body.setFriction(0.5);
-            this.body.setRestitution(0.2);
+            this.body.setRestitution(0.1); // Reduced from 0.2
+
+            // Increase damping for smoother movement
+            this.body.setDamping(0.2, 0.2); // Increased from 0.1
+
+            // Store references to the compound shape and its components for later use
+            this.physicsShape = {
+                compound: compoundShape,
+                torso: torsoShape,
+                head: headShape,
+                legs: legShape,
+                arms: armShape
+            };
 
             // Prevent player from tipping over
             this.body.setAngularFactor(new Ammo.btVector3(0, 0, 0)); // Lock all rotation
-
-            // Set linear damping to prevent excessive sliding
-            this.body.setDamping(0.1, 0.1);
 
             // Allow jumping by setting the correct flags
             this.body.setFlags(this.body.getFlags() | 2); // CF_CHARACTER_OBJECT flag
@@ -280,7 +335,7 @@ export class Player {
             this.canJump = false;
             this.physicsWorld.addRigidBody(this.body);
 
-            console.log('Player physics created');
+            console.log('Player compound physics created successfully');
         } catch (err) {
             error('Error creating physics', err);
         }
@@ -363,7 +418,8 @@ export class Player {
             }
 
             // Define a consistent Y-offset for all player models
-            const MODEL_Y_OFFSET = -1.0;
+            // Fine-tuning offset to -0.85 to prevent both sinking and hovering
+            const MODEL_Y_OFFSET = -0.85;
 
             // Update mesh position based on physics
             try {
@@ -379,7 +435,15 @@ export class Player {
                         // Make sure p is valid and has x, y, z methods
                         if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
                             // Update mesh position with the offset for the model
+                            // This offset ensures the visual model stays aligned with the physics body
                             this.mesh.position.set(p.x(), p.y() + MODEL_Y_OFFSET, p.z());
+
+                            // Debug visualization of physics body components (uncomment for debugging)
+                            /*
+                            if (window.game && window.game.debug && window.game.debug.showPhysics) {
+                                this.visualizePhysicsBody(p.x(), p.y(), p.z());
+                            }
+                            */
                         }
                     }
                 }
@@ -437,9 +501,13 @@ export class Player {
                 throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
             }
 
-            // --- Ground Check Logging --- 
-            this.checkGroundContact();
-            // --- End Ground Check ---
+            // --- Ground Check Throttling ---
+            const now = Date.now();
+            if (now - this._lastGroundCheck >= this._groundCheckInterval) {
+                this._lastGroundCheck = now;
+                this.checkGroundContact();
+            }
+            // --- End Ground Check Throttling ---
 
             // --- NEW: Debounced Animation Logic --- 
             try {
@@ -883,34 +951,85 @@ export class Player {
                 return;
             }
 
-            // Cast a ray downward from the player's position to check for ground
-            const rayStart = new Ammo.btVector3(origin.x(), origin.y() - 0.9, origin.z());
-            // Cast ray further down to ensure we detect ground
-            const rayEnd = new Ammo.btVector3(origin.x(), origin.y() - 3.0, origin.z());
+            // For compound shape, we'll cast rays from multiple foot positions
+            // including some spread to ensure more reliable detection
+            const groundHits = [false, false, false, false];
+            const rayLength = 2.0; // Shorter ray length for more precise detection
 
-            const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
+            // Add small buffer to prevent flickering between ground states
+            const groundBuffer = 0.1; // Small buffer above ground
 
-            if (!this.physicsWorld || typeof this.physicsWorld.rayTest !== 'function') {
-                error('Invalid physicsWorld or missing rayTest method');
-                Ammo.destroy(rayStart);
+            // Define ray starting positions - now with 4 points around the feet
+            // Two centered rays and two spread out rays
+            const footY = origin.y() - 0.7;  // Consistent Y position for all rays
+            const rayStarts = [
+                new Ammo.btVector3(origin.x() - 0.2, footY, origin.z()),         // Left foot
+                new Ammo.btVector3(origin.x() + 0.2, footY, origin.z()),         // Right foot
+                new Ammo.btVector3(origin.x(), footY, origin.z() - 0.2),         // Forward foot
+                new Ammo.btVector3(origin.x(), footY, origin.z() + 0.2)          // Back foot
+            ];
+
+            // Cast rays downward from each position
+            for (let i = 0; i < rayStarts.length; i++) {
+                const rayStart = rayStarts[i];
+                const rayEnd = new Ammo.btVector3(
+                    rayStart.x(),
+                    rayStart.y() - rayLength,
+                    rayStart.z()
+                );
+
+                const rayCallback = new Ammo.ClosestRayResultCallback(rayStart, rayEnd);
+
+                if (!this.physicsWorld || typeof this.physicsWorld.rayTest !== 'function') {
+                    error('Invalid physicsWorld or missing rayTest method');
+                    Ammo.destroy(rayStart);
+                    Ammo.destroy(rayEnd);
+                    Ammo.destroy(rayCallback);
+                    continue;
+                }
+
+                this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
+
+                // Check for hit and get distance if hit
+                if (rayCallback.hasHit()) {
+                    groundHits[i] = true;
+
+                    // Optionally, we could check hit distance here for more precise grounding
+                    // const hitPointWorld = rayCallback.get_m_hitPointWorld();
+                    // const hitDistance = rayStart.y() - hitPointWorld.y();
+                    // groundHits[i] = hitDistance <= (rayLength + groundBuffer);
+                }
+
+                // Clean up Ammo.js objects to prevent memory leaks
                 Ammo.destroy(rayEnd);
                 Ammo.destroy(rayCallback);
-                return;
             }
 
-            this.physicsWorld.rayTest(rayStart, rayEnd, rayCallback);
-
-            // If the ray hit something, the player is on the ground
+            // Previous ground state
             const wasOnGround = this.canJump;
-            this.canJump = rayCallback.hasHit();
+
+            // Prevent rapid flipping between grounded/not grounded states 
+            // by using different thresholds for entering vs leaving grounded state
+            if (wasOnGround) {
+                // Already on ground - require ALL rays to miss to leave ground state
+                // This creates hysteresis to prevent jitter
+                this.canJump = groundHits.some(hit => hit);
+            } else {
+                // Not on ground - require at least 2 rays to hit to enter ground state
+                // This prevents entering ground state too easily
+                const hitCount = groundHits.filter(hit => hit).length;
+                this.canJump = hitCount >= 2;
+            }
+
+            // Clean up remaining Ammo.js objects
+            rayStarts.forEach(rayStart => Ammo.destroy(rayStart));
 
             // --- Ground Check Logging ---
-            const hitResult = rayCallback.hasHit();
-            logMsg += ` | RayHit: ${hitResult}`;
+            logMsg += ` | RayHit: [${groundHits.join(', ')}]`;
             // --- End Ground Check --- 
 
-            // Additional check: if very close to y=0 (ground level), force canJump to true
-            // This helps in case the ray test somehow misses
+            // Additional check: if very close to ground level, force canJump to true
+            // This helps in case the ray tests somehow miss
             if (!this.canJump && origin.y() < 1.5) {
                 this.canJump = true;
                 // --- Ground Check Logging ---
@@ -939,16 +1058,16 @@ export class Player {
             // --- More Robust isJumping Reset ---
             // If we are on the ground now, ensure isJumping is false.
             if (this.canJump && this.isJumping) {
-                log('[GroundCheck] Confirmed on ground, ensuring isJumping is false.');
-                this.isJumping = false;
-                logMsg += ` | Reset isJumping`;
+                // Add debounce to avoid immediately disabling jump state
+                const jumpDuration = Date.now() - (this._lastJumpTime || 0);
+                if (jumpDuration > 300) {  // Minimum jump duration, prevents immediate resetting
+                    log('[GroundCheck] Confirmed on ground, ensuring isJumping is false.');
+                    this.isJumping = false;
+                    logMsg += ` | Reset isJumping after ${jumpDuration}ms`;
+                }
             }
             // --- End Robust Reset ---
 
-            // Clean up Ammo.js objects to prevent memory leaks
-            Ammo.destroy(rayStart);
-            Ammo.destroy(rayEnd);
-            Ammo.destroy(rayCallback);
         } catch (err) {
             logMsg += ` | ERROR: ${err.message}`;
             error('Error in checkGroundContact:', err);
@@ -1053,17 +1172,12 @@ export class Player {
                 // Set jump state
                 this.isJumping = true;
                 this.canJump = false; // Can't jump again until grounded
+                this._lastJumpTime = Date.now(); // Track when this jump started
 
                 // Play jump animation
                 this.playAnimation('jump');
 
                 console.log(`[Player ${this.playerId}] Jump initiated. isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
-
-                // Optional: Reset jump state after a delay (if animation doesn't handle it)
-                // The checkGroundContact method should handle resetting isJumping when grounded
-                // setTimeout(() => {
-                //     this.isJumping = false;
-                // }, 1000); // Adjust timing based on animation
             } else {
                 console.log(`[Player ${this.playerId}] Jump prevented. canJump: ${this.canJump}, isJumping: ${this.isJumping}`);
             }
@@ -1074,4 +1188,53 @@ export class Player {
         }
     }
     // *** End of added jump method ***
+
+    // Optional helper method to visualize physics body for debugging
+    visualizePhysicsBody(x, y, z) {
+        // This is just a placeholder for future debugging visualization
+        // You can implement this method to create/update helper objects
+        // that show the locations of the physics body components
+        if (!this._debugHelpers) {
+            // Create debug visualization objects for each physics component
+            this._debugHelpers = {
+                torso: new THREE.Mesh(
+                    new THREE.CapsuleGeometry(0.4, 0.8),
+                    new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
+                ),
+                head: new THREE.Mesh(
+                    new THREE.SphereGeometry(0.25),
+                    new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
+                ),
+                leftLeg: new THREE.Mesh(
+                    new THREE.CapsuleGeometry(0.15, 0.8),
+                    new THREE.MeshBasicMaterial({ color: 0x0000ff, wireframe: true })
+                ),
+                rightLeg: new THREE.Mesh(
+                    new THREE.CapsuleGeometry(0.15, 0.8),
+                    new THREE.MeshBasicMaterial({ color: 0x0000ff, wireframe: true })
+                ),
+                leftArm: new THREE.Mesh(
+                    new THREE.CapsuleGeometry(0.12, 0.6),
+                    new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true })
+                ),
+                rightArm: new THREE.Mesh(
+                    new THREE.CapsuleGeometry(0.12, 0.6),
+                    new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true })
+                )
+            };
+
+            // Add to scene
+            Object.values(this._debugHelpers).forEach(helper => {
+                this.scene.add(helper);
+            });
+        }
+
+        // Update positions of debug helpers
+        this._debugHelpers.torso.position.set(x, y + 0.4, z);
+        this._debugHelpers.head.position.set(x, y + 1.0, z);
+        this._debugHelpers.leftLeg.position.set(x - 0.2, y - 0.3, z);
+        this._debugHelpers.rightLeg.position.set(x + 0.2, y - 0.3, z);
+        this._debugHelpers.leftArm.position.set(x - 0.4, y + 0.4, z);
+        this._debugHelpers.rightArm.position.set(x + 0.4, y + 0.4, z);
+    }
 }

@@ -15,7 +15,7 @@ export class PredictionSystem {
         this.lastProcessedInput = -1;
 
         // Thresholds for position reconciliation
-        this.positionReconciliationThreshold = 0.2; // Further increased threshold
+        this.positionReconciliationThreshold = 0.3; // Increased from 0.2 to reduce frequent corrections
         this.velocityDampingThreshold = 0.1;
 
         // State tracking
@@ -27,12 +27,12 @@ export class PredictionSystem {
         this.jumpStartTime = 0;
 
         // Interpolation factors for smoother corrections
-        this.correctionFactorGround = 0.15; // Reverted to original baseline
-        this.correctionFactorAir = 0.1; // Reverted to original baseline
+        this.correctionFactorGround = 0.1; // Reduced from 0.15 for smoother transitions
+        this.correctionFactorAir = 0.05; // Reduced from 0.1 for smoother transitions
 
         // Velocity interpolation factor for smoother acceleration/deceleration
-        this.velocityInterpolationFactor = 0.2; // Adjust for desired responsiveness vs smoothness
-        this.stopDampingFactor = 0.9; // How quickly the player stops (closer to 1 = slower stop)
+        this.velocityInterpolationFactor = 0.4; // Increased from 0.2 for smoother movement
+        this.stopDampingFactor = 0.8; // Adjusted from 0.9 to stop slightly faster
 
         // Movement constants
         this.MOVE_SPEED = 15;
