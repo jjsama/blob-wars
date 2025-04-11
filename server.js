@@ -228,16 +228,15 @@ const server = Bun.serve({
                 }
             }
 
-            // Handle JavaScript files (Look ONLY in dist)
+            // Handle JavaScript files
             if (url.pathname.endsWith('.js')) {
                 console.log(`Serving JS file: ${url.pathname}`);
                 try {
-                    // Path relative to server.js
-                    let file = Bun.file(`dist${url.pathname}`);
-                    let exists = await file.exists();
+                    const file = Bun.file(`dist${url.pathname}`);
+                    const exists = await file.exists();
 
                     if (!exists) {
-                        console.error(`JS file ${url.pathname} not found in dist directory`); // Log relative path
+                        console.error(`JS file not found: dist${url.pathname}`);
                         return new Response("File not found", {
                             status: 404,
                             headers: corsHeaders
@@ -251,12 +250,57 @@ const server = Bun.serve({
                         }
                     });
                 } catch (e) {
-                    console.error(`Error serving JS file ${url.pathname}:`, e);
+                    console.error(`Error serving JS file:`, e);
                     return new Response("Error serving file", {
                         status: 500,
                         headers: corsHeaders
                     });
                 }
+            }
+
+            // Handle CSS files
+            if (url.pathname.endsWith('.css')) {
+                console.log(`Serving CSS file: ${url.pathname}`);
+                try {
+                    const file = Bun.file(`dist${url.pathname}`);
+                    const exists = await file.exists();
+
+                    if (!exists) {
+                        console.error(`CSS file not found: dist${url.pathname}`);
+                        return new Response("File not found", {
+                            status: 404,
+                            headers: corsHeaders
+                        });
+                    }
+
+                    return new Response(file, {
+                        headers: {
+                            "Content-Type": "text/css",
+                            ...corsHeaders
+                        }
+                    });
+                } catch (e) {
+                    console.error(`Error serving CSS file:`, e);
+                    return new Response("Error serving file", {
+                        status: 500,
+                        headers: corsHeaders
+                    });
+                }
+            }
+
+            // Handle all other static files from dist directory
+            try {
+                const file = Bun.file(`dist${url.pathname}`);
+                const exists = await file.exists();
+
+                if (exists) {
+                    console.log(`Serving static file: ${url.pathname}`);
+                    return new Response(file, {
+                        headers: corsHeaders
+                    });
+                }
+            } catch (e) {
+                console.error(`Error checking/serving static file:`, e);
             }
 
             // Handle WASM files (Look in dist)
