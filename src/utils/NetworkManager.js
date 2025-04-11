@@ -554,8 +554,14 @@ Previous Attempts: ${this.reconnectAttempts}
      * @private
      */
     _handleMessage(data) {
+        // *** Log Raw Data ***
+        console.log('[NetworkManager Raw Msg]:', data);
+
         try {
             const message = JSON.parse(data);
+
+            // *** Log Parsed Message Immediately ***
+            console.log('[NetworkManager Parsed Msg]:', message);
 
             if (!message.type) {
                 console.error('Received message without type:', message);
@@ -577,11 +583,34 @@ Previous Attempts: ${this.reconnectAttempts}
                     break;
 
                 case 'GAME_STATE':
-                    // Process full game state update
-                    if (message.data) {
-                        // Pass the full message including type for context
-                        this._emitEvent('gameStateUpdate', message);
+                    // *** Added Validation for GAME_STATE data ***
+                    console.log('[NetworkManager Raw GAME_STATE]:', data); // Log raw data for GAME_STATE
+
+                    // *** Re-parse specifically for GAME_STATE processing ***
+                    let gameStatePayload;
+                    try {
+                        gameStatePayload = JSON.parse(data);
+                        console.log('[NetworkManager Reparsed GAME_STATE]:', gameStatePayload);
+                    } catch (parseError) {
+                        console.error('🔴 Failed to re-parse GAME_STATE message:', parseError, data);
+                        return; // Exit if re-parsing fails
                     }
+                    // *** End Re-parse ***
+
+                    // Basic check: Does data exist and is it an object?
+                    if (!gameStatePayload.data || typeof gameStatePayload.data !== 'object') {
+                        console.error('🔴 Received invalid GAME_STATE format (after re-parse):', gameStatePayload);
+                        return; // Ignore invalid message
+                    }
+                    // Check for players property (if applicable)
+                    if (!gameStatePayload.data.players || typeof gameStatePayload.data.players !== 'object') {
+                        console.error('🔴 Received invalid game state (players missing/not object in re-parse):', gameStatePayload);
+                        return; // Ignore invalid message
+                    }
+                    // *** End Added Validation ***
+
+                    // Pass the RE-PARSED payload's DATA object to the event emitter
+                    this._emitEvent('gameStateUpdate', gameStatePayload.data);
                     break;
 
                 case 'GAME_STATE_DELTA':

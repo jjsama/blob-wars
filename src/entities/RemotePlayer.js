@@ -53,6 +53,20 @@ export class RemotePlayer extends THREE.Object3D {
         this.playerColor = color;
         this.needsSceneAdd = false; // Flag for delayed addition
 
+        // Ragdoll state
+        this.isRagdolled = false;
+        this.ragdollStartTime = 0;
+        this.ragdollBones = null;
+        this.originalBonePositions = {};
+        this.originalBoneRotations = {};
+
+        // Random ragdoll direction for death animation
+        this.ragdollDirection = new THREE.Vector3(
+            Math.random() * 2 - 1,  // -1 to 1
+            Math.random() * 0.5,    // 0 to 0.5 (slight upward bias)
+            Math.random() * 2 - 1   // -1 to 1
+        ).normalize();
+
         // Add to scene ONLY if the scene exists
         if (this.scene && this.scene.scene) {
             this.scene.scene.add(this);
@@ -103,9 +117,6 @@ export class RemotePlayer extends THREE.Object3D {
         // const dz = this.targetPosition.z - this.lastPosition.z;
         // const distanceSquared = dx * dx + dy * dy + dz * dz;
         //
-        // const wasMoving = this.isMoving;
-        // this.isMoving = distanceSquared > this.movementThreshold;
-        //
         // // Update animation based on state flags (isJumping, isAttacking, etc.) - REMOVED
         // // This is handled in updateRemotePlayerState now, relying on server state.
         // // if (this.isMoving !== wasMoving && !this.isAttacking && !this.isJumping && !this.isDead) {
@@ -120,6 +131,8 @@ export class RemotePlayer extends THREE.Object3D {
             const loader = new GLTFLoader();
             const modelPath = ASSET_PATHS.models.player;
 
+            console.log(`[RemotePlayer ${this.remoteId}] Loading model from: ${modelPath}`);
+
             loader.load(
                 modelPath,
                 (gltf) => {
@@ -131,6 +144,16 @@ export class RemotePlayer extends THREE.Object3D {
 
                     // Reset model position relative to parent with proper Y offset
                     model.position.set(0, 0, 0); // Remove the -2 offset, let the parent handle position
+
+                    // DEBUG: Add a visible marker to verify position
+                    const debugMarker = new THREE.Mesh(
+                        new THREE.SphereGeometry(0.1, 8, 8),
+                        new THREE.MeshBasicMaterial({ color: 0xff0000 })
+                    );
+                    debugMarker.position.set(0, 1, 0); // Position above the player's head
+                    model.add(debugMarker);
+
+                    console.log(`[RemotePlayer ${this.remoteId}] Model loaded. Current position: (${this.position.x.toFixed(2)}, ${this.position.y.toFixed(2)}, ${this.position.z.toFixed(2)})`);
 
                     // Rotate to face forward
                     model.rotation.set(0, Math.PI, 0);
@@ -175,6 +198,13 @@ export class RemotePlayer extends THREE.Object3D {
                         this.setPosition(latestPosition);
                         this.positionQueue = []; // Clear the queue
                     }
+
+                    // Force position update to ensure visibility
+                    this.position.set(
+                        this.position.x,
+                        Math.max(0.1, this.position.y), // Ensure at least slightly above ground
+                        this.position.z
+                    );
 
                     log(`Remote player ${this.remoteId} model loaded and positioned successfully`); // Log success
                 },
@@ -286,6 +316,73 @@ URL attempted: ${modelPath}
             // For now, leave it, the first state update should correct it.
             this.currentAnimation = null; // Indicate no animation is set
             this.currentAction = null;
+        }
+
+        // Find and map bones for ragdoll simulation
+        this.mapBonesForRagdoll();
+    }
+
+    // New method to map bones for ragdoll simulation
+    mapBonesForRagdoll() {
+        try {
+            if (!this.model) {
+                console.warn(`[RemotePlayer ${this.remoteId}] Cannot map bones: Model not loaded yet`);
+                return;
+            }
+
+            // First, try to find the skeleton
+            let skeleton = null;
+            this.model.traverse(child => {
+                if (child.isSkinnedMesh && child.skeleton) {
+                    skeleton = child.skeleton;
+                }
+            });
+
+            if (!skeleton) {
+                console.warn(`[RemotePlayer ${this.remoteId}] No skeleton found in model`);
+                return;
+            }
+
+            this.skeleton = skeleton;
+
+            // Get all bone names for debugging
+            const boneNames = skeleton.bones.map(bone => bone.name.toLowerCase());
+            console.log(`[RemotePlayer ${this.remoteId}] Available bones:`, boneNames);
+
+            // Define exact bone names based on the actual model (no dots in the names)
+            const exactBoneNames = {
+                torso: 'torso',
+                head: 'head',
+                leftArm: 'armleft',  // Changed from 'arm.left' to 'armleft'
+                rightArm: 'armright', // Changed from 'arm.right' to 'armright'
+                leftLeg: 'legleft',   // Changed from 'leg.left' to 'legleft'
+                rightLeg: 'legright'  // Changed from 'leg.right' to 'legright'
+            };
+
+            // Find bones matching the exact names
+            this.ragdollBones = {};
+
+            for (const [partName, boneName] of Object.entries(exactBoneNames)) {
+                const matchingBone = skeleton.bones.find(bone =>
+                    bone.name.toLowerCase() === boneName.toLowerCase()
+                );
+
+                if (matchingBone) {
+                    this.ragdollBones[partName] = matchingBone;
+
+                    // Store original position and rotation
+                    this.originalBonePositions[partName] = matchingBone.position.clone();
+                    this.originalBoneRotations[partName] = matchingBone.quaternion.clone();
+
+                    console.log(`[RemotePlayer ${this.remoteId}] Mapped ${partName} to bone: ${matchingBone.name}`);
+                } else {
+                    console.warn(`[RemotePlayer ${this.remoteId}] Could not find exact bone match for ${partName} (${boneName})`);
+                }
+            }
+
+            console.log(`[RemotePlayer ${this.remoteId}] Bone mapping complete. Found ${Object.keys(this.ragdollBones).length} bones.`);
+        } catch (err) {
+            console.error(`[RemotePlayer ${this.remoteId}] Error mapping bones:`, err);
         }
     }
 
@@ -416,8 +513,8 @@ URL attempted: ${modelPath}
         }
         // --- End Delayed Scene Add --- 
 
-        // Interpolate rotation
-        if (this.rotationInterpolationFactor < 1 && this.model) {
+        // Interpolate rotation (only if not ragdolled)
+        if (!this.isRagdolled && this.rotationInterpolationFactor < 1 && this.model) {
             this.rotationInterpolationFactor += deltaTime * this.rotationInterpolationSpeed;
             if (this.rotationInterpolationFactor > 1) this.rotationInterpolationFactor = 1;
 
@@ -440,9 +537,193 @@ URL attempted: ${modelPath}
             this.model.rotation.y = fromAngle + diff * this.rotationInterpolationFactor;
         }
 
+        // Update ragdoll animation if active
+        if (this.isRagdolled && this.ragdollBones) {
+            this.updateRagdoll(deltaTime);
+        }
+
         // Update visual elements
-        // this.updateVisualElements(); // This call was causing the error, handle updates within updateHealthBarPosition
-        this.updateHealthBarPosition(); // Call the correct function to update DOM position
+        this.updateHealthBarPosition();
+    }
+
+    // New method for updating ragdoll animation
+    updateRagdoll(deltaTime) {
+        if (!this.ragdollBones || !this.isDead) return;
+
+        // Time since ragdoll started (in seconds)
+        const elapsedTime = (Date.now() - this.ragdollStartTime) / 1000;
+
+        // Calculate a realistic gravity effect
+        const gravity = 9.8; // m/s²
+        // *** ADJUST FALL DISTANCE - Apply gravity more directly ***
+        // const fallDistance = Math.min(10, 0.5 * gravity * elapsedTime * elapsedTime); // s = 0.5 * g * t² with max limit
+        // Calculate fall based on initial velocity and gravity
+        const initialYVelocity = this.ragdollDirection.y * 2.0; // Approx initial vertical speed
+        const fallDistance = -(initialYVelocity * elapsedTime + 0.5 * -gravity * elapsedTime * elapsedTime);
+
+        // Calculate main body position (used as reference for all parts)
+        // Start with a forward momentum then gradually fall down
+        const initialVelocity = 2.0; // Initial forward velocity
+        const forwardDistance = Math.min(2.0, initialVelocity * elapsedTime * 0.5); // Limit forward movement
+
+        // Main body trajectory
+        const bodyX = this.initialPosition.x + this.ragdollDirection.x * forwardDistance;
+        // *** ADJUST BODY Y - Use calculated fallDistance ***
+        // const bodyY = Math.max(0, this.initialPosition.y - fallDistance * 0.8); // Fall with 80% of gravity
+        const bodyY = Math.max(0, this.initialPosition.y - fallDistance); // Apply calculated fall
+        const bodyZ = this.initialPosition.z + this.ragdollDirection.z * forwardDistance;
+
+        // Set the overall player position (affects the whole model)
+        this.position.set(bodyX, bodyY, bodyZ);
+
+        // Apply calculated transformations to individual bones
+        Object.entries(this.ragdollBones).forEach(([partName, bone]) => {
+            // Skip if bone is missing
+            if (!bone) return;
+
+            // Get initial position
+            const initialPos = this.originalBonePositions[partName] || new THREE.Vector3();
+
+            // Different dynamics for each body part
+            let rotationAmount = 0;
+            let posOffset = new THREE.Vector3();
+
+            switch (partName) {
+                case 'head':
+                    // Head falls forward and down
+                    rotationAmount = Math.min(Math.PI / 2, elapsedTime * 2); // Gradually tilt down up to 90 degrees
+                    posOffset.set(
+                        0,
+                        // Head moves down slightly as body collapses
+                        -Math.min(0.1, elapsedTime * 0.05),
+                        // Head moves forward as it tilts down
+                        -Math.min(0.1, elapsedTime * 0.05)
+                    );
+                    break;
+
+                case 'torso':
+                    // Torso gradually tilts forward
+                    rotationAmount = Math.min(Math.PI / 3, elapsedTime * 1.5); // Up to 60 degrees
+                    posOffset.set(0, 0, 0); // Torso is the reference point
+                    break;
+
+                case 'leftArm':
+                case 'rightArm':
+                    // Arms swing outward and forward with momentum
+                    const isLeft = partName === 'leftArm';
+                    const armPhase = isLeft ? 0 : Math.PI; // Opposite phases for right/left
+
+                    // Initial swing direction
+                    const swingDirection = isLeft ? 1 : -1;
+
+                    // Arms first swing outward then gradually fall down
+                    // First 0.3 seconds: swing out, then gradually fall
+                    const swingAmount = elapsedTime < 0.3 ?
+                        swingDirection * elapsedTime * 3 : // Swing out
+                        swingDirection * 0.9 - (elapsedTime - 0.3) * 1.5; // Then fall down
+
+                    rotationAmount = Math.min(Math.PI / 2, Math.max(-Math.PI / 2, swingAmount));
+
+                    // Arms also move outward from body slightly
+                    posOffset.set(
+                        swingDirection * Math.min(0.1, elapsedTime * 0.2), // Move slightly outward
+                        -Math.min(0.1, elapsedTime * 0.1), // Move down slightly
+                        0
+                    );
+                    break;
+
+                case 'leftLeg':
+                case 'rightLeg':
+                    // Legs collapse under the body
+                    const legIsLeft = partName === 'leftLeg';
+                    const legDirection = legIsLeft ? 1 : -1;
+
+                    // Legs bend at the knees
+                    rotationAmount = Math.min(Math.PI / 3, elapsedTime * 1.0); // Up to 60 degrees
+
+                    // Legs spread slightly and collapse
+                    posOffset.set(
+                        legDirection * Math.min(0.05, elapsedTime * 0.1), // Spread slightly
+                        -Math.min(0.15, elapsedTime * 0.3), // Collapse downward
+                        0
+                    );
+                    break;
+            }
+
+            // Apply position offsets (relative to original bone positions)
+            bone.position.copy(initialPos).add(posOffset);
+
+            // Create a rotation based on the calculated amount
+            // Different rotation axes for different parts
+            let rotationAxis = new THREE.Vector3(1, 0, 0); // Default: rotate around X (forward tilt)
+
+            // Customize rotation axis by part
+            if (partName === 'leftArm' || partName === 'rightArm') {
+                // Arms rotate around Z and Y
+                rotationAxis.set(0, 1, 1).normalize();
+            } else if (partName === 'leftLeg' || partName === 'rightLeg') {
+                // Legs rotate around X and slight Z
+                rotationAxis.set(1, 0, 0.2).normalize();
+            }
+
+            // Apply rotation
+            const rotationQuat = new THREE.Quaternion().setFromAxisAngle(
+                rotationAxis,
+                rotationAmount
+            );
+
+            // Get original rotation
+            const origRotation = this.originalBoneRotations[partName] || new THREE.Quaternion();
+
+            // Combine with original rotation
+            bone.quaternion.copy(origRotation).multiply(rotationQuat);
+
+            // Add subtle random motion for realism (reduced from previous version)
+            if (elapsedTime > 0.5) { // Only add after initial collapse
+                const randomFactor = 0.02; // Very subtle
+                bone.position.x += (Math.random() - 0.5) * randomFactor;
+                bone.position.y += (Math.random() - 0.5) * randomFactor;
+                bone.position.z += (Math.random() - 0.5) * randomFactor;
+            }
+        });
+
+        // *** ADD LOGIC TO ROTATE TORSO HORIZONTAL ***
+        // *** MAKE FASTER ***
+        const rotationDuration = 1.0; // Time in seconds to reach horizontal (was 1.5)
+        const torsoBone = this.ragdollBones['torso'];
+
+        if (torsoBone && elapsedTime < rotationDuration) {
+            const targetQuat = new THREE.Quaternion();
+            // Target rotation: lying flat on XZ plane
+            targetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+            const currentQuat = torsoBone.quaternion.clone();
+            const origRotation = this.originalBoneRotations['torso'] || new THREE.Quaternion();
+            // const combinedInitialQuat = origRotation.clone(); // Not needed for this approach
+
+            // Slerp towards the target rotation from its original bone rotation.
+            let t = Math.min(1, elapsedTime / rotationDuration);
+            // *** FADE OUT INFLUENCE towards the end ***
+            const fadeStart = rotationDuration * 0.7;
+            if (elapsedTime > fadeStart) {
+                t *= 1.0 - (elapsedTime - fadeStart) / (rotationDuration - fadeStart);
+            }
+
+            const finalQuat = origRotation.clone().slerp(targetQuat, t);
+
+            // Apply the interpolated rotation
+            torsoBone.quaternion.copy(finalQuat);
+        } else if (torsoBone && elapsedTime >= rotationDuration && !this._ragdollSettled) {
+            // Ensure it stays flat after the duration
+            const targetQuat = new THREE.Quaternion();
+            targetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+            const origRotation = this.originalBoneRotations['torso'] || new THREE.Quaternion();
+            // Combine original with flat rotation - Make sure to apply relative to original
+            const finalFlatQuat = origRotation.clone().multiply(targetQuat);
+            torsoBone.quaternion.copy(finalFlatQuat);
+            this._ragdollSettled = true; // Mark as settled
+        }
+        // *** END HORIZONTAL ROTATION LOGIC ***
     }
 
     updateVisualElements() {
@@ -577,15 +858,90 @@ URL attempted: ${modelPath}
 
         console.log(`Remote player ${this.remoteId} took ${amount} damage, health: ${this.health}`);
 
-        // Update health bar
+        // Update health bar without repositioning
         this.updateHealthBar();
 
         // Add damage indicator
         this.showDamageIndicator();
 
+        // Apply a subtle visual shake effect instead of physical movement
+        this.applyDamageShake(amount);
+
+        // Kill player if health depleted
         if (this.health <= 0 && !this.isDead) {
             this.die();
         }
+    }
+
+    // Add a visual shake effect instead of physical jerking
+    applyDamageShake(amount) {
+        // Skip if dead or not yet loaded
+        if (this.isDead || !this.modelLoaded || !this.model) return;
+
+        // Scale shake intensity based on damage amount
+        const intensity = Math.min(0.05, amount * 0.005);
+
+        // Store original model position for reference
+        const originalPos = this.model.position.clone();
+
+        // Apply shake effect using animation technique rather than physics
+        let duration = 0;
+        const maxDuration = 0.3; // Seconds
+        const shakeFPS = 60;
+        const shakeDelta = 1 / shakeFPS;
+
+        // Use requestAnimationFrame for smoother animation
+        const shakeAnimation = () => {
+            if (duration >= maxDuration || !this.model || this.isDead) {
+                // Reset to original position when done
+                if (this.model) {
+                    this.model.position.copy(originalPos);
+                }
+                return;
+            }
+
+            // Create random shake offset
+            const offsetX = (Math.random() - 0.5) * intensity;
+            const offsetY = (Math.random() - 0.5) * intensity;
+            const offsetZ = (Math.random() - 0.5) * intensity;
+
+            // Apply shake offset
+            this.model.position.set(
+                originalPos.x + offsetX,
+                originalPos.y + offsetY,
+                originalPos.z + offsetZ
+            );
+
+            // Increment time
+            duration += shakeDelta;
+
+            // Continue animation
+            requestAnimationFrame(shakeAnimation);
+        };
+
+        // Start shake animation
+        shakeAnimation();
+    }
+
+    // Update updateHealthBar method to avoid repositioning during damage
+    updateHealthBar() {
+        if (!this.healthBar) return;
+
+        // Update health bar width
+        const healthPercent = Math.max(0, Math.min(100, this.health));
+        this.healthBar.fill.style.width = `${healthPercent}%`;
+
+        // Change color based on health
+        if (healthPercent > 70) {
+            this.healthBar.fill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
+        } else if (healthPercent > 30) {
+            this.healthBar.fill.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
+        } else {
+            this.healthBar.fill.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+        }
+
+        // Only update the position when not taking damage
+        // Position updates are handled by updateHealthBarPosition in the main update loop
     }
 
     die() {
@@ -593,13 +949,95 @@ URL attempted: ${modelPath}
 
         this.isDead = true;
         console.log(`Remote player ${this.remoteId} died`);
-        console.log(`[RemotePlayer ${this.remoteId}] die() called. isDead set to true.`);
+
+        // *** Store current position BEFORE activating ragdoll ***
+        this.initialPosition.copy(this.position);
+
+        // Start ragdoll animation
+        this.activateRagdoll();
+
+        console.log(`[RemotePlayer ${this.remoteId}] die() called. isDead set to true, ragdoll activated.`);
+    }
+
+    // Update activateRagdoll to have more realistic force direction
+    activateRagdoll() {
+        // Stop any current animation
+        if (this.mixer) {
+            this.mixer.stopAllAction();
+        }
+
+        // Set ragdoll state
+        this.isRagdolled = true;
+        this.ragdollStartTime = Date.now();
+
+        // Generate a momentum direction based on more realistic physics
+        // Getting shot typically causes forward/backward momentum
+
+        // Default to forward fall (away from camera)
+        let dirX = 0;
+        let dirY = 0.1; // Slight upward component for initial momentum
+        let dirZ = 1.0;  // Forward momentum
+
+        // If we have a model and camera, we can do a more realistic direction
+        if (this.model && window.game && window.game.scene && window.game.scene.camera) {
+            // Get direction from camera to player (approximates shot direction)
+            const cameraPos = window.game.scene.camera.position;
+            const playerPos = this.position;
+
+            // Calculate direction vector from camera to player
+            dirX = playerPos.x - cameraPos.x;
+            dirZ = playerPos.z - cameraPos.z;
+
+            // Normalize the horizontal direction
+            const length = Math.sqrt(dirX * dirX + dirZ * dirZ);
+            if (length > 0) {
+                dirX /= length;
+                dirZ /= length;
+            }
+
+            // Add small random variation for realism
+            dirX += (Math.random() - 0.5) * 0.3;
+            dirZ += (Math.random() - 0.5) * 0.3;
+        }
+
+        this.ragdollDirection = new THREE.Vector3(dirX, dirY, dirZ).normalize();
+
+        // Scale by a consistent value for consistent death animation
+        const forceMagnitude = 1.0;
+        this.ragdollDirection.multiplyScalar(forceMagnitude);
+
+        console.log(`[RemotePlayer ${this.remoteId}] Ragdoll activated with realistic direction:`,
+            this.ragdollDirection.x.toFixed(2),
+            this.ragdollDirection.y.toFixed(2),
+            this.ragdollDirection.z.toFixed(2)
+        );
     }
 
     respawn(position) {
         console.log(`[RemotePlayer ${this.remoteId}] respawn() called. Position: ${JSON.stringify(position)}`);
         this.isDead = false;
         this.health = 100;
+
+        // Reset ragdoll state
+        this.isRagdolled = false;
+        this._ragdollSettled = false; // Reset settled flag
+
+        // Reset all bones to original positions and rotations
+        if (this.ragdollBones) {
+            Object.entries(this.ragdollBones).forEach(([partName, bone]) => {
+                if (bone) {
+                    // Reset position
+                    if (this.originalBonePositions[partName]) {
+                        bone.position.copy(this.originalBonePositions[partName]);
+                    }
+
+                    // Reset rotation
+                    if (this.originalBoneRotations[partName]) {
+                        bone.quaternion.copy(this.originalBoneRotations[partName]);
+                    }
+                }
+            });
+        }
 
         // Update position if provided
         if (position) {
@@ -697,26 +1135,6 @@ URL attempted: ${modelPath}
 
         // Initialize health bar with current health
         this.updateHealthBar();
-    }
-
-    updateHealthBar() {
-        if (!this.healthBar) return;
-
-        // Update health bar width
-        const healthPercent = Math.max(0, Math.min(100, this.health));
-        this.healthBar.fill.style.width = `${healthPercent}%`;
-
-        // Change color based on health
-        if (healthPercent > 70) {
-            this.healthBar.fill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
-        } else if (healthPercent > 30) {
-            this.healthBar.fill.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
-        } else {
-            this.healthBar.fill.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
-        }
-
-        // Position the health bar above the name tag
-        this.updateHealthBarPosition();
     }
 
     updateHealthBarPosition() {

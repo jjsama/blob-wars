@@ -373,7 +373,6 @@ const gameState = {
     players: {}, // Map of player IDs to player objects
     connections: {}, // Map of player IDs to WebSocket connections
     projectiles: [], // Array of active projectiles
-    enemies: [], // Array of enemies
     lastUpdateTime: Date.now(),
     lastStatsTime: Date.now(),
     lastCleanupTime: Date.now(), // Initialize lastCleanupTime
@@ -410,6 +409,17 @@ function handleClientMessage(ws, data) {
             try {
                 // Update player position, rotation, etc. with validation
                 if (data.position && typeof data.position === 'object') {
+                    // *** ADD VALIDATION FOR INCOMING POSITION DATA ***
+                    if (typeof data.position.x !== 'number' || isNaN(data.position.x) ||
+                        typeof data.position.y !== 'number' || isNaN(data.position.y) ||
+                        typeof data.position.z !== 'number' || isNaN(data.position.z)) {
+                        console.error(`[handleClientMessage] Received invalid PLAYER_UPDATE position from ${playerId}:`, data.position);
+                        // Do not process this invalid position update
+                        // Optionally, you could force a disconnect or other action here
+                        break; // Skip the rest of the PLAYER_UPDATE processing for this message
+                    }
+                    // *** END VALIDATION ***
+
                     // Ensure position has valid properties
                     const position = {
                         x: typeof data.position.x === 'number' ? data.position.x : player.position.x,
@@ -759,17 +769,40 @@ function broadcastGameState() {
         // --- Prepare Current Sanitized State (Needed for both full and delta) ---
         const currentPlayersState = {};
         for (const playerId in gameState.players) {
-            const player = gameState.players[playerId];
+            const player = gameState.players[playerId]; // Get authoritative state
+            // *** Log the authoritative player state immediately after retrieval ***
+            if (Math.random() < 0.02) { // Log occasionally
+                console.log(`[Broadcast Retrieve] Raw player ${playerId} from gameState:`, JSON.stringify(player));
+                if (!player || Object.keys(player).length < 3) { // Check if null/undefined or sparse
+                    console.warn(`[!!! Broadcast Retrieve Warning] Raw player ${playerId} object is null or sparse:`, JSON.stringify(player));
+                }
+            }
+            // *** END Log ***
+
             if (player && player.connected) { // Only consider connected players
+                // *** START ADDED VALIDATION ***
+                const isValidPos = player.position &&
+                    typeof player.position.x === 'number' && !isNaN(player.position.x) &&
+                    typeof player.position.y === 'number' && !isNaN(player.position.y) &&
+                    typeof player.position.z === 'number' && !isNaN(player.position.z);
+
+                if (!isValidPos) {
+                    console.error(`[broadcastGameState] Invalid position detected for player ${playerId}:`, player.position, `- Resetting to default.`);
+                    // Optionally reset the authoritative position if this shouldn't happen
+                    // player.position = { x: 0, y: 5, z: 0 }; 
+                }
+                // *** END ADDED VALIDATION ***
+
                 // Basic validation/sanitization
+                // *** Create a NEW PLAIN object for serialization ***
                 currentPlayersState[playerId] = {
-                    id: playerId,
-                    position: player.position || { x: 0, y: 5, z: 0 },
-                    rotation: player.rotation || { x: 0, y: 0, z: 0 },
+                    id: player.id, // Ensure ID is copied
+                    position: isValidPos ? { ...player.position } : { x: 0, y: 5, z: 0 }, // Copy position too
+                    rotation: player.rotation ? { ...player.rotation } : { x: 0, y: 0, z: 0 }, // Copy rotation
                     health: typeof player.health === 'number' ? player.health : 100,
                     isDead: Boolean(player.isDead),
                     isAttacking: Boolean(player.isAttacking),
-                    isJumping: Boolean(player.isJumping), // *** Include isJumping flag ***
+                    isJumping: Boolean(player.isJumping),
                     animation: player.animation || 'idle',
                     lastProcessedInput: player.lastProcessedInput || 0
                 };
@@ -788,7 +821,6 @@ function broadcastGameState() {
                 data: {
                     players: currentPlayersState,
                     // projectiles: currentProjectilesState, // Add later
-                    enemies: gameState.enemies, // Send enemies always for now
                     timestamp: Date.now()
                 }
             };
@@ -853,15 +885,48 @@ function broadcastGameState() {
             }
         }
 
-        // --- Send Payload --- 
+        // --- Send Payload ---
         // Ensure payload has a type before attempting to stringify/send
         if (!payloadObject.type) {
             // console.log('[Broadcast] No payload type determined, skipping send.');
             return;
         }
 
+        // *** ADD CHECK FOR EMPTY GAME_STATE DATA ***
+        if (payloadObject.type === 'GAME_STATE' &&
+            (!payloadObject.data ||
+                (!payloadObject.data.players || Object.keys(payloadObject.data.players).length === 0)
+                // We only care if players is empty for this specific error
+            )) {
+            console.warn('[Broadcast] Skipping send for GAME_STATE with effectively empty data.');
+            // Update lastBroadcastState even if we skip sending, to prevent infinite loops of trying to send empty state
+            gameState.lastBroadcastState = {
+                players: JSON.parse(JSON.stringify(currentPlayersState))
+                // projectiles: JSON.parse(JSON.stringify(currentProjectilesState)) // Add later
+            };
+            return;
+        }
+        // *** END CHECK ***
+
+        // *** Enhanced Logging for GAME_STATE ***
+        if (payloadObject.type === 'GAME_STATE') {
+            console.log('[Broadcast Detail - GAME_STATE Data]:', JSON.stringify(payloadObject.data, null, 2));
+            // Also log the individual components being sent
+            console.log(`[Broadcast Detail - GAME_STATE] Players Count: ${Object.keys(payloadObject.data?.players || {}).length}`);
+            // console.log(`[Broadcast Detail - GAME_STATE] Enemies Count: ${payloadObject.data?.enemies?.length || 0}`); // Add if debugging enemies
+        }
+        // *** End Enhanced Logging ***
+
         const payload = JSON.stringify(payloadObject);
         let activeConnections = 0;
+
+        // *** ADD LOGGING BEFORE SEND ***
+        if (Math.random() < 0.02 || payloadObject.type !== 'GAME_STATE_DELTA') { // Log occasionally or for non-delta messages
+            console.log(`[Broadcast Sending] Type: ${payloadObject.type}, Payload Size: ${payload.length}, Player Count: ${Object.keys(currentPlayersState).length}`);
+            // Optionally log the full payload if small or for specific types:
+            // if (payload.length < 500) { console.log(payload); }
+        }
+        // *** END LOGGING ***
 
         for (const playerId in gameState.connections) {
             const ws = gameState.connections[playerId];
@@ -1079,7 +1144,7 @@ function updateGameState() {
         checkProjectilePlayerCollisions();
 
         // Update enemies - basic implementation
-        updateEnemies(deltaTime);
+        // updateEnemies(deltaTime); // REMOVED call
     } catch (err) {
         console.error('Error in updateGameState:', err);
     }
@@ -1216,186 +1281,6 @@ function checkProjectilePlayerCollisions() {
             }
         }
     }
-}
-
-// Basic enemy update function
-function updateEnemies(deltaTime) {
-    // Enemies disabled for multiplayer-only mode
-    return;
-
-    // Previous enemy code commented out
-    /*
-    // Only update enemies if we have at least one player
-    const playerCount = Object.keys(gameState.players).filter(id =>
-        gameState.players[id].connected && !gameState.players[id].isDead
-    ).length;
-
-    if (playerCount === 0) return;
-
-    // Adjust enemy count based on player count (1-2 enemies per player)
-    const desiredEnemyCount = Math.min(10, Math.ceil(playerCount * 1.5));
-
-    // Check if we need to spawn more enemies
-    if (gameState.enemies.length < desiredEnemyCount) {
-        spawnEnemy();
-    }
-
-    // Update each enemy
-    for (let i = 0; i < gameState.enemies.length; i++) {
-        const enemy = gameState.enemies[i];
-
-        // Skip dead enemies
-        if (enemy.isDead) continue;
-
-        // Find closest player to chase
-        let closestPlayer = null;
-        let closestDistance = Infinity;
-
-        for (const playerId in gameState.players) {
-            const player = gameState.players[playerId];
-
-            // Skip dead or disconnected players
-            if (player.isDead || !player.connected) continue;
-
-            // Calculate distance
-            const dx = enemy.position.x - player.position.x;
-            const dz = enemy.position.z - player.position.z;
-            const distanceSquared = dx * dx + dz * dz;
-
-            if (distanceSquared < closestDistance) {
-                closestDistance = distanceSquared;
-                closestPlayer = player;
-            }
-        }
-
-        // If we found a player to chase
-        if (closestPlayer) {
-            // Calculate direction to player
-            const dx = closestPlayer.position.x - enemy.position.x;
-            const dz = closestPlayer.position.z - enemy.position.z;
-            const distance = Math.sqrt(dx * dx + dz * dz);
-
-            // Only move if outside attack range
-            if (distance > 2) {
-                // Normalize direction
-                const dirX = dx / distance;
-                const dirZ = dz / distance;
-
-                // Move toward player (slower movement speed)
-                const moveSpeed = 0.1;
-                enemy.position.x += dirX * moveSpeed;
-                enemy.position.z += dirZ * moveSpeed;
-
-                // Update rotation to face player
-                enemy.rotation.y = Math.atan2(dirX, dirZ);
-            }
-
-            // If close enough, attack
-            else if (Math.random() < 0.02) { // 2% chance per update to attack
-                enemy.isAttacking = true;
-
-                // Reset attack state after animation duration
-                setTimeout(() => {
-                    if (enemy) {
-                        enemy.isAttacking = false;
-                    }
-                }, 800);
-
-                // Deal damage to player
-                if (closestPlayer.health > 0 && !closestPlayer.isDead) {
-                    const damage = 10;
-                    closestPlayer.health = Math.max(0, closestPlayer.health - damage);
-
-                    console.log(`Enemy ${enemy.id} attacked player ${closestPlayer.id} for ${damage} damage`);
-
-                    // Broadcast damage event
-                    broadcastToAll({
-                        type: 'PLAYER_DAMAGE',
-                        data: {
-                            targetId: closestPlayer.id,
-                            amount: damage,
-                            attackerId: null // null means enemy attack
-                        }
-                    });
-
-                    // Check if player died
-                    if (closestPlayer.health <= 0) {
-                        closestPlayer.isDead = true;
-
-                        console.log(`Player ${closestPlayer.id} died from enemy attack`);
-
-                        // Broadcast death event
-                        broadcastToAll({
-                            type: 'PLAYER_DEATH',
-                            data: {
-                                playerId: closestPlayer.id
-                            }
-                        });
-
-                        // Schedule respawn
-                        setTimeout(() => {
-                            if (gameState.players[closestPlayer.id]) {
-                                gameState.players[closestPlayer.id].health = 100;
-                                gameState.players[closestPlayer.id].isDead = false;
-                                gameState.players[closestPlayer.id].position = {
-                                    x: Math.random() * 20 - 10,
-                                    y: 5,
-                                    z: Math.random() * 20 - 10
-                                };
-
-                                console.log(`Player ${closestPlayer.id} respawned after enemy kill`);
-
-                                // Broadcast respawn event
-                                broadcastToAll({
-                                    type: 'PLAYER_RESPAWN',
-                                    data: {
-                                        playerId: closestPlayer.id,
-                                        position: gameState.players[closestPlayer.id].position
-                                    }
-                                });
-                            }
-                        }, 3000); // 3 second respawn time
-                    }
-                }
-            }
-        }
-    }
-    */
-}
-
-// Spawn a new enemy
-function spawnEnemy() {
-    // Enemies disabled for multiplayer-only mode
-    return null;
-
-    /*
-    const enemyId = `enemy_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-
-    // Spawn away from players
-    let spawnX = Math.random() * 40 - 20;
-    let spawnZ = Math.random() * 40 - 20;
-
-    const enemy = {
-        id: enemyId,
-        type: 'enemy',
-        position: {
-            x: spawnX,
-            y: 0, // Ground level
-            z: spawnZ
-        },
-        rotation: { x: 0, y: 0, z: 0 },
-        health: 50,
-        isDead: false,
-        isAttacking: false,
-        model: 'default',
-        color: Math.floor(Math.random() * 0xFFFFFF)
-    };
-
-    gameState.enemies.push(enemy);
-    console.log(`Spawned enemy ${enemyId} at x=${spawnX.toFixed(2)}, z=${spawnZ.toFixed(2)}`);
-
-    return enemy;
-    */
 }
 
 // Start the game loop

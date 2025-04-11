@@ -164,34 +164,79 @@ export class Player {
     // Separate method to set up the model once loaded
     setupModel(gltf) {
         try {
-            // Set up the model
-            const model = gltf.scene;
+            console.log('Setting up player model from GLTF');
 
-            // Set the model position 
-            model.position.set(this.position.x, this.position.y, this.position.z);
+            // Scale the model down to a reasonable size
+            const scale = 0.5; // Adjust scale as needed for your model
+            gltf.scene.scale.set(scale, scale, scale);
 
-            // Rotate the model 180 degrees to face forward instead of backward
-            model.rotation.set(0, Math.PI, 0); // This should make it face forward
+            // Apply model color for player identification
+            if (this.playerColor) {
+                gltf.scene.traverse(child => {
+                    if (child.isMesh) {
+                        const materialColor = new THREE.Color(this.playerColor);
 
-            // Make sure the model casts shadows
-            model.traverse((node) => {
-                if (node.isMesh) {
-                    node.castShadow = true;
-                    node.receiveShadow = true;
+                        // Create a new MeshStandardMaterial with the player color
+                        child.material = new THREE.MeshStandardMaterial({
+                            color: materialColor,
+                            roughness: 0.7,
+                            metalness: 0.3
+                        });
+                    }
+                });
+            }
+
+            this.mesh = gltf.scene;
+
+            // Display model name for debugging
+            console.log('Model name:', this.mesh.name);
+
+            // Enable shadows
+            this.mesh.traverse(object => {
+                if (object.isMesh) {
+                    object.castShadow = true;
+                    object.receiveShadow = true;
+
+                    // Log bone info for debugging if we have a skeleton
+                    if (object.skeleton) {
+                        console.log('Found skeleton with', object.skeleton.bones.length, 'bones');
+                        this.skeleton = object.skeleton;
+
+                        // Log bone names for debugging
+                        object.skeleton.bones.forEach((bone, index) => {
+                            console.log(`Bone ${index}: ${bone.name}`);
+                        });
+
+                        // Map bones to our physics structure
+                        this.mapBonesForRagdoll();
+                    }
                 }
             });
 
-            // Scale down the model to make it smaller
-            model.scale.set(0.35, 0.35, 0.35); // Reduced from 0.5 to 0.35 (70% of previous size)
-
-            this.mesh = model;
-            this.scene.add(this.mesh);
-            this.modelLoaded = true;
+            // Add the mesh to the scene
+            if (this.scene) {
+                this.scene.add(this.mesh);
+            } else {
+                console.warn('No scene available to add player mesh');
+            }
 
             // Set up animations
             this.setupAnimations(gltf.animations);
+
+            // Set model as loaded
+            this.modelLoaded = true;
+
+            // Show/hide debug helpers
+            const debugHelpers = false;
+            if (debugHelpers) {
+                // Create simple axis helper at origin of model
+                const axisHelper = new THREE.AxesHelper(0.5);
+                this.mesh.add(axisHelper);
+            }
+
+            console.log('Player model setup complete');
         } catch (err) {
-            error('Error setting up model', err);
+            error('Error setting up player model:', err);
         }
     }
 
@@ -335,6 +380,21 @@ export class Player {
             this.canJump = false;
             this.physicsWorld.addRigidBody(this.body);
 
+            // Save body parts and positions for ragdoll setup later
+            this.bodyParts = {
+                torso: { shape: torsoShape, position: new Ammo.btVector3(0, 0.4, 0) },
+                head: { shape: headShape, position: new Ammo.btVector3(0, 1.0, 0) },
+                leftLeg: { shape: legShape, position: new Ammo.btVector3(-0.2, -0.3, 0) },
+                rightLeg: { shape: legShape, position: new Ammo.btVector3(0.2, -0.3, 0) },
+                leftArm: { shape: armShape, position: new Ammo.btVector3(-0.4, 0.4, 0) },
+                rightArm: { shape: armShape, position: new Ammo.btVector3(0.4, 0.4, 0) }
+            };
+
+            // Prepare for ragdoll setup (will be used when player dies)
+            this.ragdollBodies = null;
+            this.ragdollConstraints = null;
+            this.isRagdolled = false;
+
             console.log('Player compound physics created successfully');
         } catch (err) {
             error('Error creating physics', err);
@@ -406,7 +466,7 @@ export class Player {
 
     update(deltaTime) {
         try {
-            if (!this.body || !this.mesh) {
+            if (!this.mesh) {
                 // Silent return if basic objects aren't available yet
                 return;
             }
@@ -421,37 +481,167 @@ export class Player {
             // Fine-tuning offset to -0.85 to prevent both sinking and hovering
             const MODEL_Y_OFFSET = -0.85;
 
-            // Update mesh position based on physics
-            try {
-                const ms = this.body.getMotionState();
-                if (ms) {
-                    const transform = new Ammo.btTransform();
-                    ms.getWorldTransform(transform);
+            // Handle different update logic based on whether we're in ragdoll mode
+            if (this.isRagdolled && this.ragdollBodies) {
+                // RAGDOLL MODE: Update mesh from ragdoll physics
+                try {
+                    // Update torso position (main body reference)
+                    const torsoBody = this.ragdollBodies['torso'];
+                    if (torsoBody) {
+                        const torsoTransform = new Ammo.btTransform();
+                        torsoBody.getWorldTransform(torsoTransform); // Get the most current transform
+                        const torsoOrigin = torsoTransform.getOrigin();
 
-                    // Make sure transform is valid
-                    if (transform) {
-                        const p = transform.getOrigin();
+                        // Update mesh position DIRECTLY from torso
+                        this.mesh.position.set(
+                            torsoOrigin.x(),
+                            torsoOrigin.y() + MODEL_Y_OFFSET, // Apply consistent visual offset
+                            torsoOrigin.z()
+                        );
 
-                        // Make sure p is valid and has x, y, z methods
-                        if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
-                            // Update mesh position with the offset for the model
-                            // This offset ensures the visual model stays aligned with the physics body
-                            this.mesh.position.set(p.x(), p.y() + MODEL_Y_OFFSET, p.z());
+                        // Update bones based on mapped bones
+                        if (this.boneMapping && Object.keys(this.boneMapping).length > 0) {
+                            // Update each mapped bone from its corresponding physics body
+                            Object.entries(this.ragdollBodies).forEach(([partName, body]) => {
+                                // Skip torso as it's the reference (already handled above)
+                                if (partName === 'torso') return;
 
-                            // Debug visualization of physics body components (uncomment for debugging)
-                            /*
-                            if (window.game && window.game.debug && window.game.debug.showPhysics) {
-                                this.visualizePhysicsBody(p.x(), p.y(), p.z());
+                                const bone = this.boneMapping[partName];
+                                if (bone) {
+                                    const transform = new Ammo.btTransform();
+                                    body.getMotionState().getWorldTransform(transform);
+
+                                    // Calculate position relative to torso
+                                    const partPos = transform.getOrigin();
+                                    const torsoPos = torsoTransform.getOrigin();
+
+                                    // Calculate local position relative to torso
+                                    const worldToLocal = this.mesh.worldToLocal || this.mesh.matrixWorld.invert;
+                                    const localPos = new THREE.Vector3(
+                                        partPos.x() - torsoPos.x(),
+                                        partPos.y() - torsoPos.y(),
+                                        partPos.z() - torsoPos.z()
+                                    );
+
+                                    // Scale the offset to match the model's bone structure
+                                    // This may need tuning based on your model
+                                    const scaleFactor = 0.5; // Start with moderate scaling
+                                    localPos.multiplyScalar(scaleFactor);
+
+                                    // Apply to bone
+                                    bone.position.copy(localPos);
+
+                                    // Get rotation as quaternion
+                                    const rotation = transform.getRotation();
+                                    const quat = new THREE.Quaternion(
+                                        rotation.x(),
+                                        rotation.y(),
+                                        rotation.z(),
+                                        rotation.w()
+                                    );
+
+                                    // Apply to bone
+                                    bone.quaternion.copy(quat);
+                                }
+                            });
+                        } else {
+                            // Fallback: If no proper bone mapping, just rotate the whole model
+                            const rotation = torsoTransform.getRotation();
+                            this.mesh.quaternion.set(
+                                rotation.x(),
+                                rotation.y(),
+                                rotation.z(),
+                                rotation.w()
+                            );
+                        }
+
+                        // *** ADD LOGIC TO ROTATE TORSO HORIZONTAL ***
+                        const elapsedTime = (Date.now() - (this.ragdollStartTime || Date.now())) / 1000;
+                        // *** MAKE FASTER ***
+                        const rotationDuration = 1.0; // Time in seconds to reach horizontal (was 1.5)
+
+                        if (elapsedTime < rotationDuration) {
+                            const torsoBody = this.ragdollBodies['torso'];
+                            const targetQuat = new THREE.Quaternion();
+                            // Target rotation: lying flat on XZ plane (may need adjustment based on model orientation)
+                            // Assuming model's forward is Z, target is rotation around X by -PI/2
+                            targetQuat.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);
+
+                            const currentQuatAmmo = torsoTransform.getRotation();
+                            const currentQuatThree = new THREE.Quaternion(
+                                currentQuatAmmo.x(),
+                                currentQuatAmmo.y(),
+                                currentQuatAmmo.z(),
+                                currentQuatAmmo.w()
+                            );
+
+                            // Slerp towards the target rotation
+                            let t = Math.min(1, elapsedTime / rotationDuration);
+                            // *** FADE OUT INFLUENCE towards the end ***
+                            // Start fading out influence in the last 30% of the duration
+                            const fadeStart = rotationDuration * 0.7;
+                            if (elapsedTime > fadeStart) {
+                                t *= 1.0 - (elapsedTime - fadeStart) / (rotationDuration - fadeStart);
                             }
-                            */
+
+                            currentQuatThree.slerp(targetQuat, t);
+
+                            // Apply the interpolated rotation back to the physics body
+                            const newRotationAmmo = new Ammo.btQuaternion(
+                                currentQuatThree.x,
+                                currentQuatThree.y,
+                                currentQuatThree.z,
+                                currentQuatThree.w
+                            );
+                            torsoTransform.setRotation(newRotationAmmo);
+                            torsoBody.getMotionState().setWorldTransform(torsoTransform);
+                            torsoBody.activate(true); // Keep it active during rotation
+                            Ammo.destroy(newRotationAmmo);
+                        } else if (elapsedTime >= rotationDuration && !this._ragdollSettled) {
+                            // After duration, let physics take over completely
+                            // We only need to ensure it was activated
+                            const torsoBody = this.ragdollBodies['torso'];
+                            if (torsoBody) torsoBody.activate(true);
+                            this._ragdollSettled = true; // Mark as settled
+                        }
+                        // *** END HORIZONTAL ROTATION LOGIC ***
+                    }
+                } catch (ragdollError) {
+                    console.error('Error updating ragdoll:', ragdollError);
+                }
+            } else if (this.body) {
+                // NORMAL MODE: Update mesh from regular physics body
+                try {
+                    const ms = this.body.getMotionState();
+                    if (ms) {
+                        const transform = new Ammo.btTransform();
+                        ms.getWorldTransform(transform);
+
+                        // Make sure transform is valid
+                        if (transform) {
+                            const p = transform.getOrigin();
+
+                            // Make sure p is valid and has x, y, z methods
+                            if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
+                                // Update mesh position with the offset for the model
+                                // This offset ensures the visual model stays aligned with the physics body
+                                this.mesh.position.set(p.x(), p.y() + MODEL_Y_OFFSET, p.z());
+
+                                // Debug visualization of physics body components (uncomment for debugging)
+                                /*
+                                if (window.game && window.game.debug && window.game.debug.showPhysics) {
+                                    this.visualizePhysicsBody(p.x(), p.y(), p.z());
+                                }
+                                */
+                            }
                         }
                     }
+                } catch (physicsError) {
+                    throw new Error(`Physics transform error: ${physicsError.message || 'Unknown physics error'}`);
                 }
-            } catch (physicsError) {
-                throw new Error(`Physics transform error: ${physicsError.message || 'Unknown physics error'}`);
             }
 
-            // Update animation mixer
+            // Update animation mixer regardless of physics state
             try {
                 if (this.mixer && deltaTime) {
                     this.mixer.update(deltaTime);
@@ -460,90 +650,98 @@ export class Player {
                 throw new Error(`Animation error: ${animationError.message || 'Unknown animation error'}`);
             }
 
-            // Make the player always face the direction of the crosshair/camera
-            try {
-                // First verify that all required objects exist
-                if (!this.modelLoaded) return;
-                if (typeof window === 'undefined') return;
-                if (!window.game) return;
+            // Only update rotation if not in ragdoll mode
+            if (!this.isRagdolled) {
+                try {
+                    // First verify that all required objects exist
+                    if (!this.modelLoaded) return;
+                    if (typeof window === 'undefined') return;
+                    if (!window.game) return;
 
-                const game = window.game;
-                if (!game.scene || !game.scene.camera) return;
+                    const game = window.game;
+                    if (!game.scene || !game.scene.camera) return;
 
-                // Create a vector to store camera direction
-                const cameraDirection = new THREE.Vector3();
+                    // Create a vector to store camera direction
+                    const cameraDirection = new THREE.Vector3();
 
-                // Get the world direction from the camera
-                game.scene.camera.getWorldDirection(cameraDirection);
+                    // Get the world direction from the camera
+                    game.scene.camera.getWorldDirection(cameraDirection);
 
-                // Only proceed if we have a valid direction vector
-                if (isNaN(cameraDirection.x) || isNaN(cameraDirection.y) || isNaN(cameraDirection.z)) {
-                    error('Invalid camera direction:', cameraDirection);
-                    return;
-                }
-
-                // Zero out the Y component to keep character upright
-                cameraDirection.y = 0;
-
-                // Only normalize if the vector has non-zero length
-                if (cameraDirection.length() > 0) {
-                    cameraDirection.normalize();
-
-                    // Calculate the angle to face the camera direction
-                    const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
-
-                    // Set rotation to match crosshair direction - with error checking
-                    if (!isNaN(angle)) {
-                        this.mesh.rotation.set(0, angle, 0);
+                    // Only proceed if we have a valid direction vector
+                    if (isNaN(cameraDirection.x) || isNaN(cameraDirection.y) || isNaN(cameraDirection.z)) {
+                        error('Invalid camera direction:', cameraDirection);
+                        return;
                     }
+
+                    // Zero out the Y component to keep character upright
+                    cameraDirection.y = 0;
+
+                    // Only normalize if the vector has non-zero length
+                    if (cameraDirection.length() > 0) {
+                        cameraDirection.normalize();
+
+                        // Calculate the angle to face the camera direction
+                        const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
+
+                        // Set rotation to match crosshair direction - with error checking
+                        if (!isNaN(angle)) {
+                            this.mesh.rotation.set(0, angle, 0);
+                        }
+                    }
+                } catch (rotationError) {
+                    throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
                 }
-            } catch (rotationError) {
-                throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
             }
 
             // --- Ground Check Throttling ---
-            const now = Date.now();
-            if (now - this._lastGroundCheck >= this._groundCheckInterval) {
-                this._lastGroundCheck = now;
-                this.checkGroundContact();
+            // Only check for ground contact if not ragdolled
+            if (!this.isRagdolled) {
+                const now = Date.now();
+                if (now - this._lastGroundCheck >= this._groundCheckInterval) {
+                    this._lastGroundCheck = now;
+                    this.checkGroundContact();
+                }
             }
             // --- End Ground Check Throttling ---
 
             // --- NEW: Debounced Animation Logic --- 
-            try {
-                if (this.modelLoaded && this.mixer) {
-                    let targetAnimation = 'idle'; // Default to idle
+            // Only use animations when not ragdolled
+            if (!this.isRagdolled) {
+                try {
+                    if (this.modelLoaded && this.mixer) {
+                        let targetAnimation = 'idle'; // Default to idle
 
-                    // Check special states first
-                    if (this.isAttacking) {
-                        // Let attack() handle finishing the attack animation
-                        targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
-                    } else if (this.isJumping) {
-                        targetAnimation = 'jump';
-                    } else {
-                        // Not dead, attacking, or jumping - check movement intent
-                        const now = Date.now();
-                        if (this.intendedAnimation !== 'idle') {
-                            // If intent is movement, use that
-                            targetAnimation = this.intendedAnimation;
+                        // Check special states first
+                        if (this.isAttacking) {
+                            // Let attack() handle finishing the attack animation
+                            targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
+                        } else if (this.isJumping) {
+                            targetAnimation = 'jump';
                         } else {
-                            // Intent is idle. Only switch to idle if enough time has passed
-                            // or if we are already idle.
-                            if (this.currentAnimation === 'idle' || now - this.lastMovementInputTime > this.idleDelay) {
-                                targetAnimation = 'idle';
-                            }
-                            else {
-                                // Not enough time passed, keep the current (likely movement) animation
-                                targetAnimation = this.currentAnimation;
+                            // Not dead, attacking, or jumping - check movement intent
+                            const now = Date.now();
+                            if (this.intendedAnimation !== 'idle') {
+                                // If intent is movement, use that
+                                targetAnimation = this.intendedAnimation;
+                            } else {
+                                // Intent is idle. Only switch to idle if enough time has passed
+                                // or if we are already idle.
+                                if (this.currentAnimation === 'idle' || now - this.lastMovementInputTime > this.idleDelay) {
+                                    targetAnimation = 'idle';
+                                }
+                                else {
+                                    // Not enough time passed, keep the current (likely movement) animation
+                                    targetAnimation = this.currentAnimation;
+                                }
                             }
                         }
-                    }
 
-                    // Play the determined animation (playAnimation handles preventing restarts)
-                    this.playAnimation(targetAnimation);
+                        // Play the determined animation (playAnimation handles preventing restarts)
+                        this.playAnimation(targetAnimation);
+                    }
+                } catch (animationUpdateError) {
+                    error(`Error updating animation based on intent: ${animationUpdateError.message || animationUpdateError}`);
                 }
-            } catch (animationUpdateError) {
-                error(`Error updating animation based on intent: ${animationUpdateError.message || animationUpdateError}`);
             }
             // --- END NEW Animation Logic ---
 
@@ -729,33 +927,55 @@ export class Player {
         }
     }
 
-    shoot() {
-        if (!this.canShoot) return;
+    shootProjectile() {
+        // Don't shoot if already attacking
+        if (this.isAttacking || this.isDead) return;
 
-        // Get the direction the player is facing
-        const direction = this.getAimDirection();
+        // Get the camera direction for aiming
+        const aimDirection = this.getAimDirection();
+        if (!aimDirection) return; // Exit if direction is invalid
 
         // Get the position to spawn the projectile (in front of the player)
-        const muzzleOffset = new THREE.Vector3(0, 0.5, 0).applyQuaternion(this.mesh.quaternion);
+        // Ensure mesh and quaternion are valid before proceeding
+        if (!this.mesh || !this.mesh.quaternion) {
+            console.error('Cannot shoot projectile: Player mesh or quaternion is missing.');
+            return;
+        }
+        const muzzleOffset = new THREE.Vector3(0, 0.5, 1.0).applyQuaternion(this.mesh.quaternion); // Offset slightly forward
         const muzzlePosition = this.mesh.position.clone().add(muzzleOffset);
 
-        // Create projectile
-        const projectile = new Projectile(
-            window.game.scene.scene,
-            window.game.physics.physicsWorld,
-            muzzlePosition,
-            direction,
-            50 // Speed
-        );
+        // Create a unique ID for the projectile
+        const projectileId = `proj_${this.playerId}_${Date.now()}`;
 
-        // Add to game's projectiles array
-        window.game.projectiles.push(projectile);
+        // Spawn projectile locally (visual only for now)
+        this.game.handleLocalProjectileSpawn({
+            id: projectileId,
+            ownerId: this.playerId,
+            position: muzzlePosition,
+            direction: aimDirection
+        });
 
-        // Set cooldown
-        this.canShoot = false;
+        // Send shoot event to server for authoritative spawn
+        if (this.game.networkManager?.connected) {
+            this.game.networkManager.sendProjectileSpawn({
+                id: projectileId,
+                ownerId: this.playerId,
+                position: muzzlePosition,
+                // Calculate initial velocity based on direction and speed
+                velocity: aimDirection.clone().multiplyScalar(GAME_CONFIG.projectileSpeed || 50),
+                damage: GAME_CONFIG.projectileDamage || 10
+            });
+        }
+
+        // Trigger attack state and animation
+        this.isAttacking = true;
+        this.playAnimation('attack');
+
+        // Reset attack state after animation duration (adjust time as needed)
         setTimeout(() => {
-            this.canShoot = true;
-        }, 500); // 500ms cooldown
+            this.isAttacking = false;
+            // Optionally revert to idle/movement animation if needed, though the update loop should handle this
+        }, 500); // 500ms duration
     }
 
     getAimDirection() {
@@ -782,6 +1002,30 @@ export class Player {
         // Log the damage event
         console.log(`Player took ${amount} damage, health reduced from ${previousHealth} to ${this.health}`);
 
+        // Apply a physical force to create a damage reaction/wobble
+        // Direction depends on attacker position if available
+        if (attackerId && window.game && window.game.remotePlayers[attackerId]) {
+            // Get attacker position
+            const attackerPos = window.game.remotePlayers[attackerId].getPosition();
+            if (attackerPos) {
+                // Calculate direction from attacker to this player
+                const directionVector = new THREE.Vector3(
+                    this.mesh.position.x - attackerPos.x,
+                    0, // Keep it horizontal
+                    this.mesh.position.z - attackerPos.z
+                ).normalize();
+
+                // Apply force from that direction
+                this.applyImpactForce(directionVector, amount * 0.5);
+            } else {
+                // No attacker position, apply random force
+                this.applyRandomImpactForce(amount * 0.5);
+            }
+        } else {
+            // No attacker ID, apply random force
+            this.applyRandomImpactForce(amount * 0.5);
+        }
+
         // If this is the local player in a multiplayer game, we still apply damage locally
         // but we don't have to send a damage event because the server should have calculated this
         // This is client-side prediction for responsive feedback
@@ -799,6 +1043,97 @@ export class Player {
             this.die(attackerId);
         }
     }
+
+    // Apply a force in a specific direction (used for damage reactions)
+    applyImpactForce(direction, magnitude) {
+        if (!direction || !this.body) return;
+
+        try {
+            // If we're in ragdoll mode, apply forces to individual body parts
+            if (this.isRagdolled && this.ragdollBodies) {
+                // Apply stronger force to extremities for more dramatic effect
+                Object.entries(this.ragdollBodies).forEach(([part, body]) => {
+                    // Randomize the force direction slightly for each part
+                    const randomizedDir = new THREE.Vector3(
+                        direction.x + (Math.random() * 0.4 - 0.2),
+                        direction.y + (Math.random() * 0.8),  // More upward variation
+                        direction.z + (Math.random() * 0.4 - 0.2)
+                    ).normalize();
+
+                    // Apply different force magnitudes to different parts
+                    let partMagnitude = magnitude;
+                    if (part === 'head') partMagnitude *= 1.5;
+                    if (part === 'leftArm' || part === 'rightArm') partMagnitude *= 1.2;
+
+                    // Create and apply the impulse
+                    const impulse = new Ammo.btVector3(
+                        randomizedDir.x * partMagnitude,
+                        randomizedDir.y * partMagnitude,
+                        randomizedDir.z * partMagnitude
+                    );
+                    body.applyCentralImpulse(impulse);
+                    Ammo.destroy(impulse);
+                });
+            } else {
+                // Regular mode - apply force to main body
+                // Convert THREE.Vector3 to Ammo.btVector3
+                const force = new Ammo.btVector3(
+                    direction.x * magnitude,
+                    Math.max(0.5, direction.y) * magnitude, // Ensure some upward force
+                    direction.z * magnitude
+                );
+
+                // Make sure the body is active
+                this.body.activate(true);
+
+                // Apply the force as an impulse for immediate effect
+                this.body.applyCentralImpulse(force);
+                Ammo.destroy(force);
+            }
+        } catch (err) {
+            console.error('Error applying impact force:', err);
+        }
+    }
+
+    // Apply a random force (used when attacker direction is unknown)
+    applyRandomImpactForce(magnitude) {
+        // Create a random direction vector
+        const angle = Math.random() * Math.PI * 2;
+        const directionVector = new THREE.Vector3(
+            Math.cos(angle),
+            0.5, // Some upward component
+            Math.sin(angle)
+        ).normalize();
+
+        // Apply the force
+        this.applyImpactForce(directionVector, magnitude);
+    }
+
+    // *** Add the missing setMovementIntent method ***
+    setMovementIntent(movementInput) {
+        // If any movement key is pressed
+        if (movementInput.forward || movementInput.backward || movementInput.left || movementInput.right) {
+            // Determine the primary movement direction for animation
+            // Simple priority: forward > backward > strafe
+            if (movementInput.forward) {
+                this.intendedAnimation = 'walkForward';
+            } else if (movementInput.backward) {
+                this.intendedAnimation = 'walkBackward';
+            } else if (movementInput.left) {
+                this.intendedAnimation = 'strafeLeft';
+            } else if (movementInput.right) {
+                this.intendedAnimation = 'strafeRight';
+            }
+            this.lastMovementInputTime = Date.now();
+        } else {
+            // No movement keys pressed, intent is idle
+            // Note: We don't reset lastMovementInputTime here,
+            // the update loop uses the time *since* the last movement
+            // to decide when to switch back to idle.
+            this.intendedAnimation = 'idle';
+        }
+    }
+    // *** End setMovementIntent method ***
 
     updateHealthUI() {
         const healthBar = document.getElementById('health-bar');
@@ -825,6 +1160,10 @@ export class Player {
     die(attackerId = null) {
         this.isDead = true;
         console.log(`[Player ${this.playerId}] Died. Attacker: ${attackerId || 'None'}`);
+
+        // Activate ragdoll physics on death
+        this.ragdollStartTime = Date.now(); // Store start time for rotation lerp
+        this.setupRagdoll();
 
         // Send death event to server if this is the local player
         if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
@@ -858,6 +1197,10 @@ export class Player {
      */
     respawn() {
         console.log(`Player respawning`);
+
+        // Clean up ragdoll physics
+        this._ragdollSettled = false; // Reset settled flag
+        this.cleanupRagdoll();
 
         // Reset health
         this.health = 100;
@@ -1040,22 +1383,10 @@ export class Player {
 
             // Log when ground state changes
             if (wasOnGround !== this.canJump) {
-                logMsg += ` | StateChange: ${wasOnGround} -> ${this.canJump}`;
-                if (this.canJump) {
-                    log('Player touched ground');
-
-                    // If we were falling, play land animation
-                    const velocity = this.body.getLinearVelocity();
-                    if (velocity.y() < -5) {
-                        // Play land animation if we were falling fast
-                        this.playAnimation('idle');
-                    }
-                } else {
-                    log('Player left ground');
-                }
+                // logMsg += ` | StateChange: ${wasOnGround} -> ${this.canJump}`;
             }
 
-            // --- More Robust isJumping Reset ---
+            // --- More Robust isJumping Reset --- 
             // If we are on the ground now, ensure isJumping is false.
             if (this.canJump && this.isJumping) {
                 // Add debounce to avoid immediately disabling jump state
@@ -1063,178 +1394,54 @@ export class Player {
                 if (jumpDuration > 300) {  // Minimum jump duration, prevents immediate resetting
                     log('[GroundCheck] Confirmed on ground, ensuring isJumping is false.');
                     this.isJumping = false;
-                    logMsg += ` | Reset isJumping after ${jumpDuration}ms`;
+                    // logMsg += ` | Reset isJumping after ${jumpDuration}ms`;
                 }
             }
             // --- End Robust Reset ---
 
         } catch (err) {
-            logMsg += ` | ERROR: ${err.message}`;
+            // logMsg += ` | ERROR: ${err.message}`;
             error('Error in checkGroundContact:', err);
         } finally {
             // Log the final message regardless of errors
-            if (Math.random() < 0.1) { // Log only 10% of the time to reduce spam
-                log(logMsg);
-            }
+            // if (Math.random() < 0.1) { // Log only 10% of the time to reduce spam
+            //     log(logMsg);
+            // }
         }
     }
 
     // Add a visual damage indicator method
     addDamageIndicator(amount) {
-        // Create a floating damage indicator
-        const indicator = document.createElement('div');
-        indicator.className = 'damage-indicator';
-        indicator.textContent = `-${amount}`;
-        indicator.style.position = 'absolute';
-        indicator.style.color = 'red';
-        indicator.style.fontWeight = 'bold';
-        indicator.style.fontSize = '20px';
-        indicator.style.textShadow = '0 0 3px black';
-        indicator.style.zIndex = '1000';
-        indicator.style.pointerEvents = 'none';
-
-        document.body.appendChild(indicator);
-
-        // Position the indicator in the center of the screen (where the crosshair is)
-        indicator.style.top = '50%';
-        indicator.style.left = '50%';
-        indicator.style.transform = 'translate(-50%, -150%)'; // Position above crosshair
-
-        // Add animation
-        indicator.style.transition = 'all 1s ease-out';
-
-        // Start animation after a small delay
-        setTimeout(() => {
-            indicator.style.opacity = '0';
-            indicator.style.transform = 'translate(-50%, -200%)'; // Move up while fading
-        }, 10);
-
-        // Remove from DOM after animation completes
-        setTimeout(() => {
-            document.body.removeChild(indicator);
-        }, 1000);
+        // Implementation of addDamageIndicator method
     }
 
-    // NEW Method to set animation intent based on input state
-    setMovementIntent(movementState) {
-        let intent = 'idle';
-
-        if (movementState.isMoving) {
-            // Determine intended animation based on specific keys pressed
-            if (movementState.left && !movementState.right && !movementState.forward && !movementState.backward) {
-                intent = 'strafeLeft';
-            } else if (movementState.right && !movementState.left && !movementState.forward && !movementState.backward) {
-                intent = 'strafeRight';
-            } else if (movementState.forward && !movementState.backward) {
-                intent = 'walkForward';
-            } else if (movementState.backward && !movementState.forward) {
-                intent = 'walkBackward';
-            } else if (movementState.forward) {
-                intent = 'walkForward'; // Default to forward/backward for combinations
-            } else if (movementState.backward) {
-                intent = 'walkBackward';
-            }
-            this.lastMovementInputTime = Date.now(); // Update timestamp when moving
-        }
-
-        this.intendedAnimation = intent;
-    }
-
-    // Added attack method for local player
-    attack() {
-        if (this.isAttacking || this.isDead) return; // Don't attack if already attacking or dead
-
-        console.log(`[Player ${this.playerId}] attack() called.`);
-        this.isAttacking = true;
-        this.playAnimation('attack'); // Play the attack animation
-
-        // Reset attack state after a short duration (e.g., animation length)
-        // Adjust timing as needed (e.g., 800ms)
-        setTimeout(() => {
-            this.isAttacking = false;
-            console.log(`[Player ${this.playerId}] attack() finished.`);
-            // Optionally, ensure we transition back to idle/movement animation if needed
-            // The main update loop should handle this via setMovementIntent
-        }, 800);
-    }
-
-    // *** Add the missing jump method back ***
+    /**
+     * Performs the jump action
+     */
     jump() {
-        // Basic jump implementation: apply an upward force
-        try {
-            // Check if we can jump (on ground) and not already jumping
-            if (this.canJump && !this.isJumping) {
-                // Apply vertical impulse
-                const impulse = new Ammo.btVector3(0, 7, 0); // Reduced force from 10 to 7
-                this.body.applyCentralImpulse(impulse);
-                Ammo.destroy(impulse);
-
-                // Set jump state
-                this.isJumping = true;
-                this.canJump = false; // Can't jump again until grounded
-                this._lastJumpTime = Date.now(); // Track when this jump started
-
-                // Play jump animation
-                this.playAnimation('jump');
-
-                console.log(`[Player ${this.playerId}] Jump initiated. isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
-            } else {
-                console.log(`[Player ${this.playerId}] Jump prevented. canJump: ${this.canJump}, isJumping: ${this.isJumping}`);
-            }
-        } catch (err) {
-            error(`Error during jump:`, err);
-            // Make sure jump state is reset on error
-            this.isJumping = false;
-        }
-    }
-    // *** End of added jump method ***
-
-    // Optional helper method to visualize physics body for debugging
-    visualizePhysicsBody(x, y, z) {
-        // This is just a placeholder for future debugging visualization
-        // You can implement this method to create/update helper objects
-        // that show the locations of the physics body components
-        if (!this._debugHelpers) {
-            // Create debug visualization objects for each physics component
-            this._debugHelpers = {
-                torso: new THREE.Mesh(
-                    new THREE.CapsuleGeometry(0.4, 0.8),
-                    new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
-                ),
-                head: new THREE.Mesh(
-                    new THREE.SphereGeometry(0.25),
-                    new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true })
-                ),
-                leftLeg: new THREE.Mesh(
-                    new THREE.CapsuleGeometry(0.15, 0.8),
-                    new THREE.MeshBasicMaterial({ color: 0x0000ff, wireframe: true })
-                ),
-                rightLeg: new THREE.Mesh(
-                    new THREE.CapsuleGeometry(0.15, 0.8),
-                    new THREE.MeshBasicMaterial({ color: 0x0000ff, wireframe: true })
-                ),
-                leftArm: new THREE.Mesh(
-                    new THREE.CapsuleGeometry(0.12, 0.6),
-                    new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true })
-                ),
-                rightArm: new THREE.Mesh(
-                    new THREE.CapsuleGeometry(0.12, 0.6),
-                    new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true })
-                )
-            };
-
-            // Add to scene
-            Object.values(this._debugHelpers).forEach(helper => {
-                this.scene.add(helper);
-            });
+        // Check if player can jump (must have body, be on ground, not already jumping, not dead)
+        if (!this.body || !this.canJump || this.isJumping || this.isDead) {
+            if (this.isDead) console.log('[Player.jump] Attempted jump while dead.');
+            else if (this.isJumping) console.log('[Player.jump] Attempted jump while already jumping.');
+            else if (!this.canJump) console.log('[Player.jump] Attempted jump while not on ground (canJump=false).');
+            else console.log('[Player.jump] Jump prevented for unknown reason.');
+            return;
         }
 
-        // Update positions of debug helpers
-        this._debugHelpers.torso.position.set(x, y + 0.4, z);
-        this._debugHelpers.head.position.set(x, y + 1.0, z);
-        this._debugHelpers.leftLeg.position.set(x - 0.2, y - 0.3, z);
-        this._debugHelpers.rightLeg.position.set(x + 0.2, y - 0.3, z);
-        this._debugHelpers.leftArm.position.set(x - 0.4, y + 0.4, z);
-        this._debugHelpers.rightArm.position.set(x + 0.4, y + 0.4, z);
+        console.log('[Player.jump] Executing Jump!');
+
+        // Apply upward force
+        const jumpForceMagnitude = this.JUMP_FORCE || 10; // Use defined constant or default
+        const jumpImpulse = new Ammo.btVector3(0, jumpForceMagnitude, 0);
+        this.body.applyCentralImpulse(jumpImpulse);
+        Ammo.destroy(jumpImpulse);
+
+        // Set state and play animation
+        this.isJumping = true;
+        this.canJump = false; // Cannot jump again until grounded
+        this.playAnimation('jump');
+
+        // Record jump time for ground contact debounce
+        this._lastJumpTime = Date.now();
     }
 }

@@ -189,6 +189,9 @@ export class Game {
 
         // Initialize UI
         this.initUI();
+
+        // Add tracking for the last damage direction
+        this.lastDamageDirection = null;
     }
 
     initUI() {
@@ -331,222 +334,82 @@ export class Game {
      * Initialize network connection asynchronously (doesn't block game startup)
      */
     async initNetworkAsync() {
-        // Set a temporary message
-        this.showConnectionStatus('Connecting to server...');
-        console.log('Initializing network connection...');
+        try {
+            console.log('Initializing network connection asynchronously');
+            this.networkManager = new NetworkManager();
 
-        // --- Register event handlers BEFORE connecting ---
+            // Set up network event listeners
+            this.networkManager.on('connect', () => {
+                console.log('Connected to server');
+                this.showConnectionStatus('Connected!');
+            });
 
-        // Handle connection success
-        this.networkManager.on('connect', () => {
-            console.log('Connected to game server successfully');
-            document.getElementById('connection-status')?.remove();
+            this.networkManager.on('disconnect', (data) => {
+                console.log('Disconnected from server:', data);
+                this.showConnectionStatus('Disconnected. Trying to reconnect...');
+            });
 
-            // Update UI to show connected status
-            this.showConnectionStatus('Connected to server');
-            setTimeout(() => {
-                document.getElementById('connection-status')?.remove();
-            }, 3000);
+            this.networkManager.on('gameStateUpdate', (data) => {
+                this.handleFullGameStateUpdate(data);
+            });
 
-            // Start sending position updates to server
-            this._startPositionUpdates();
-        });
+            this.networkManager.on('gameStateDeltaUpdate', (data) => {
+                this.handleGameStateDeltaUpdate(data);
+            });
 
-        // Handle disconnection
-        this.networkManager.on('disconnect', () => {
-            console.log('Disconnected from game server');
-            // Clear remote players on disconnect
-            this.clearRemotePlayers();
+            this.networkManager.on('playerConnected', (data) => {
+                console.log('Local player connected with ID:', data.id);
+                this.playerId = data.id;
+            });
 
-            // When disconnected after max retries, switch to single player mode
-            if (!this.networkManager.autoReconnect) {
-                this.isMultiplayer = false;
-                this.showConnectionStatus('Connection failed. Running in single player mode.');
+            this.networkManager.on('playerDamage', (data) => {
+                // Call our handler for damage events
+                this.handlePlayerDamage(data);
 
-                // Hide message after 5 seconds
-                setTimeout(() => {
-                    document.getElementById('connection-status')?.remove();
-                }, 5000);
-            } else {
-                this.showConnectionStatus('Disconnected from server. Attempting to reconnect...');
-            }
-        });
-
-        // Handle receiving our player ID
-        this.networkManager.on('playerConnected', (data) => {
-            console.log(`Player connected: ${data.id}`);
-            if (data.id === this.networkManager.playerId) {
-                console.log('Received our player ID from server');
-
-                // Update player color with the network ID if we have a player already created
-                if (this.player) {
-                    // If we already have a local player with a temporary ID
-                    if (this.player.playerId !== data.id) {
-                        // Release the old color associated with the temporary ID
-                        this.colorManager.releaseColor(this.player.playerId);
-
-                        // Update player ID
-                        this.player.playerId = data.id;
-
-                        // Always get a fresh new color for the real network ID
-                        const playerColor = this.colorManager.getNewColorForId(data.id);
-                        console.log(`Updating local player color to ${playerColor.toString(16)} based on ID: ${data.id}`);
-
-                        // Update player color and refresh the model
-                        this.player.playerColor = playerColor;
-                        if (this.player.mesh) {
-                            this.player.mesh.traverse((child) => {
-                                if (child.isMesh) {
-                                    // Skip eyes
-                                    if (!child.material.name || !child.material.name.toLowerCase().includes('eye')) {
-                                        child.material.color.setHex(playerColor);
-                                        child.material.needsUpdate = true;
-                                    }
-                                }
-                            });
-                        }
-                    }
+                // Update remote player damage if applicable
+                if (data.targetId !== this.playerId && this.remotePlayers[data.targetId]) {
+                    console.log(`Remote player ${data.targetId} damaged by ${data.amount}`);
+                    this.remotePlayers[data.targetId].takeDamage(data.amount);
                 }
-            }
-        });
+            });
 
-        // Handle PROJECTILE spawn events (local and remote)
-        this.networkManager.on('projectileSpawn', (projectileData) => {
-            // Only handle projectiles from other players here visually
-            if (projectileData.ownerId !== this.networkManager.playerId) {
-                console.log('[Network] Received remote projectile spawn:', projectileData.id);
-                this.handleRemoteProjectileSpawn(projectileData);
-            } else {
-                // Log confirmation of our own projectile
-                console.log('[Network] Received confirmation for local projectile:', projectileData.id);
-                // We already created it visually in shootProjectile,
-                // could potentially update its ID or state if needed based on server confirmation
-                // this.handleLocalProjectileSpawn(projectileData); // This might duplicate the projectile if called
-            }
-        });
-
-
-        // Updated handler to process FULL game state messages
-        this.networkManager.on('gameStateUpdate', (message) => {
-            // Log received message size for verification
-            const messageSize = JSON.stringify(message).length;
-            console.log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
-
-            // Ensure this only handles full GAME_STATE messages
-            if (message.type === 'GAME_STATE') {
-                this.handleFullGameStateUpdate(message.data); // Handle full state
-            } else {
-                console.warn('gameStateUpdate listener received non-GAME_STATE message:', message.type);
-            }
-        });
-
-        // Add new handler specifically for DELTA updates
-        this.networkManager.on('gameStateDeltaUpdate', (deltaData) => {
-            console.log(`[Network] Received GAME_STATE_DELTA.`);
-            this.handleGameStateDeltaUpdate(deltaData); // Handle delta update
-        });
-
-        // Register event handler for player damage
-        this.networkManager.on('playerDamage', (data) => {
-            // Check if the damage is for our local player
-            if (data.targetId === this.networkManager.playerId && this.player) {
-                console.log(`Local player took ${data.amount} damage`);
-
-                // Apply damage to local player
-                this.player.takeDamage(data.amount, data.attackerId);
-            }
-            // Check if it's a remote player we have
-            else if (this.remotePlayers[data.targetId]) {
-                console.log(`Remote player ${data.targetId} took ${data.amount} damage`);
-
-                // Apply damage to remote player
-                this.remotePlayers[data.targetId].takeDamage(data.amount);
-            }
-        });
-
-        // Register event handler for player death
-        this.networkManager.on('playerDeath', (data) => {
-            console.log(`Player death event for ${data.playerId}`);
-
-            // If it's our player, handle local death
-            if (data.playerId === this.networkManager.playerId && this.player) {
-                console.log('Local player died');
-
-                // Only update local player if not already dead
-                if (!this.player.isDead) {
-                    this.player.isDead = true;
-                    this.player.health = 0;
-                    this.player.die();
-                }
-            }
-            // If it's a remote player, handle remote death
-            else if (this.remotePlayers[data.playerId]) {
-                console.log(`Remote player ${data.playerId} died`);
-
-                // Only update remote player if not already dead
-                if (!this.remotePlayers[data.playerId].isDead) {
-                    this.remotePlayers[data.playerId].isDead = true;
-                    this.remotePlayers[data.playerId].health = 0;
+            this.networkManager.on('playerDeath', (data) => {
+                console.log('Received playerDeath event:', data);
+                if (this.remotePlayers[data.playerId]) {
+                    console.log(`Remote player ${data.playerId} died`);
                     this.remotePlayers[data.playerId].die();
                 }
-            }
-        });
+            });
 
-        // Register event handler for player respawn
-        this.networkManager.on('playerRespawn', (data) => {
-            console.log(`Player respawn event for ${data.playerId}`);
-
-            // If it's our player, handle local respawn
-            if (data.playerId === this.networkManager.playerId && this.player) {
-                console.log('Local player respawned');
-
-                // Apply respawn to local player
-                this.player.health = 100;
-                this.player.isDead = false;
-
-                // Use server position if provided
-                if (data.position) {
-                    this.player.setPosition(data.position);
+            this.networkManager.on('playerRespawn', (data) => {
+                console.log('Received playerRespawn event:', data);
+                if (this.remotePlayers[data.playerId]) {
+                    console.log(`Remote player ${data.playerId} respawned`);
+                    this.remotePlayers[data.playerId].respawn(data.position);
                 }
+            });
 
-                // Reset to idle animation
-                this.player.playAnimation('idle');
-            }
-            // If it's a remote player, handle remote respawn
-            else if (this.remotePlayers[data.playerId]) {
-                console.log(`Remote player ${data.playerId} respawned`);
-
-                // Apply respawn to remote player
-                const remotePlayer = this.remotePlayers[data.playerId];
-                remotePlayer.health = 100;
-                remotePlayer.isDead = false;
-
-                // Use server position if provided
-                if (data.position) {
-                    remotePlayer.setPosition(data.position);
+            this.networkManager.on('projectileSpawn', (data) => {
+                // Make sure the projectile isn't our own
+                if (data.ownerId !== this.playerId) {
+                    console.log(`Remote projectile spawn received from ${data.ownerId}`);
+                    this.handleRemoteProjectileSpawn(data);
                 }
+            });
 
-                // Reset to idle animation
-                remotePlayer.playAnimation('idle');
+            // Connect to server
+            try {
+                await this.networkManager.connect();
+                console.log('Network connection established successfully');
+            } catch (error) {
+                console.error('Failed to connect to server:', error);
+                this.showConnectionStatus('Failed to connect. Check console.');
             }
-        });
 
-        // --- Connect to server AFTER handlers are registered ---
-        try {
-            await this.networkManager.connect(); // Use await here
-            console.log('Network connection process initiated.');
-            // Success is handled by the 'connect' event listener above
-        } catch (error) {
-            // Handle connection failure
-            console.error('Failed to connect to server:', error);
-            this.showConnectionStatus('Connection failed. Running in single player mode.');
-            this.isMultiplayer = false;
-
-            // Hide message after 5 seconds
-            setTimeout(() => {
-                document.getElementById('connection-status')?.remove();
-            }, 5000);
-            // No need to throw error here, just fall back to single player
+            // Start sending position updates to the server
+            this._startPositionUpdates();
+        } catch (err) {
+            console.error('Error in initNetworkAsync:', err);
         }
     }
 
@@ -596,56 +459,59 @@ export class Game {
 
     /**
      * Handle a game state update from the server
-     * @param {Object} gameState - The game state
+     * @param {Object} gameStateData - The game state data
      */
-    handleFullGameStateUpdate(gameState) {
-        try {
-            if (!gameState || !gameState.players) {
-                console.warn('Received invalid game state:', gameState);
-                return;
-            }
-
-            // Track seen player IDs for cleanup
-            const seenPlayerIds = new Set();
-
-            // Process all players in the game state
-            Object.entries(gameState.players).forEach(([id, playerData]) => {
-                seenPlayerIds.add(id);
-
-                if (id === this.networkManager.playerId) {
-                    // Handle local player updates (minimal correction for now)
-                    // If needed, re-implement prediction system reconciliation here
-                } else {
-                    // Handle remote player updates
-                    let remotePlayer = this.remotePlayers[id];
-                    if (!remotePlayer && playerData) {
-                        // Create new remote player if it doesn't exist
-                        console.log(`[Game] handleFullGameStateUpdate: Player ${id} not found locally, adding.`);
-                        remotePlayer = this.addRemotePlayer(id, playerData.position);
-                    }
-                    // IMPORTANT: Update player state EVEN IF just added
-                    if (remotePlayer && playerData) {
-                        // Update remote player
-                        this.updateRemotePlayerState(remotePlayer, playerData);
-                    }
-                }
-            });
-
-            // *** Add Logging before cleanup ***
-            console.log(`[Game] Cleanup Check: Seen IDs: ${Array.from(seenPlayerIds).join(', ')}`);
-            console.log(`[Game] Cleanup Check: Current Remote Players: ${Object.keys(this.remotePlayers).join(', ')}`);
-            // *** End Logging ***
-
-            // Clean up disconnected players
-            Object.keys(this.remotePlayers).forEach(id => {
-                if (!seenPlayerIds.has(id)) {
-                    console.warn(`[Game] Player ${id} not in latest state. Removing.`);
-                    this.removeRemotePlayer(id); // Use the proper removal function
-                }
-            });
-        } catch (err) {
-            console.error('Error handling game state update:', err);
+    handleFullGameStateUpdate(gameStateData) {
+        if (!gameStateData || !gameStateData.players) {
+            console.error('Received invalid full game state data:', gameStateData);
+            return;
         }
+
+        const { players, projectiles, enemies, timestamp } = gameStateData;
+
+        if (!players) {
+            console.error('Full game state update missing players object:', gameStateData);
+            return;
+        }
+
+        // Track seen player IDs for cleanup
+        const seenPlayerIds = new Set();
+
+        // Process all players in the game state
+        Object.entries(players).forEach(([id, playerData]) => {
+            seenPlayerIds.add(id);
+
+            if (id === this.networkManager.playerId) {
+                // Handle local player updates (minimal correction for now)
+                // If needed, re-implement prediction system reconciliation here
+            } else {
+                // Handle remote player updates
+                let remotePlayer = this.remotePlayers[id];
+                if (!remotePlayer && playerData) {
+                    // Create new remote player if it doesn't exist
+                    console.log(`[Game] handleFullGameStateUpdate: Player ${id} not found locally, adding.`);
+                    remotePlayer = this.addRemotePlayer(id, playerData.position);
+                }
+                // IMPORTANT: Update player state EVEN IF just added
+                if (remotePlayer && playerData) {
+                    // Update remote player
+                    this.updateRemotePlayerState(remotePlayer, playerData);
+                }
+            }
+        });
+
+        // *** Add Logging before cleanup ***
+        console.log(`[Game] Cleanup Check: Seen IDs: ${Array.from(seenPlayerIds).join(', ')}`);
+        console.log(`[Game] Cleanup Check: Current Remote Players: ${Object.keys(this.remotePlayers).join(', ')}`);
+        // *** End Logging ***
+
+        // Clean up disconnected players
+        Object.keys(this.remotePlayers).forEach(id => {
+            if (!seenPlayerIds.has(id)) {
+                console.warn(`[Game] Player ${id} not in latest state. Removing.`);
+                this.removeRemotePlayer(id); // Use the proper removal function
+            }
+        });
     }
 
     /**
@@ -775,7 +641,7 @@ export class Game {
         }
 
         // Prioritize specific states determined solely by server flags
-        // (The animation field from server should already reflect jump/attack if applicable)
+        // (The animation field from server should already be 'jump' if the server thinks the player is jumping)
         if (remotePlayer.isDead) {
             // Don't play specific animation, die() or respawn() handles visual state
             targetAnimation = remotePlayer.currentAnimation; // Keep current anim if dead?
@@ -1542,9 +1408,6 @@ export class Game {
         // Add to projectiles array
         this.projectiles.push(projectile);
 
-        // Set player as attacking (for local player animation)
-        this.player.attack();
-
         // Add muzzle flash for visual feedback
         this.addMuzzleFlash(spawnPos, shootDirection);
     }
@@ -2179,6 +2042,44 @@ export class Game {
             }
         } catch (err) {
             error(`Error cleaning up remote player ${playerId}:`, err);
+        }
+    }
+
+    // Update the method that handles damage for local player
+    handlePlayerDamage(data) {
+        // Only handle if we have a valid player and the damage is for us
+        if (!this.player || !this.playerId || data.targetId !== this.playerId) return;
+
+        // Apply damage to local player
+        this.player.takeDamage(data.amount, data.attackerId);
+
+        // Track damage direction based on attacker position
+        if (data.attackerId && this.remotePlayers[data.attackerId]) {
+            const attackerPos = this.remotePlayers[data.attackerId].getPosition();
+            const playerPos = this.player.getPosition();
+
+            if (attackerPos && playerPos) {
+                // Calculate direction from attacker to player
+                const dirX = playerPos.x - attackerPos.x;
+                const dirY = playerPos.y - attackerPos.y;
+                const dirZ = playerPos.z - attackerPos.z;
+
+                // Normalize the direction
+                const length = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+                if (length > 0) {
+                    this.lastDamageDirection = {
+                        x: dirX / length,
+                        y: dirY / length,
+                        z: dirZ / length
+                    };
+
+                    console.log('Damage direction set:',
+                        this.lastDamageDirection.x.toFixed(2),
+                        this.lastDamageDirection.y.toFixed(2),
+                        this.lastDamageDirection.z.toFixed(2)
+                    );
+                }
+            }
         }
     }
 } 

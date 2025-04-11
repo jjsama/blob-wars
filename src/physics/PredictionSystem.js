@@ -22,9 +22,6 @@ export class PredictionSystem {
         this.reconciliationEnabled = true;
         this.predictionEnabled = true;
         this.debugMode = false;
-        this.isJumping = false;
-        this.jumpCooldown = false;
-        this.jumpStartTime = 0;
 
         // Interpolation factors for smoother corrections
         this.correctionFactorGround = 0.1; // Reduced from 0.15 for smoother transitions
@@ -191,27 +188,8 @@ export class PredictionSystem {
             }
 
             // Handle jumping
-            if (input.jump && !this.isJumping && !this.jumpCooldown && this.game.isPlayerOnGround()) {
-                this.isJumping = true;
-                this.jumpStartTime = Date.now();
+            if (input.jump) {
                 this.game.player.jump();
-
-                // Send jump event to server
-                if (this.game.networkManager?.connected) {
-                    this.game.networkManager.sendJump();
-                }
-
-                // Set jump cooldown
-                this.jumpCooldown = true;
-                setTimeout(() => {
-                    this.jumpCooldown = false;
-                }, 500);
-
-                // Reset jump state after animation
-                setTimeout(() => {
-                    this.isJumping = false;
-                    this.game.player.checkGroundContact();
-                }, 1000);
             }
         } catch (err) {
             error('Error in applyInput:', err);
@@ -355,7 +333,6 @@ export class PredictionSystem {
                 prediction: this.predictionEnabled,
                 reconciliation: this.reconciliationEnabled
             },
-            isJumping: this.isJumping,
             noInputDuration: this.noInputDuration,
             velocityDampingActive: this.velocityDampingActive
         };
