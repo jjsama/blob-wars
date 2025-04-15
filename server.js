@@ -5,13 +5,15 @@ const server = Bun.serve({
     websocket: {
         // Handle new WebSocket connections
         open(ws) {
-            // *** Wrap entire handler in try...catch ***
             try {
                 console.log(`WebSocket connection opened: ${ws.remoteAddress}`);
 
                 // Assign a unique ID to the player
                 const playerId = generatePlayerId();
                 ws.data = { playerId, lastPingTime: Date.now() }; // Store player ID and ping time
+
+                // --- DEBUG: Log state BEFORE adding player ---+
+                console.log(`[Server Open Debug] Before add ${playerId}: Connections=${Object.keys(gameState.connections).length}, Players=${Object.keys(gameState.players).length}`);
 
                 // Add player to the connected players with proper initialization
                 gameState.players[playerId] = {
@@ -31,6 +33,7 @@ const server = Bun.serve({
                 gameState.connections[playerId] = ws;
 
                 // Notify the client of their ID
+                console.log(`[Server Open Debug] Sending PLAYER_CONNECTED to ${playerId}`);
                 ws.send(JSON.stringify({
                     type: 'PLAYER_CONNECTED',
                     data: {
@@ -40,6 +43,7 @@ const server = Bun.serve({
                 }));
 
                 // Log active connections after new connection
+                console.log(`[Server Open Debug] After add ${playerId}: Connections=${Object.keys(gameState.connections).length}, Players=${Object.keys(gameState.players).length}`);
                 logConnectionStats(true);
 
                 // --- Temporarily delay the first broadcast --- 
@@ -80,7 +84,10 @@ const server = Bun.serve({
         close(ws, code, reason) {
             const remoteAddr = ws.remoteAddress || 'Unknown Address'; // Get address before potential data loss
             const playerId = ws.data?.playerId || 'Unknown Player ID'; // Get Player ID safely
-            console.log(`WebSocket connection closed for Player: ${playerId} (${remoteAddr}) - Code: ${code}, Reason: ${reason || 'None'})`);
+            console.log(`[Server Close] WebSocket connection closed for Player: ${playerId} (${remoteAddr}) - Code: ${code}, Reason: ${reason || 'None'})`);
+
+            // --- DEBUG: Log state BEFORE removing player ---+
+            console.log(`[Server Close Debug] Before remove ${playerId}: Connections=${Object.keys(gameState.connections).length}, Players=${Object.keys(gameState.players).length}`);
 
             // Clean up if player data exists
             if (ws.data && ws.data.playerId) {
@@ -100,6 +107,9 @@ const server = Bun.serve({
                 } else {
                     console.log(`Player ${pid} not found in gameState.connections during close`);
                 }
+
+                // --- DEBUG: Log state AFTER removing player ---+
+                console.log(`[Server Close Debug] After remove ${playerId}: Connections=${Object.keys(gameState.connections).length}, Players=${Object.keys(gameState.players).length}`);
 
                 // Log active connections after disconnection
                 logConnectionStats(true);
@@ -780,7 +790,16 @@ function broadcastGameState() {
                 }
             }
         }
-        // TODO: Add projectile state processing here later
+
+        // --- Prepare Current Projectile State (Moved Here) ---+
+        const currentProjectilesState = gameState.projectiles.map(p => ({
+            id: p.id,
+            ownerId: p.ownerId,
+            position: p.position,
+            velocity: p.velocity, // Send velocity too
+            active: p.active
+            // Don't send createdAt or mesh references over network
+        }));
 
         if (sendFullState) {
             payloadObject = {
@@ -835,18 +854,21 @@ function broadcastGameState() {
             if (Object.keys(playerDeltas).length > 0 || removedPlayerIds.length > 0 /* || projectile changes later */) {
                 payloadObject = {
                     type: 'GAME_STATE_DELTA',
-                    data: {
+                    data: { // Combine player and projectile deltas (projectiles sent fully for now)
                         playerDeltas: playerDeltas,
                         removedPlayerIds: removedPlayerIds,
                         // projectileDeltas... // Add later
+                        projectiles: currentProjectilesState, // Send full projectile state in delta for now
                         timestamp: Date.now()
                     }
                 };
             } else {
                 // No changes, don't send anything this tick
                 // Update lastBroadcastState anyway to reflect no changes needed sending
+                // Also update projectiles state
                 gameState.lastBroadcastState = {
-                    players: JSON.parse(JSON.stringify(currentPlayersState))
+                    players: JSON.parse(JSON.stringify(currentPlayersState)),
+                    projectiles: JSON.parse(JSON.stringify(gameState.projectiles)) // Store current projectiles
                     // projectiles: JSON.parse(JSON.stringify(currentProjectilesState)) // Add later
                 };
                 return; // Exit early
@@ -862,6 +884,10 @@ function broadcastGameState() {
 
         const payload = JSON.stringify(payloadObject);
         let activeConnections = 0;
+
+        // --- DEBUG: Log connections before broadcast loop ---+
+        const connectionIdsPreLoop = Object.keys(gameState.connections);
+        // console.log(`[Server Broadcast Debug] Broadcasting ${payloadObject.type} to potential connections: ${connectionIdsPreLoop.join(', ')}`); // Can be noisy
 
         for (const playerId in gameState.connections) {
             const ws = gameState.connections[playerId];
@@ -898,13 +924,14 @@ function broadcastGameState() {
 
         // Log active connections count - Reduce frequency
         if (gameState.broadcastCounter % 50 === 0) { // Log every 50 broadcasts (~2.5 seconds)
-            console.log(`[Broadcast] Sent ${payloadObject.type} to ${activeConnections} active connections (Counter: ${gameState.broadcastCounter})`);
+            console.log(`[Broadcast] Sent ${payloadObject.type} to ${activeConnections} active connections (Total tracked: ${connectionIdsPreLoop.length}, Counter: ${gameState.broadcastCounter})`);
         }
 
         // --- Update lastBroadcastState AFTER sending --- 
         if (payloadObject.type) { // Only update if we actually sent something
             gameState.lastBroadcastState = {
-                players: JSON.parse(JSON.stringify(currentPlayersState))
+                players: JSON.parse(JSON.stringify(currentPlayersState)),
+                projectiles: JSON.parse(JSON.stringify(currentProjectilesState || [])) // Store projectile state
                 // projectiles: JSON.parse(JSON.stringify(currentProjectilesState)) // Add later
             };
         }

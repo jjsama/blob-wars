@@ -4,15 +4,38 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
 
 export class Enemy {
-    constructor(scene, physicsWorld, position = null, color = null) {
+    /**
+     * Represents an enemy character.
+     *
+     * @param {THREE.Scene} scene - The main THREE scene.
+     * @param {Ammo.btDiscreteDynamicsWorld} physicsWorld - The physics world.
+     * @param {object} initialPosition - Initial {x, y, z} position.
+     * @param {string} id - The enemy's unique ID.
+     * @param {number} enemyColor - The enemy's color.
+     * @param {THREE.Camera} camera - The main game camera.
+     * @param {Array} enemyProjectilesArray - Reference to the game's enemy projectiles array.
+     */
+    constructor(scene, physicsWorld, initialPosition, id, enemyColor, camera, enemyProjectilesArray) {
+        if (!scene || !physicsWorld || !initialPosition || !id || enemyColor === undefined || !camera || !enemyProjectilesArray) {
+            throw new Error("Enemy constructor missing required arguments.");
+        }
+
+        // Store dependencies
+        this.scene = scene;
+        this.physicsWorld = physicsWorld;
+        this.camera = camera;
+        this.enemyProjectilesArray = enemyProjectilesArray;
+
+        this.id = id;
+        this.enemyColor = enemyColor;
+        this.initialPosition = { ...initialPosition };
+
         // First, check if scene and physicsWorld are valid
         if (!scene || !physicsWorld) {
             console.error("Enemy constructor called with invalid scene or physicsWorld");
             return; // Early return to prevent further errors
         }
 
-        this.scene = scene;
-        this.physicsWorld = physicsWorld;
         this.mesh = null;
         this.body = null;
         this.isDead = false;
@@ -29,8 +52,8 @@ export class Enemy {
         this.currentAction = null;
 
         // Create a default position if none provided
-        if (!position) {
-            position = {
+        if (!initialPosition) {
+            initialPosition = {
                 x: (Math.random() - 0.5) * 40,
                 y: 0, // Start at ground level
                 z: (Math.random() - 0.5) * 40
@@ -40,13 +63,10 @@ export class Enemy {
         // IMPORTANT: Store position as a THREE.Vector3
         // Set Y to 0 to ensure enemies start on the ground
         this.position = new THREE.Vector3(
-            position.x || 0,
+            initialPosition.x || 0,
             0, // Always start at ground level
-            position.z || 0
+            initialPosition.z || 0
         );
-
-        // Store provided color or null (will be assigned in loadModel if null)
-        this.color = color;
 
         // Log initial position for debugging
         console.log(`Enemy initialized at position: x=${this.position.x.toFixed(2)}, y=${this.position.y.toFixed(2)}, z=${this.position.z.toFixed(2)}`);
@@ -115,8 +135,8 @@ export class Enemy {
                     let enemyColor;
 
                     // Use provided color if available, otherwise generate one
-                    if (this.color) {
-                        enemyColor = this.color;
+                    if (this.enemyColor) {
+                        enemyColor = this.enemyColor;
                     } else {
                         // Default color generation logic
                         const brightColors = [
@@ -169,7 +189,7 @@ export class Enemy {
                     });
 
                     // Store the enemy color for projectiles to use
-                    this.color = enemyColor;
+                    this.enemyColor = enemyColor;
 
                     // Log the color used for debugging
                     console.log(`Enemy colored with hex: ${enemyColor.toString(16)}`);
@@ -1406,4 +1426,4 @@ export class Enemy {
             return false;
         }
     }
-} 
+}

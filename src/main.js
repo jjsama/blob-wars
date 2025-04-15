@@ -94,9 +94,6 @@ function initializeGame() {
   const game = new Game();
   log('Game instance created, initializing...');
 
-  // Make game globally accessible for the Player's getAimDirection method
-  window.game = game;
-
   // Use setTimeout to allow UI to update before continuing
   setTimeout(async () => {
     try {

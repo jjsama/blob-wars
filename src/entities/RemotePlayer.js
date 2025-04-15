@@ -7,6 +7,12 @@ export class RemotePlayer extends THREE.Object3D {
     constructor(scene, id, position = GAME_CONFIG.playerStartPosition, color = null) {
         super();
 
+        console.log(`[RemotePlayer Constructor] Creating player ${id} at`, position, `Color: ${color?.toString(16)}`);
+        // --- DEBUG: Check scene validity ---
+        console.log(`  [RemotePlayer Constructor ${id}] Scene object valid: ${!!scene}`);
+        console.log(`  [RemotePlayer Constructor ${id}] Scene has .scene property: ${!!scene?.scene}`);
+        // --- End Debug ---
+
         this.scene = scene;
         this.remoteId = id;
 
@@ -19,8 +25,6 @@ export class RemotePlayer extends THREE.Object3D {
         this.currentAnimation = 'idle';
         this.mixer = null;
         this.currentAction = null;
-        this.nameTag = null;
-        this.healthBar = null;
         this.isDead = false;
         this.isAttacking = false;
         this.isJumping = false;
@@ -54,19 +58,16 @@ export class RemotePlayer extends THREE.Object3D {
         this.needsSceneAdd = false; // Flag for delayed addition
 
         // Add to scene ONLY if the scene exists
-        if (this.scene && this.scene.scene) {
-            this.scene.scene.add(this);
+        if (this.scene) {
+            this.scene.add(this);
             console.log(`Remote player ${id} added to scene at position (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${position.z.toFixed(2)})`);
         } else {
-            error(`RemotePlayer ${id}: Cannot add to scene because this.scene or this.scene.scene is null/undefined. Will attempt later.`); // Update error message
+            error(`RemotePlayer ${id}: Cannot add to scene because this.scene is null/undefined. Will attempt later.`);
             this.needsSceneAdd = true; // Set flag to add later
         }
 
         // Load model
         this.loadModel();
-
-        // Create health bar
-        this.createHealthBar();
     }
 
     setPosition(position) {
@@ -123,6 +124,7 @@ export class RemotePlayer extends THREE.Object3D {
             loader.load(
                 modelPath,
                 (gltf) => {
+                    console.log(`[RemotePlayer ${this.remoteId} loadModel] SUCCESS! GLTF loaded.`);
                     // Get the model
                     const model = gltf.scene;
 
@@ -184,7 +186,8 @@ export class RemotePlayer extends THREE.Object3D {
                     error(`
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Failed to load remote player model for ID: ${this.remoteId}
-Error: ${loadError.message || 'Unknown loading error'}
+Error Type: ${loadError?.constructor?.name || 'Unknown'}
+Error: ${loadError?.message || 'Unknown loading error'}
 URL attempted: ${modelPath}
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 `);
@@ -197,11 +200,13 @@ URL attempted: ${modelPath}
                     placeholderMesh.position.set(0, 0.9, 0); // Position roughly where player would be
 
                     // Add placeholder as child only if scene exists
-                    if (this.scene && this.scene.scene) {
-                        this.add(placeholderMesh);
+                    if (this.scene) {
+                        // this.add(placeholderMesh); // Don't add as child if model load failed, add directly to scene if needed
+                        // Let's just log for now, as the main object 'this' is already added
+                        // this.scene.add(placeholderMesh); // Avoid adding duplicate representation
                         console.log(`Added placeholder for ${this.remoteId} to parent object.`);
                     } else {
-                        error(`RemotePlayer ${this.remoteId}: Cannot add placeholder because scene or scene.scene is null/undefined.`);
+                        error(`RemotePlayer ${this.remoteId}: Cannot add placeholder because scene is null/undefined.`);
                     }
                     this.model = placeholderMesh; // Use placeholder as the 'model' for positioning
                     this.modelLoaded = true; // Set to true so position updates apply to placeholder
@@ -365,12 +370,13 @@ URL attempted: ${modelPath}
         this.rotationInterpolationFactor = 0;
     }
 
+    /**
+     * Returns a clone of the player's current world position.
+     * @returns {THREE.Vector3} Cloned position vector.
+     */
     getPosition() {
-        return {
-            x: this.position.x,
-            y: this.position.y,
-            z: this.position.z
-        };
+        // Return a clone to prevent external modification of the internal position
+        return this.position.clone();
     }
 
     getRotation() {
@@ -394,7 +400,9 @@ URL attempted: ${modelPath}
         // Interpolate position
         if (this.interpolationFactor < 1) {
             this.interpolationFactor += deltaTime * this.interpolationSpeed;
-            if (this.interpolationFactor > 1) this.interpolationFactor = 1;
+
+            // Clamp the factor to prevent overshooting
+            this.interpolationFactor = Math.min(this.interpolationFactor, 1);
 
             const newPosition = new THREE.Vector3();
             newPosition.lerpVectors(this.previousPosition, this.targetPosition, this.interpolationFactor);
@@ -404,7 +412,7 @@ URL attempted: ${modelPath}
         // --- Delayed Scene Add --- 
         if (this.needsSceneAdd) {
             if (this.scene && this.scene.scene) {
-                this.scene.scene.add(this);
+                this.scene.add(this);
                 this.needsSceneAdd = false; // Successfully added
                 console.log(`RemotePlayer ${this.remoteId} added to scene (delayed).`);
             } else {
@@ -439,76 +447,6 @@ URL attempted: ${modelPath}
             // Apply interpolated rotation
             this.model.rotation.y = fromAngle + diff * this.rotationInterpolationFactor;
         }
-
-        // Update visual elements
-        // this.updateVisualElements(); // This call was causing the error, handle updates within updateHealthBarPosition
-        this.updateHealthBarPosition(); // Call the correct function to update DOM position
-    }
-
-    updateVisualElements() {
-        // This function is now effectively replaced by updateHealthBarPosition
-        // and the name tag update logic within Game.js
-        // We can potentially remove this later if nothing else uses it.
-        if (!this.modelLoaded) {
-            return;
-        }
-
-        // // Update health bar position - INCORRECT LOGIC REMOVED
-        // if (this.healthBar) {
-        //     const worldPos = this.getWorldPosition(new THREE.Vector3());
-        //     // INCORRECT: this.healthBar is a DOM object container, not a THREE object
-        //     // this.healthBar.position.set(worldPos.x, worldPos.y + 2, worldPos.z); 
-        //     // this.healthBar.updateHealth(this.health); // Health update is handled by updateHealthBar
-        // }
-    }
-
-    // Update nametag position to follow the player
-    updateNameTag() {
-        if (!this.nameTag || !this.scene || !this.scene.camera) return;
-
-        try {
-            // Get position in world space
-            const position = new THREE.Vector3();
-            this.getWorldPosition(position);
-
-            // Add height offset to place tag above player's head
-            position.y += 2.0;
-
-            // Convert 3D position to screen coordinates
-            const screenPosition = position.clone();
-            screenPosition.project(this.scene.camera);
-
-            // Check if player is behind camera
-            const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
-            const playerDirection = new THREE.Vector3().subVectors(position, this.scene.camera.position).normalize();
-            const dotProduct = cameraDirection.dot(playerDirection);
-
-            // Hide tag if player is behind camera (dot product < 0)
-            if (dotProduct < 0) {
-                this.nameTag.style.display = 'none';
-                return;
-            }
-
-            // Show tag if player is visible
-            this.nameTag.style.display = 'block';
-
-            // Convert to CSS coordinates
-            const x = (screenPosition.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-(screenPosition.y * 0.5) + 0.5) * window.innerHeight;
-
-            // Update nametag position
-            this.nameTag.style.left = `${x - (this.nameTag.offsetWidth / 2)}px`;
-            this.nameTag.style.top = `${y}px`;
-
-            // Add distance fade effect - farther players have more transparent tags
-            const distance = position.distanceTo(this.scene.camera.position);
-            const maxDistance = 50; // Maximum distance at which tag is visible
-            const opacity = Math.max(0.2, 1 - (distance / maxDistance));
-
-            this.nameTag.style.opacity = opacity.toString();
-        } catch (err) {
-            console.error('Error updating nametag:', err);
-        }
     }
 
     setAnimation(name) {
@@ -523,17 +461,6 @@ URL attempted: ${modelPath}
         if (this.mixer) {
             this.mixer.stopAllAction();
             this.mixer = null;
-        }
-
-        // Remove UI elements
-        if (this.healthBar?.container?.parentNode) {
-            this.healthBar.container.parentNode.removeChild(this.healthBar.container);
-            this.healthBar = null;
-        }
-
-        if (this.nameTag?.parentNode) {
-            this.nameTag.parentNode.removeChild(this.nameTag);
-            this.nameTag = null;
         }
 
         // Clean up model resources
@@ -577,12 +504,6 @@ URL attempted: ${modelPath}
 
         console.log(`Remote player ${this.remoteId} took ${amount} damage, health: ${this.health}`);
 
-        // Update health bar
-        this.updateHealthBar();
-
-        // Add damage indicator
-        this.showDamageIndicator();
-
         if (this.health <= 0 && !this.isDead) {
             this.die();
         }
@@ -611,167 +532,4 @@ URL attempted: ${modelPath}
 
         console.log(`Remote player ${this.remoteId} respawned`);
     }
-
-    showDamageIndicator() {
-        // Create a floating damage indicator
-        const indicator = document.createElement('div');
-        indicator.className = 'damage-indicator';
-        indicator.textContent = '!';
-        indicator.style.position = 'absolute';
-        indicator.style.color = 'red';
-        indicator.style.fontWeight = 'bold';
-        indicator.style.fontSize = '24px';
-        indicator.style.textShadow = '0 0 3px black';
-        indicator.style.zIndex = '1000';
-        indicator.style.pointerEvents = 'none';
-
-        document.body.appendChild(indicator);
-
-        // Position the indicator over the player
-        const updatePosition = () => {
-            if (!this.model) {
-                indicator.remove();
-                return;
-            }
-
-            // Convert 3D position to screen coordinates
-            const vector = new THREE.Vector3();
-            vector.setFromMatrixPosition(this.matrixWorld);
-
-            // Project to screen coordinates
-            vector.project(this.scene.camera);
-
-            // Convert to CSS coordinates
-            const x = (vector.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-(vector.y * 0.5) + 0.5) * window.innerHeight - 30;
-
-            indicator.style.left = `${x}px`;
-            indicator.style.top = `${y}px`;
-        };
-
-        // Animate and remove the indicator
-        let opacity = 1;
-        const animate = () => {
-            opacity -= 0.02;
-            indicator.style.opacity = opacity;
-            updatePosition();
-
-            if (opacity > 0) {
-                requestAnimationFrame(animate);
-            } else {
-                indicator.remove();
-            }
-        };
-
-        updatePosition();
-        animate();
-    }
-
-    createHealthBar() {
-        // Create a health bar element
-        const healthBarContainer = document.createElement('div');
-        healthBarContainer.className = 'remote-health-bar-container';
-        healthBarContainer.style.position = 'absolute';
-        healthBarContainer.style.width = '50px';
-        healthBarContainer.style.height = '6px';
-        healthBarContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-        healthBarContainer.style.borderRadius = '3px';
-        healthBarContainer.style.overflow = 'hidden';
-        healthBarContainer.style.pointerEvents = 'none';
-        healthBarContainer.style.zIndex = '999';
-
-        const healthBarFill = document.createElement('div');
-        healthBarFill.className = 'remote-health-bar-fill';
-        healthBarFill.style.width = '100%'; // Start at full health
-        healthBarFill.style.height = '100%';
-        healthBarFill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green for full health
-        healthBarFill.style.transition = 'width 0.3s ease-in-out, background-color 0.3s ease-in-out';
-
-        healthBarContainer.appendChild(healthBarFill);
-        document.body.appendChild(healthBarContainer);
-
-        this.healthBar = {
-            container: healthBarContainer,
-            fill: healthBarFill
-        };
-
-        // Initialize health bar with current health
-        this.updateHealthBar();
-    }
-
-    updateHealthBar() {
-        if (!this.healthBar) return;
-
-        // Update health bar width
-        const healthPercent = Math.max(0, Math.min(100, this.health));
-        this.healthBar.fill.style.width = `${healthPercent}%`;
-
-        // Change color based on health
-        if (healthPercent > 70) {
-            this.healthBar.fill.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
-        } else if (healthPercent > 30) {
-            this.healthBar.fill.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
-        } else {
-            this.healthBar.fill.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
-        }
-
-        // Position the health bar above the name tag
-        this.updateHealthBarPosition();
-    }
-
-    updateHealthBarPosition() {
-        // 1. Guard Clause: Checks if required objects exist
-        if (!this.healthBar || !this.healthBar.container || !this.scene || !this.scene.camera) {
-            // Add logging here
-            if (Math.random() < 0.05) { // Log occasionally to avoid spam
-                console.log(`[RemotePlayer ${this.remoteId}] updateHealthBarPosition exiting early. HealthBar: ${!!this.healthBar}, Container: ${!!this.healthBar?.container}, Scene: ${!!this.scene}, Camera: ${!!this.scene?.camera}`); // Use console.log
-            }
-            return;
-        }
-
-        try {
-            // Get position in world space
-            const position = new THREE.Vector3();
-            this.getWorldPosition(position);
-
-            // Add height offset to place bar above player's head but below name tag
-            position.y += 1.8;
-
-            // Convert 3D position to screen coordinates
-            const screenPosition = position.clone();
-            screenPosition.project(this.scene.camera);
-
-            // Check if player is behind camera
-            const cameraDirection = this.scene.camera.getWorldDirection(new THREE.Vector3());
-            const playerDirection = new THREE.Vector3().subVectors(position, this.scene.camera.position).normalize();
-            const dotProduct = cameraDirection.dot(playerDirection);
-
-            // Hide health bar if player is behind camera or dead
-            if (dotProduct < 0 || this.isDead) {
-                this.healthBar.container.style.display = 'none';
-                return;
-            }
-
-            // Only show health bar if not full health
-            const healthPercent = Math.max(0, Math.min(100, this.health));
-            this.healthBar.container.style.display = healthPercent < 100 ? 'block' : 'none';
-
-            // Convert to CSS coordinates
-            const x = (screenPosition.x * 0.5 + 0.5) * window.innerWidth;
-            const y = (-(screenPosition.y * 0.5) + 0.5) * window.innerHeight;
-
-            // Update health bar position (centered horizontally)
-            this.healthBar.container.style.left = `${x - 25}px`; // Center the 50px wide bar
-            this.healthBar.container.style.top = `${y}px`;
-
-            // Adjust opacity based on distance like the nametag
-            const distance = position.distanceTo(this.scene.camera.position);
-            const maxDistance = 50;
-            const opacity = Math.max(0.2, 1 - (distance / maxDistance));
-
-            this.healthBar.container.style.opacity = opacity.toString();
-        } catch (err) {
-            console.error('Error updating health bar position:', err);
-        }
-    }
-} 
+}

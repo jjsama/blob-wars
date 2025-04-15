@@ -5,10 +5,14 @@ export class GameScene {
         this.scene = null;
         this.camera = null;
         this.renderer = null;
+        this.player = null;
+        this.orbitControls = null;
+        this.skybox = null;
 
-        // Revert to the previous camera settings but with slight adjustments
-        this.cameraOffset = new THREE.Vector3(1.0, 2.0, 5.0); // Slightly to the right, good distance
-        this.cameraTarget = new THREE.Vector3();
+        // Position camera to match pre-refactor style
+        // This places the camera more to the right of the character to keep the reticle centered
+        this.cameraOffset = new THREE.Vector3(2.2, 1.8, 4.0); // Increased right offset and distance
+        this.cameraTarget = new THREE.Vector3(0.8, 0, 0); // Look ahead and to the right
 
         // Mouse control variables
         this.mouseX = 0;
@@ -25,7 +29,7 @@ export class GameScene {
         this.scene.fog = new THREE.Fog(0x88ccff, 50, 1000);
 
         // Add lighting
-        this.scene.add(new THREE.AmbientLight(0x666666, 3));
+        this.scene.add(new THREE.AmbientLight(0x404040, 1.5));
 
         const directionalLight = new THREE.DirectionalLight(0xffffff, 7);
         directionalLight.position.set(200, 450, 500);
@@ -95,7 +99,7 @@ export class GameScene {
                     this.targetRotationY -= movementY * this.sensitivity;
 
                     // Limit vertical rotation to prevent flipping
-                    this.targetRotationY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.targetRotationY));
+                    this.targetRotationY = Math.max(-Math.PI / 2.5, Math.min(Math.PI / 2.5, this.targetRotationY)); // Allow looking down/up more
                 }
             } catch (err) {
                 console.error('Error handling mouse movement:', err);
@@ -120,68 +124,71 @@ export class GameScene {
         try {
             if (!target) {
                 console.warn('No target provided for camera update');
-                return;
+                return new THREE.Vector3(0, 0, -1);
             }
-
-            // Validate target position
+            // Validate target position (optional but good practice)
             if (isNaN(target.x) || isNaN(target.y) || isNaN(target.z)) {
                 console.error('Invalid target position for camera update:', target);
-                return;
+                return new THREE.Vector3(0, 0, -1);
             }
 
-            // Create a rotation quaternion based on mouse input
+            // --- Calculate Camera Position based on Mouse Rotation ---
+            // Create a rotation quaternion based on MOUSE input
             const rotationQuaternion = new THREE.Quaternion();
             rotationQuaternion.setFromEuler(
                 new THREE.Euler(this.targetRotationY, this.targetRotationX, 0, 'YXZ')
             );
 
-            // Apply rotation to the offset
+            // Apply the camera's rotation to the base offset
             const rotatedOffset = this.cameraOffset.clone().applyQuaternion(rotationQuaternion);
 
-            // Set camera position and look direction
+            // Set camera position relative to the target
             this.camera.position.copy(target).add(rotatedOffset);
 
-            // Calculate look target (further ahead of player)
-            const lookDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(rotationQuaternion);
+            // --- Calculate LookAt Target ---
+            // Apply target offset to better position what we're looking at
+            // This helps keep the character positioned to the left side of the screen
+            const lookTargetOffset = this.cameraTarget.clone().applyQuaternion(rotationQuaternion);
 
-            // Position the look target further ahead for better aiming
-            this.cameraTarget.copy(target).add(lookDirection.multiplyScalar(20));
+            // Look slightly ahead and to the right of the player's base position
+            const lookTarget = target.clone().add(lookTargetOffset);
+            lookTarget.y += 1.0; // Adjust this height as needed
 
-            // Add a slight vertical offset to the look target for better aiming
-            this.cameraTarget.y += 0.7; // Adjusted for better aiming height
+            // --- Set Camera LookAt ---
+            this.camera.lookAt(lookTarget);
 
-            this.camera.lookAt(this.cameraTarget);
-
-            // Return the look direction for use in shooting
+            // --- Return Look Direction ---
+            const lookDirection = new THREE.Vector3();
+            this.camera.getWorldDirection(lookDirection);
             return lookDirection;
+
         } catch (err) {
             console.error('Error in updateCamera:', err);
-            return new THREE.Vector3(0, 0, -1); // Return a default look direction in case of error
+            return new THREE.Vector3(0, 0, -1);
         }
     }
 
     update() {
         try {
-            // Get player position for camera if game instance exists
-            if (window.game && window.game.player) {
-                try {
-                    const playerPos = window.game.player.getPosition();
+            // Use the stored player reference
+            if (this.player) {
+                const playerPos = this.player.getPosition();
 
-                    // Verify position is valid before updating camera
-                    if (playerPos &&
-                        typeof playerPos.x === 'number' &&
-                        typeof playerPos.y === 'number' &&
-                        typeof playerPos.z === 'number' &&
-                        !isNaN(playerPos.x) &&
-                        !isNaN(playerPos.y) &&
-                        !isNaN(playerPos.z)) {
+                // Calculate desired camera position (offset from player)
+                const cameraOffset = new THREE.Vector3(0, 5, 8);
 
-                        this.updateCamera(new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z));
-                    } else {
-                        console.warn('Invalid player position:', playerPos);
-                    }
-                } catch (posError) {
-                    console.error('Error getting player position:', posError);
+                // Verify position is valid before updating camera
+                if (playerPos &&
+                    typeof playerPos.x === 'number' &&
+                    typeof playerPos.y === 'number' &&
+                    typeof playerPos.z === 'number' &&
+                    !isNaN(playerPos.x) &&
+                    !isNaN(playerPos.y) &&
+                    !isNaN(playerPos.z)) {
+
+                    this.updateCamera(new THREE.Vector3(playerPos.x, playerPos.y, playerPos.z));
+                } else {
+                    console.warn('Invalid player position:', playerPos);
                 }
             }
 
@@ -208,5 +215,17 @@ export class GameScene {
         } catch (err) {
             console.error('Error rendering scene:', err);
         }
+    }
+
+    /**
+     * Sets the player object for the scene to track.
+     * @param {Player} player - The local player object.
+     */
+    setPlayerToFollow(player) {
+        this.player = player;
+    }
+
+    createCamera() {
+        // ... existing code ...
     }
 } 

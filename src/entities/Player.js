@@ -2,12 +2,39 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { log, error } from '../debug.js';
 import { ASSET_PATHS, GAME_CONFIG } from '../utils/constants.js';
+import * as SkeletonUtils from 'three/examples/jsm/utils/SkeletonUtils.js';
 
 export class Player {
-    constructor(scene, physicsWorld, position = GAME_CONFIG.playerStartPosition, playerId = null, playerColor = null) {
+    /**
+     * Represents the player character.
+     *
+     * @param {THREE.Scene} scene - The main THREE scene.
+     * @param {Ammo.btDiscreteDynamicsWorld} physicsWorld - The physics world.
+     * @param {object} initialPosition - Initial {x, y, z} position.
+     * @param {string} playerId - The player's unique ID.
+     * @param {number} playerColor - The player's color.
+     * @param {THREE.Camera} camera - The game camera.
+     * @param {Array} projectilesArray - Reference to the game's projectiles array.
+     * @param {NetworkManager} networkManager - The network manager instance.
+     * @param {UIManager} uiManager - The UI manager instance.
+     */
+    constructor(scene, physicsWorld, initialPosition, playerId, playerColor, camera, projectilesArray, networkManager, uiManager) {
+        if (!scene || !physicsWorld || !initialPosition || !playerId || playerColor === undefined || !camera || !projectilesArray || !networkManager || !uiManager) {
+            throw new Error("Player constructor missing required arguments.");
+        }
+
+        // Store dependencies
         this.scene = scene;
         this.physicsWorld = physicsWorld;
-        this.position = position;
+        this.camera = camera;
+        this.projectilesArray = projectilesArray;
+        this.networkManager = networkManager;
+        this.uiManager = uiManager;
+
+        this.playerId = playerId;
+        this.playerColor = playerColor;
+        this.initialPosition = { ...initialPosition };
+        this.position = initialPosition;
         this.mesh = null;
         this.body = null;
         this.modelLoaded = false;
@@ -24,18 +51,9 @@ export class Player {
         this.mixerEventAdded = false;
         this._loggedMissingIdle = false;
         this._physicsCreated = false;
-        this.playerId = playerId || 'local';
 
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
-
-        // Use the provided color or fallback to teal
-        this.playerColor = playerColor || 0x00d2d3; // Bright teal as default
-
-        // NEW Animation State Properties
-        this.intendedAnimation = 'idle'; // What animation the input *wants*
-        this.lastMovementInputTime = 0;  // Timestamp of the last movement input intent
-        this.idleDelay = 150; // ms delay before switching back to idle
 
         console.log(`Player created with ID: ${this.playerId}, color: ${this.playerColor.toString(16)}`);
 
@@ -177,8 +195,12 @@ export class Player {
                 }
             });
 
-            // Scale down the model to make it smaller
-            model.scale.set(0.35, 0.35, 0.35); // Reduced from 0.5 to 0.35 (70% of previous size)
+            // Scale down the model to make it smaller - standard for third-person shooter
+            model.scale.set(0.3, 0.3, 0.3); // Further reduced to allow better visibility around character
+
+            // Apply a larger offset to the left to match pre-refactor style
+            // This places the character to the left side of the screen for better right-side visibility
+            model.position.x -= 0.8;
 
             this.mesh = model;
             this.scene.add(this.mesh);
@@ -396,21 +418,17 @@ export class Player {
                 throw new Error(`Animation error: ${animationError.message || 'Unknown animation error'}`);
             }
 
-            // Make the player always face the direction of the crosshair/camera
+            // Make the player face the direction the camera is looking
             try {
                 // First verify that all required objects exist
                 if (!this.modelLoaded) return;
-                if (typeof window === 'undefined') return;
-                if (!window.game) return;
-
-                const game = window.game;
-                if (!game.scene || !game.scene.camera) return;
+                if (!this.camera) return; // Use injected camera
 
                 // Create a vector to store camera direction
                 const cameraDirection = new THREE.Vector3();
 
                 // Get the world direction from the camera
-                game.scene.camera.getWorldDirection(cameraDirection);
+                this.camera.getWorldDirection(cameraDirection);
 
                 // Only proceed if we have a valid direction vector
                 if (isNaN(cameraDirection.x) || isNaN(cameraDirection.y) || isNaN(cameraDirection.z)) {
@@ -418,7 +436,7 @@ export class Player {
                     return;
                 }
 
-                // Zero out the Y component to keep character upright
+                // Zero out the Y component to keep character upright (horizontal plane only)
                 cameraDirection.y = 0;
 
                 // Only normalize if the vector has non-zero length
@@ -428,7 +446,7 @@ export class Player {
                     // Calculate the angle to face the camera direction
                     const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
 
-                    // Set rotation to match crosshair direction - with error checking
+                    // Set rotation to match camera direction 
                     if (!isNaN(angle)) {
                         this.mesh.rotation.set(0, angle, 0);
                     }
@@ -517,15 +535,16 @@ export class Player {
             this.body.activate(true);
 
             // Get camera's forward and right vectors to move relative to camera orientation
-            const camera = window.game.scene.camera;
-            if (!camera) return;
+            // const camera = window.game.scene.camera; // Use stored camera
+            // if (!camera) return;
+            if (!this.camera) return;
 
             // Get forward and right vectors from camera (but ignore y-component for horizontal movement)
-            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+            const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion); // Use this.camera
             forward.y = 0;
             forward.normalize();
 
-            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion);
+            const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion); // Use this.camera
             right.y = 0;
             right.normalize();
 
@@ -661,128 +680,53 @@ export class Player {
         }
     }
 
-    shoot() {
-        if (!this.canShoot) return;
+    takeDamage(amount, attackerId) {
+        if (this.isDead) return;
+        this.health -= amount;
+        this.health = Math.max(0, this.health);
 
-        // Get the direction the player is facing
-        const direction = this.getAimDirection();
-
-        // Get the position to spawn the projectile (in front of the player)
-        const muzzleOffset = new THREE.Vector3(0, 0.5, 0).applyQuaternion(this.mesh.quaternion);
-        const muzzlePosition = this.mesh.position.clone().add(muzzleOffset);
-
-        // Create projectile
-        const projectile = new Projectile(
-            window.game.scene.scene,
-            window.game.physics.physicsWorld,
-            muzzlePosition,
-            direction,
-            50 // Speed
-        );
-
-        // Add to game's projectiles array
-        window.game.projectiles.push(projectile);
-
-        // Set cooldown
-        this.canShoot = false;
-        setTimeout(() => {
-            this.canShoot = true;
-        }, 500); // 500ms cooldown
-    }
-
-    getAimDirection() {
-        // Get the camera direction for aiming
-        const direction = new THREE.Vector3();
-        // We need to access the camera from the scene
-        // This assumes the scene has a reference to the camera
-        if (window.game && window.game.scene && window.game.scene.camera) {
-            window.game.scene.camera.getWorldDirection(direction);
-        }
-        return direction;
-    }
-
-    takeDamage(amount, attackerId = null) {
-        // Store previous health for comparison
-        const previousHealth = this.health;
-
-        // Apply damage locally for immediate feedback
-        this.health = Math.max(0, this.health - amount);
-
-        // Update health UI
-        this.updateHealthUI();
-
-        // Log the damage event
-        console.log(`Player took ${amount} damage, health reduced from ${previousHealth} to ${this.health}`);
-
-        // If this is the local player in a multiplayer game, we still apply damage locally
-        // but we don't have to send a damage event because the server should have calculated this
-        // This is client-side prediction for responsive feedback
-        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
-            // Add a damage indicator for visual feedback
-            this.addDamageIndicator(amount);
-
-            // We could implement client-side prediction by sending a "hit-confirm" event
-            // if we're confident in our hit detection
-            // window.game.networkManager.sendHitConfirm(attackerId, amount);
+        // Send damage confirmation to server if local player
+        if (this.playerId === 'local' && this.networkManager?.connected) {
+            // This logic seems incorrect for client-side, server should handle hit confirmation
         }
 
-        // Check if this damage kills the player
-        if (this.health <= 0 && !this.isDead) {
+        // Show damage indicator for local player
+        if (this.uiManager) {
+            const currentPos = this.getPosition();
+            this.uiManager.showDamageIndicator(new THREE.Vector3(currentPos.x, currentPos.y, currentPos.z), amount);
+        }
+
+        if (this.health <= 0) {
             this.die(attackerId);
         }
+        this.updateHealthBar();
     }
 
-    updateHealthUI() {
-        const healthBar = document.getElementById('health-bar');
-        const healthText = document.getElementById('health-text');
-
-        if (healthBar && healthText) {
-            // Update health bar width
-            healthBar.style.width = `${this.health}%`;
-
-            // Update health text
-            healthText.textContent = `${this.health} HP`;
-
-            // Change color based on health
-            if (this.health > 70) {
-                healthBar.style.backgroundColor = 'rgba(0, 255, 0, 0.7)'; // Green
-            } else if (this.health > 30) {
-                healthBar.style.backgroundColor = 'rgba(255, 255, 0, 0.7)'; // Yellow
-            } else {
-                healthBar.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
-            }
-        }
-    }
-
-    die(attackerId = null) {
+    die(killerId = null) {
+        if (this.isDead) return;
         this.isDead = true;
-        console.log(`[Player ${this.playerId}] Died. Attacker: ${attackerId || 'None'}`);
+        this.health = 0;
+        console.log(`Player ${this.playerId} died. Killed by: ${killerId || 'Unknown'}`);
+        this.playAnimation('death');
 
-        // Send death event to server if this is the local player
-        if (this.playerId === 'local' && window.game && window.game.isMultiplayer && window.game.networkManager) {
-            window.game.networkManager.sendDeath();
+        // Send death event to server if local player
+        if (this.playerId === 'local' && this.networkManager?.connected) {
+            this.networkManager.sendDeath();
         }
 
-        // Show death message
-        const deathMessage = document.createElement('div');
-        deathMessage.style.position = 'fixed';
-        deathMessage.style.top = '50%';
-        deathMessage.style.left = '50%';
-        deathMessage.style.transform = 'translate(-50%, -50%)';
-        deathMessage.style.color = 'red';
-        deathMessage.style.fontSize = '48px';
-        deathMessage.style.fontFamily = 'Arial, sans-serif';
-        deathMessage.style.fontWeight = 'bold';
-        deathMessage.style.textShadow = '2px 2px 4px black';
-        deathMessage.textContent = 'YOU DIED';
+        // Show death message for local player
+        if (this.uiManager) {
+            this.uiManager.showDeathMessage();
+        }
 
-        document.body.appendChild(deathMessage);
+        // Disable physics interactions but keep object visible
+        // ... existing code ...
 
-        // Respawn after 3 seconds
-        setTimeout(() => {
-            this.respawn();
-            document.body.removeChild(deathMessage);
-        }, 3000);
+        // Update local HUD (handled by UIManager now, but maybe call it explicitly?)
+        this.updateHealthBar();
+        // if (window.game && window.game.uiManager) {
+        //     window.game.uiManager.updateLocalPlayerHealth(this.health);
+        // } // This is likely redundant if UIManager updates health correctly
     }
 
     /**
@@ -796,8 +740,10 @@ export class Player {
         this.isDead = false;
         this.isJumping = false;
 
-        // Update health UI
-        this.updateHealthUI();
+        // Update health UI via UIManager (will happen in Game update loop)
+        // if (window.game && window.game.uiManager) {
+        //     window.game.uiManager.updateLocalPlayerHealth(this.health);
+        // }
 
         // Reset position to spawn position
         const spawnPosition = { ...GAME_CONFIG.playerStartPosition };
@@ -860,7 +806,7 @@ export class Player {
     }
 
     checkGroundContact() {
-        if (!this.body || typeof Ammo === 'undefined') return;
+        if (!this.body || !this.physicsWorld) return;
 
         // --- Ground Check Logging --- 
         const transform = this.body.getWorldTransform();
@@ -958,42 +904,6 @@ export class Player {
                 log(logMsg);
             }
         }
-    }
-
-    // Add a visual damage indicator method
-    addDamageIndicator(amount) {
-        // Create a floating damage indicator
-        const indicator = document.createElement('div');
-        indicator.className = 'damage-indicator';
-        indicator.textContent = `-${amount}`;
-        indicator.style.position = 'absolute';
-        indicator.style.color = 'red';
-        indicator.style.fontWeight = 'bold';
-        indicator.style.fontSize = '20px';
-        indicator.style.textShadow = '0 0 3px black';
-        indicator.style.zIndex = '1000';
-        indicator.style.pointerEvents = 'none';
-
-        document.body.appendChild(indicator);
-
-        // Position the indicator in the center of the screen (where the crosshair is)
-        indicator.style.top = '50%';
-        indicator.style.left = '50%';
-        indicator.style.transform = 'translate(-50%, -150%)'; // Position above crosshair
-
-        // Add animation
-        indicator.style.transition = 'all 1s ease-out';
-
-        // Start animation after a small delay
-        setTimeout(() => {
-            indicator.style.opacity = '0';
-            indicator.style.transform = 'translate(-50%, -200%)'; // Move up while fading
-        }, 10);
-
-        // Remove from DOM after animation completes
-        setTimeout(() => {
-            document.body.removeChild(indicator);
-        }, 1000);
     }
 
     // NEW Method to set animation intent based on input state

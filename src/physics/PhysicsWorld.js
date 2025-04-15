@@ -46,7 +46,8 @@ export class PhysicsWorld {
             this.tmpTransform = new Ammo.btTransform();
 
             // Set up collision detection
-            this.setupCollisionDetection();
+            // This now requires projectile arrays, so it must be called after they exist
+            // this.setupCollisionDetection(); // Moved call site
 
             log('Physics world initialized successfully');
         } catch (err) {
@@ -119,18 +120,22 @@ export class PhysicsWorld {
         }
     }
 
-    setupCollisionDetection() {
+    /**
+     * Set up collision detection logic.
+     * This will check for overlaps between bodies and trigger events.
+     * @param {Array} projectiles - Array of player projectiles.
+     * @param {Array} enemyProjectiles - Array of enemy projectiles.
+     */
+    setupCollisionDetection(projectiles, enemyProjectiles) {
         if (!this.physicsWorld) return;
 
         try {
-            // Get the dispatcher
             const dispatcher = this.physicsWorld.getDispatcher();
+            const numManifolds = dispatcher.getNumManifolds();
 
             // Set up a callback for each physics step
             this.physicsWorld.setInternalTickCallback(() => {
                 try {
-                    const numManifolds = dispatcher.getNumManifolds();
-
                     // Check each collision manifold
                     for (let i = 0; i < numManifolds; i++) {
                         const manifold = dispatcher.getManifoldByIndexInternal(i);
@@ -153,11 +158,10 @@ export class PhysicsWorld {
                                 if (projectile.projectileInstance) {
                                     projectile.projectileInstance.handleCollision();
                                 } else {
-                                    // Fallback: find projectile in game arrays
-                                    const projectiles = window.game ?
-                                        [...window.game.projectiles, ...window.game.enemyProjectiles] : [];
+                                    // Fallback: find projectile in game arrays (now passed as arguments)
+                                    const allProjectiles = [...projectiles, ...enemyProjectiles]; // Use passed arrays
 
-                                    for (const p of projectiles) {
+                                    for (const p of allProjectiles) { // Iterate over combined array
                                         if (p.body === projectile) {
                                             p.handleCollision();
                                             break;
