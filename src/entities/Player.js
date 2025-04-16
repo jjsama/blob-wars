@@ -88,7 +88,7 @@ export class Player {
                     const model = gltf.scene;
 
                     // Scale the model
-                    model.scale.set(0.35, 0.35, 0.35);
+                    model.scale.set(0.25, 0.25, 0.25);
 
                     // Reset model position relative to parent
                     model.position.set(0, -1, 0); // Offset Y to match physics body

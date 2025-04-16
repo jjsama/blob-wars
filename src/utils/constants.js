@@ -12,6 +12,7 @@ export const ASSET_PATHS = {
     // In production with a build step, they would be in the dist/assets folder
     models: {
         player: IS_PRODUCTION ? '/assets/models/blobville-player.glb' : '/public/models/blobville-player.glb',
+        map: IS_PRODUCTION ? '/assets/models/dm_blobjungle.glb' : '/public/models/dm_blobjungle.glb',
         // Add other model paths as needed
     },
     textures: {
@@ -24,7 +25,12 @@ export const ASSET_PATHS = {
 
 // Game configuration
 export const GAME_CONFIG = {
-    playerStartPosition: { x: 0, y: 5, z: 0 },
+    updateInterval: 1000 / 60, // Target 60 FPS
+    networkUpdateInterval: 50, // Send updates 20 times per second
+    playerStartPosition: { x: 0, y: 15, z: 5 }, // Lowered Y to 15
+    projectileLifetime: 3, // Projectiles live for 3 seconds
+    predictionBufferSize: 60, // Store up to 60 frames of predicted states
+    gravity: -20, // Increased gravity
     enemySpawnHeight: 2,
     physics: {
         gravity: -20

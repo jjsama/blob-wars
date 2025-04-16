@@ -4,15 +4,14 @@ import { GameScene } from './rendering/Scene.js';
 import { InputHandler } from './input/InputHandler.js';
 import { Player } from './entities/Player.js';
 import { RemotePlayer } from './entities/RemotePlayer.js';
-import { Ground } from './entities/Ground.js';
-import { Projectile } from './entities/Projectile.js';
 import { log, error } from './debug.js';
 import { NetworkManager } from './utils/NetworkManager.js';
 import { ColorManager } from './utils/ColorManager.js';
-import { GAME_CONFIG } from './utils/constants.js';
+import { GAME_CONFIG, ASSET_PATHS } from './utils/constants.js';
 import { PredictionSystem } from './physics/PredictionSystem.js';
 import { UIManager } from './managers/UIManager.js'; // Import UIManager (Corrected Path)
 import { PlayerManager } from './managers/PlayerManager.js'; // Import PlayerManager
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'; // ADD THIS IMPORT
 
 export class Game {
     constructor() {
@@ -247,6 +246,13 @@ export class Game {
         this.uiManager.localHealthBar = healthBar;
         this.uiManager.localHealthText = healthText;
         // this.uiManager.crosshair = document.getElementById('crosshair'); // REMOVED - we're using 3D reticle now
+
+        // Remove the 2D crosshair element explicitly if it exists
+        const crosshairElement = document.getElementById('crosshair');
+        if (crosshairElement && crosshairElement.parentNode) {
+            crosshairElement.parentNode.removeChild(crosshairElement);
+            console.log('Removed 2D crosshair element.');
+        }
     }
 
     async init() {
@@ -308,21 +314,10 @@ export class Game {
             await this.input.init();
             console.log('Input initialized');
 
-            // Create game objects (Ground)
-            console.log('Creating ground');
-            this.ground = new Ground(this.scene.scene, this.physics.physicsWorld);
-            this.ground.create();
-            console.log('Ground created');
-
-            // Add environment elements
-            console.log('Adding environment elements');
-            this.addEnvironmentElements();
-            console.log('Environment elements added');
-
-            // Add invisible walls
-            console.log('Adding invisible walls');
-            this.addInvisibleWalls();
-            console.log('Invisible walls added');
+            // Load the map instead - ADDED
+            console.log('[Game.init] Attempting to load map...');
+            await this.loadMap(); // Ensure loadMap is implemented and uses the constant
+            console.log('[Game.init] Map loading process attempted.');
 
             // --- Create Local Player using PlayerManager ---+
             try {
@@ -1674,142 +1669,6 @@ export class Game {
         }
     }
 
-    // Add the missing method to handle environment elements
-    addEnvironmentElements() {
-        // Add only decorative elements, no walls
-        this.addTrees();
-        this.addRocks();
-        this.addSkybox();
-    }
-
-    addTrees() {
-        const treePositions = [
-            { x: 20, z: 20 },
-            { x: -15, z: 10 },
-            { x: 5, z: -20 },
-            { x: -25, z: -15 }
-        ];
-
-        treePositions.forEach(pos => {
-            // Simple tree - trunk and foliage
-            const trunk = new THREE.Mesh(
-                new THREE.CylinderGeometry(0.5, 0.7, 5, 8),
-                new THREE.MeshStandardMaterial({ color: 0x8B4513, roughness: 0.8 })
-            );
-            trunk.position.set(pos.x, 2.5, pos.z);
-            trunk.castShadow = true;
-            this.scene.scene.add(trunk);
-
-            const foliage = new THREE.Mesh(
-                new THREE.ConeGeometry(3, 6, 8),
-                new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 })
-            );
-            foliage.position.set(pos.x, 7, pos.z);
-            foliage.castShadow = true;
-            this.scene.scene.add(foliage);
-        });
-    }
-
-    addRocks() {
-        const rockPositions = [
-            { x: 12, z: -8, scale: 1.5 },
-            { x: -7, z: 15, scale: 1 },
-            { x: 18, z: 5, scale: 0.7 },
-            { x: -20, z: -10, scale: 2 }
-        ];
-
-        rockPositions.forEach(pos => {
-            // Simple rock
-            const rock = new THREE.Mesh(
-                new THREE.DodecahedronGeometry(pos.scale, 1),
-                new THREE.MeshStandardMaterial({
-                    color: 0x808080,
-                    roughness: 0.9,
-                    metalness: 0.1
-                })
-            );
-            rock.position.set(pos.x, pos.scale / 2, pos.z);
-            rock.rotation.set(
-                Math.random() * Math.PI,
-                Math.random() * Math.PI,
-                Math.random() * Math.PI
-            );
-            rock.castShadow = true;
-            rock.receiveShadow = true;
-            this.scene.scene.add(rock);
-        });
-    }
-
-    addSkybox() {
-        // Simple skybox
-        const skyboxGeometry = new THREE.BoxGeometry(1000, 1000, 1000);
-        const skyboxMaterials = [
-            new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide }), // Right
-            new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide }), // Left
-            new THREE.MeshBasicMaterial({ color: 0x4682B4, side: THREE.BackSide }), // Top
-            new THREE.MeshBasicMaterial({ color: 0x8B4513, side: THREE.BackSide }), // Bottom
-            new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide }), // Front
-            new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.BackSide })  // Back
-        ];
-
-        const skybox = new THREE.Mesh(skyboxGeometry, skyboxMaterials);
-        this.scene.scene.add(skybox);
-    }
-
-    addInvisibleWalls() {
-        const mapSize = 100; // Size of the playable area
-        const wallHeight = 20; // Height of invisible walls
-        const wallThickness = 2;
-
-        // Create invisible wall material
-        const wallMaterial = new THREE.MeshBasicMaterial({
-            transparent: true,
-            opacity: 0.0 // Completely invisible
-        });
-
-        // Create walls for each side of the map
-        const walls = [
-            // North wall
-            { pos: { x: 0, y: wallHeight / 2, z: -mapSize / 2 }, size: { x: mapSize, y: wallHeight, z: wallThickness } },
-            // South wall
-            { pos: { x: 0, y: wallHeight / 2, z: mapSize / 2 }, size: { x: mapSize, y: wallHeight, z: wallThickness } },
-            // East wall
-            { pos: { x: mapSize / 2, y: wallHeight / 2, z: 0 }, size: { x: wallThickness, y: wallHeight, z: mapSize } },
-            // West wall
-            { pos: { x: -mapSize / 2, y: wallHeight / 2, z: 0 }, size: { x: wallThickness, y: wallHeight, z: mapSize } }
-        ];
-
-        walls.forEach(wall => {
-            // Create wall mesh
-            const geometry = new THREE.BoxGeometry(wall.size.x, wall.size.y, wall.size.z);
-            const mesh = new THREE.Mesh(geometry, wallMaterial);
-            mesh.position.set(wall.pos.x, wall.pos.y, wall.pos.z);
-            this.scene.scene.add(mesh);
-
-            // Create physics body for wall
-            const shape = new Ammo.btBoxShape(new Ammo.btVector3(
-                wall.size.x / 2,
-                wall.size.y / 2,
-                wall.size.z / 2
-            ));
-
-            const transform = new Ammo.btTransform();
-            transform.setIdentity();
-            transform.setOrigin(new Ammo.btVector3(wall.pos.x, wall.pos.y, wall.pos.z));
-
-            const motionState = new Ammo.btDefaultMotionState(transform);
-            const rbInfo = new Ammo.btRigidBodyConstructionInfo(0, motionState, shape, new Ammo.btVector3(0, 0, 0));
-            const body = new Ammo.btRigidBody(rbInfo);
-
-            this.physics.physicsWorld.addRigidBody(body);
-
-            // Clean up Ammo.js objects
-            Ammo.destroy(rbInfo);
-        });
-
-        console.log('Invisible walls added to map boundaries');
-    }
-
     /**
      * Main game loop - handles updating and rendering each frame
      */
@@ -2079,6 +1938,157 @@ export class Game {
         } catch (err) {
             error('Error checking player visibility:', err);
             return false; // Assume not visible on error
+        }
+    }
+
+    /**
+     * Load the GLB map file asynchronously
+     */
+    async loadMap() {
+        console.log('[Game.loadMap] Starting map loading...');
+        const loader = new GLTFLoader(); // Correct: Use the directly imported constructor
+        const mapPath = ASSET_PATHS.models.map; // Use constant path
+        let mapLoadedSuccessfully = false;
+
+        if (!mapPath) {
+            console.error('[Game.loadMap] Map path is missing in ASSET_PATHS.models.map!');
+            return; // Stop if path is not defined
+        }
+
+        try {
+            console.log(`[Game.loadMap] Attempting to load GLTF from: ${mapPath}`);
+            const gltf = await loader.loadAsync(mapPath);
+            console.log('[Game.loadMap] loader.loadAsync SUCCESS callback entered.');
+            const mapScene = gltf.scene;
+            console.log(`[Game.loadMap] mapScene object obtained: ${!!mapScene}`);
+
+            // Set map scale (using 50x now) - MOVED BEFORE BBOX CALCULATION
+            mapScene.scale.set(50, 50, 50); // Back to 50x scale
+            console.log('[Game.loadMap] Setting map scale to 50x.');
+
+            // Add map to the main scene
+            if (!this.scene || !this.scene.scene) {
+                console.error("[Game.loadMap] CRITICAL: this.scene or this.scene.scene is not available before adding map mesh!");
+                throw new Error("Scene not ready for map loading.");
+            }
+            this.scene.scene.add(mapScene);
+            console.log('[Game.loadMap] Map mesh added to the THREE scene.');
+
+            // Enable shadows for map objects
+            mapScene.traverse((child) => {
+                if (child.isMesh) {
+                    child.castShadow = true;
+                    child.receiveShadow = true;
+                    // Optional: Adjust material properties if needed (e.g., for debugging)
+                    // child.material = new THREE.MeshBasicMaterial({ color: 0x00ff00, wireframe: true });
+                }
+            });
+            console.log('[Game.loadMap] Enabled shadows for map meshes.');
+
+            // --- Add Physics for the Map --- 
+            console.log('[Game.loadMap] Starting physics shape creation for the map (using simple box shapes)...');
+            const physicsWorldAvailable = !!(this.physics && this.physics.physicsWorld);
+            if (!physicsWorldAvailable) {
+                console.error('[Game.loadMap] Physics world not available, cannot create map physics!');
+            } else {
+                // --- Replace Bounding Box with Triangle Mesh Shape ---
+                console.log('[Game.loadMap] Creating complex triangle mesh physics shape for map...');
+                const triangleMesh = new Ammo.btTriangleMesh(true, true); // Use default flags
+
+                mapScene.traverse((child) => {
+                    if (child.isMesh && child.geometry) {
+                        const geometry = child.geometry;
+                        const vertices = geometry.attributes.position.array;
+                        const indices = geometry.index ? geometry.index.array : null;
+
+                        // Get world matrix for this mesh to apply transformations (scale, position, rotation)
+                        child.updateWorldMatrix(true, false);
+                        const worldMatrix = child.matrixWorld;
+
+                        const tempVec = new THREE.Vector3(); // To apply world matrix
+
+                        if (indices) {
+                            // Indexed geometry
+                            for (let i = 0; i < indices.length; i += 3) {
+                                const v1Index = indices[i] * 3;
+                                const v2Index = indices[i + 1] * 3;
+                                const v3Index = indices[i + 2] * 3;
+
+                                tempVec.set(vertices[v1Index], vertices[v1Index + 1], vertices[v1Index + 2]).applyMatrix4(worldMatrix);
+                                const p1 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                tempVec.set(vertices[v2Index], vertices[v2Index + 1], vertices[v2Index + 2]).applyMatrix4(worldMatrix);
+                                const p2 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                tempVec.set(vertices[v3Index], vertices[v3Index + 1], vertices[v3Index + 2]).applyMatrix4(worldMatrix);
+                                const p3 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                triangleMesh.addTriangle(p1, p2, p3, false); // false = remove duplicate vertices (handled by btTriangleMesh constructor flags?)
+
+                                // Clean up Ammo vectors
+                                Ammo.destroy(p1);
+                                Ammo.destroy(p2);
+                                Ammo.destroy(p3);
+                            }
+                        } else {
+                            // Non-indexed geometry
+                            for (let i = 0; i < vertices.length; i += 9) {
+                                tempVec.set(vertices[i], vertices[i + 1], vertices[i + 2]).applyMatrix4(worldMatrix);
+                                const p1 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                tempVec.set(vertices[i + 3], vertices[i + 4], vertices[i + 5]).applyMatrix4(worldMatrix);
+                                const p2 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                tempVec.set(vertices[i + 6], vertices[i + 7], vertices[i + 8]).applyMatrix4(worldMatrix);
+                                const p3 = new Ammo.btVector3(tempVec.x, tempVec.y, tempVec.z);
+
+                                triangleMesh.addTriangle(p1, p2, p3, false);
+
+                                // Clean up Ammo vectors
+                                Ammo.destroy(p1);
+                                Ammo.destroy(p2);
+                                Ammo.destroy(p3);
+                            }
+                        }
+                    }
+                });
+
+                const mapShape = new Ammo.btBvhTriangleMeshShape(triangleMesh, true, true); // Use Mesh, build BVH, useQuantizedAabbCompression = true
+
+                const mapTransform = new Ammo.btTransform();
+                mapTransform.setIdentity();
+                mapTransform.setOrigin(new Ammo.btVector3(0, 0, 0)); // Origin at world 0,0,0
+
+                const mapMass = 0; // Static object
+                const mapLocalInertia = new Ammo.btVector3(0, 0, 0);
+                const mapMotionState = new Ammo.btDefaultMotionState(mapTransform);
+                const mapRbInfo = new Ammo.btRigidBodyConstructionInfo(mapMass, mapMotionState, mapShape, mapLocalInertia);
+                const mapBody = new Ammo.btRigidBody(mapRbInfo);
+                mapBody.setRestitution(0.1); // Some bounciness
+                mapBody.setFriction(0.9); // High friction
+
+                this.physics.physicsWorld.addRigidBody(mapBody);
+                console.log('[Game.loadMap] Added BVH TRIANGLE MESH shape for map physics.');
+
+                // Clean up Ammo objects (TriangleMesh is kept alive by the shape)
+                Ammo.destroy(mapRbInfo);
+                Ammo.destroy(mapLocalInertia);
+                // Ammo.destroy(triangleMesh); // Don't destroy mesh, shape needs it
+                // --- End Physics for Map ---
+            }
+
+            mapLoadedSuccessfully = true;
+            console.log('[Game.loadMap] Map loading and physics setup completed successfully.');
+
+        } catch (err) {
+            console.error(`[Game.loadMap] CRITICAL ERROR during map loading or physics setup from ${mapPath}:`, err);
+            mapLoadedSuccessfully = false;
+        } finally {
+            if (mapLoadedSuccessfully) {
+                console.log('[Game.loadMap] Final Status: Map loaded successfully.');
+            } else {
+                console.error('[Game.loadMap] Final Status: Map loading FAILED.');
+            }
         }
     }
 } 
