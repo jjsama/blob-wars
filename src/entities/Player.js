@@ -51,6 +51,7 @@ export class Player {
         this.mixerEventAdded = false;
         this._loggedMissingIdle = false;
         this._physicsCreated = false;
+        this.respawnTimer = null;
 
         // Queue for storing position updates that arrive before model is loaded
         this.positionQueue = [];
@@ -463,30 +464,23 @@ export class Player {
             try {
                 if (this.modelLoaded && this.mixer) {
                     let targetAnimation = 'idle'; // Default to idle
+                    const isMoving = this.intendedAnimation !== 'idle'; // Check if intent is movement
 
                     // Check special states first
-                    if (this.isAttacking) {
+                    if (this.isDead) {
+                        // Death animation handled in die() method
+                        targetAnimation = this.currentAnimation; // Keep current animation if dead
+                    } else if (this.isAttacking) {
                         // Let attack() handle finishing the attack animation
                         targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
                     } else if (this.isJumping) {
                         targetAnimation = 'jump';
+                    } else if (isMoving) {
+                        // If movement is intended, use that animation
+                        targetAnimation = this.intendedAnimation;
                     } else {
-                        // Not dead, attacking, or jumping - check movement intent
-                        const now = Date.now();
-                        if (this.intendedAnimation !== 'idle') {
-                            // If intent is movement, use that
-                            targetAnimation = this.intendedAnimation;
-                        } else {
-                            // Intent is idle. Only switch to idle if enough time has passed
-                            // or if we are already idle.
-                            if (this.currentAnimation === 'idle' || now - this.lastMovementInputTime > this.idleDelay) {
-                                targetAnimation = 'idle';
-                            }
-                            else {
-                                // Not enough time passed, keep the current (likely movement) animation
-                                targetAnimation = this.currentAnimation;
-                            }
-                        }
+                        // No special state, no movement intent => force idle
+                        targetAnimation = 'idle';
                     }
 
                     // Play the determined animation (playAnimation handles preventing restarts)
@@ -703,30 +697,50 @@ export class Player {
     }
 
     die(killerId = null) {
-        if (this.isDead) return;
+        if (this.isDead || this.respawnTimer) return; // Prevent multiple deaths/respawns
         this.isDead = true;
         this.health = 0;
         console.log(`Player ${this.playerId} died. Killed by: ${killerId || 'Unknown'}`);
-        this.playAnimation('death');
 
-        // Send death event to server if local player
-        if (this.playerId === 'local' && this.networkManager?.connected) {
-            this.networkManager.sendDeath();
+        // Clear any existing respawn timer just in case
+        if (this.respawnTimer) {
+            clearTimeout(this.respawnTimer);
+            this.respawnTimer = null;
         }
 
-        // Show death message for local player
-        if (this.uiManager) {
+        // Play death animation (if available)
+        this.playAnimation('death'); // Assuming a 'death' animation exists
+
+        // Send death event to server if local player (if multiplayer logic exists)
+        // if (!this.isRemote && this.networkManager?.connected) {
+        //     this.networkManager.sendDeath();
+        // }
+
+        // Show death message via UIManager (if local player)
+        if (this.uiManager && this.playerId.startsWith('local')) { // Check if local
             this.uiManager.showDeathMessage();
         }
 
-        // Disable physics interactions but keep object visible
-        // ... existing code ...
+        // Disable physics interactions slightly differently - make body static temporarily?
+        if (this.body) {
+            // Optional: Make body kinematic or static to prevent movement while dead
+            // this.body.setCollisionFlags(this.body.getCollisionFlags() | 2); // CF_KINEMATIC_OBJECT
+            // Or maybe remove it temporarily? Decide based on desired effect.
+            // For simplicity, let's just rely on movement checks ignoring isDead.
+        }
 
-        // Update local HUD (handled by UIManager now, but maybe call it explicitly?)
+        // Update local HUD
         this.updateHealthBar();
-        // if (window.game && window.game.uiManager) {
-        //     window.game.uiManager.updateLocalPlayerHealth(this.health);
-        // } // This is likely redundant if UIManager updates health correctly
+
+        // --- Start Respawn Timer ---
+        const respawnDelay = 3000; // 3 seconds
+        console.log(`Player ${this.playerId} scheduling respawn in ${respawnDelay}ms`);
+        this.respawnTimer = setTimeout(() => {
+            console.log(`Player ${this.playerId} timer finished, attempting respawn...`);
+            this.respawn();
+            this.respawnTimer = null; // Clear the timer reference
+        }, respawnDelay);
+        // --- End Respawn Timer ---
     }
 
     /**
@@ -798,6 +812,12 @@ export class Player {
 
         // Play idle animation
         this.playAnimation('idle');
+
+        // Hide death message if local player
+        if (this.uiManager && this.playerId.startsWith('local')) {
+            this.uiManager.hideDeathMessage();
+        }
+
         console.log('Player respawn complete');
     }
 

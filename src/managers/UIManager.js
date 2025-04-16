@@ -2,16 +2,20 @@ import * as THREE from 'three';
 import { log, error } from '../debug.js'; // Assuming debug utilities are helpful
 
 export class UIManager {
-    constructor(scene, domContainer) {
-        if (!scene || !scene.camera) {
-            throw new Error("UIManager requires a scene object with a camera.");
+    constructor(scene, camera, domContainer) {
+        console.log('DEBUG: UIManager constructor received:', { scene, camera, domContainer });
+        if (!scene) {
+            throw new Error("UIManager requires a THREE.Scene object.");
+        }
+        if (!camera) {
+            throw new Error("UIManager requires a THREE.Camera object.");
         }
         if (!domContainer) {
             throw new Error("UIManager requires a DOM container element.");
         }
 
         this.scene = scene; // Reference to the main THREE.Scene object
-        this.camera = scene.camera; // Reference to the camera for projection
+        this.camera = camera; // Use the passed camera argument
         this.domContainer = domContainer; // The parent element for UI components (e.g., document.body)
 
         // Maps to store UI elements associated with player IDs

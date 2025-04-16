@@ -42,158 +42,25 @@ export class Game {
         // Initialize prediction system for client-side prediction and server reconciliation
         this.predictionSystem = new PredictionSystem(this);
 
-        // Set up network event handlers (MOVED TO initNetworkAsync)
-        /*
-        this.networkManager.on('projectileSpawn', (projectileData) => {
-            // Only handle projectiles from other players
-            if (projectileData.ownerId !== this.networkManager.playerId) {
-                this.handleRemoteProjectileSpawn(projectileData);
-            } else {
-                // For our own projectiles, create them locally
-                this.handleLocalProjectileSpawn(projectileData);
-            }
-        });
-
-        // Updated handler to process full state messages
-        this.networkManager.on('gameStateUpdate', (message) => {
-            // Log received message size for verification
-            const messageSize = JSON.stringify(message).length;
-            console.log(`[Network] Received ${message.type}. Size: ${messageSize} bytes`);
-
-            // Ensure this only handles full GAME_STATE messages
-            if (message.type === 'GAME_STATE') {
-                this.handleFullGameStateUpdate(message.data); // Handle full state
-            } else {
-                console.warn('gameStateUpdate listener received non-GAME_STATE message:', message.type);
-            }
-        });
-
-        // Add new handler specifically for delta updates
-        this.networkManager.on('gameStateDeltaUpdate', (deltaData) => {
-            console.log(`[Network] Received GAME_STATE_DELTA.`);
-            this.handleGameStateDeltaUpdate(deltaData); // Handle delta update
-        });
-
-        // Register event handler for player damage
-        this.networkManager.on('playerDamage', (data) => {
-            // Check if the damage is for our local player
-            if (data.targetId === this.networkManager.playerId && this.player) {
-                console.log(`Local player took ${data.amount} damage`);
-
-                // Apply damage to local player
-                this.player.takeDamage(data.amount, data.attackerId);
-            }
-            // Check if it's a remote player we have
-            else if (this.remotePlayers[data.targetId]) {
-                console.log(`Remote player ${data.targetId} took ${data.amount} damage`);
-
-                // Apply damage to remote player
-                this.remotePlayers[data.targetId].takeDamage(data.amount);
-            }
-        });
-
-        // Register event handler for player death
-        this.networkManager.on('playerDeath', (data) => {
-            console.log(`Player death event for ${data.playerId}`);
-
-            // If it's our player, handle local death
-            if (data.playerId === this.networkManager.playerId && this.player) {
-                console.log('Local player died');
-
-                // Only update local player if not already dead
-                if (!this.player.isDead) {
-                    this.player.isDead = true;
-                    this.player.health = 0;
-                    this.player.die();
-                }
-            }
-            // If it's a remote player, handle remote death
-            else if (this.remotePlayers[data.playerId]) {
-                console.log(`Remote player ${data.playerId} died`);
-
-                // Only update remote player if not already dead
-                if (!this.remotePlayers[data.playerId].isDead) {
-                    this.remotePlayers[data.playerId].isDead = true;
-                    this.remotePlayers[data.playerId].health = 0;
-                    this.remotePlayers[data.playerId].die();
-                }
-            }
-        });
-
-        // Register event handler for player respawn
-        this.networkManager.on('playerRespawn', (data) => {
-            console.log(`Player respawn event for ${data.playerId}`);
-
-            // If it's our player, handle local respawn
-            if (data.playerId === this.networkManager.playerId && this.player) {
-                console.log('Local player respawned');
-
-                // Apply respawn to local player
-                this.player.health = 100;
-                this.player.isDead = false;
-
-                // Use server position if provided
-                if (data.position) {
-                    this.player.setPosition(data.position);
-                }
-
-                // Reset to idle animation
-                this.player.playAnimation('idle');
-            }
-            // If it's a remote player, handle remote respawn
-            else if (this.remotePlayers[data.playerId]) {
-                console.log(`Remote player ${data.playerId} respawned`);
-
-                // Apply respawn to remote player
-                const remotePlayer = this.remotePlayers[data.playerId];
-                remotePlayer.health = 100;
-                remotePlayer.isDead = false;
-
-                // Use server position if provided
-                if (data.position) {
-                    remotePlayer.setPosition(data.position);
-                }
-
-                // Reset to idle animation
-                remotePlayer.playAnimation('idle');
-            }
-        });
-
-        // Connect to server (MOVED TO initNetworkAsync)
-        this.networkManager.connect()
-            .then(() => {
-                console.log('Connected to server successfully');
-            })
-            .catch((error) => {
-                error('Failed to connect to server:', error);
-                this.showConnectionStatus('Connection failed. Running in single player mode.');
-                this.isMultiplayer = false;
-
-                // Hide message after 5 seconds
-                setTimeout(() => {
-                    document.getElementById('connection-status')?.remove();
-                }, 5000);
-            });
-        */
-
         // Reduce movement speed for better gameplay
         this.moveForce = 15;
 
-        // Initialize UI
-        this.uiManager = null; // Initialize as null, will be created in init()
+        // UIManager will be initialized in init()
     }
 
     initUI() {
         // --- Create UIManager Instance ---+
-        try {
-            this.uiManager = new UIManager(this.scene, document.body);
-            // --- Create the 3D aiming reticle --- +
-            this.uiManager.createAimingReticule();
-            // --- End create reticle --- +
-        } catch (err) {
-            error("Failed to initialize UIManager:", err);
-            // Game might be unplayable without UI, consider stopping or showing a fatal error
-        }
+        // This block remains commented out as UIManager is created in init()
+        // try {
+        //     // Pass scene, camera, and container separately
+        //     // this.uiManager = new UIManager(this.scene.scene, this.scene.camera, document.body);
+        //     // --- Create the 3D aiming reticle --- +
+        //     // this.uiManager.createAimingReticule();
+        //     // --- End create reticle --- +
+        // } catch (err) {
+        //     error("Failed to initialize UIManager:", err);
+        //     // Game might be unplayable without UI, consider stopping or showing a fatal error
+        // }
 
         // --- Create Health Bar ---+
         const healthBar = document.getElementById('health-bar');
@@ -243,8 +110,8 @@ export class Game {
         }
 
         // --- Inform UIManager about static elements (optional but good practice) ---
-        this.uiManager.localHealthBar = healthBar;
-        this.uiManager.localHealthText = healthText;
+        // this.uiManager.localHealthBar = healthBar;
+        // this.uiManager.localHealthText = healthText;
         // this.uiManager.crosshair = document.getElementById('crosshair'); // REMOVED - we're using 3D reticle now
 
         // Remove the 2D crosshair element explicitly if it exists
@@ -274,10 +141,16 @@ export class Game {
 
             // --- Initialize UIManager (Moved BEFORE PlayerManager) ---+
             try {
-                this.uiManager = new UIManager(this.scene, document.body);
-                // Now initialize the static UI elements
-                this.initUI();
-                console.log('UIManager and UI initialized');
+                // Pass scene, camera, and container separately
+                console.log('DEBUG: Checking document.body before UIManager init:', document.body); // <-- ADD THIS LOG
+                this.uiManager = new UIManager(this.scene.scene, this.scene.camera, document.body); // <-- UNCOMMENT THIS LINE
+                console.log('UIManager initialized'); // <-- MOVED AND UPDATED LOG
+
+                // --- Create the 3D aiming reticle --- +
+                this.uiManager.createAimingReticule(); // <-- ADD THIS CALL
+                // --- End create reticle --- +
+
+                this.initUI(); // Initialize specific UI elements (health bar etc.)
             } catch (err) {
                 error("Failed to initialize UIManager:", err);
                 alert("CRITICAL ERROR: Failed to initialize UI Manager. Game cannot continue.");
@@ -728,7 +601,7 @@ export class Game {
         }
 
         // Prioritize specific states determined solely by server flags
-        // (The animation field from server should already reflect jump/attack if applicable)
+        // (The animation field from server should already be 'jump' if the server thinks the player is jumping)
         if (remotePlayer.isDead) {
             // Don't play specific animation, die() or respawn() handles visual state
             targetAnimation = remotePlayer.currentAnimation; // Keep current anim if dead?
@@ -1697,6 +1570,21 @@ export class Game {
             // Update player animations
             if (this.player && this.player.update) {
                 this.player.update(fixedDeltaTime);
+
+                // --- Fall Detection ---+
+                if (!this.player.isDead) {
+                    const playerY = this.player.getPosition().y;
+                    const fallThreshold = -50; // Define how far down they can fall
+                    if (playerY < fallThreshold) {
+                        console.log(`Player fell below threshold (${fallThreshold}), initiating death.`);
+                        this.player.die('fall_damage'); // Pass a reason for death
+                        // Optional: Send fall event to server if needed
+                        // if (this.isMultiplayer && this.networkManager.connected) {
+                        //     this.networkManager.sendFellOffMap();
+                        // }
+                    }
+                }
+                // --- End Fall Detection ---+
             }
 
             // Update prediction system if in multiplayer mode
