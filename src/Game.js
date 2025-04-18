@@ -11,6 +11,7 @@ import { GAME_CONFIG, ASSET_PATHS } from './utils/constants.js';
 import { PredictionSystem } from './physics/PredictionSystem.js';
 import { UIManager } from './managers/UIManager.js'; // Import UIManager (Corrected Path)
 import { PlayerManager } from './managers/PlayerManager.js'; // Import PlayerManager
+import { ProjectileManager } from './managers/ProjectileManager.js'; // ADD ProjectileManager import
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'; // ADD THIS IMPORT
 
 export class Game {
@@ -44,6 +45,19 @@ export class Game {
 
         // Reduce movement speed for better gameplay
         this.moveForce = 15;
+
+        // --- Input related properties ---
+        this.lastShootTime = 0;
+        this.lastJumpTime = 0;
+        this.bhopWindow = 300; // ms window for bunny hopping
+        // --- End input properties ---
+
+        // Instantiate ProjectileManager AFTER physics is created
+        this.projectileManager = new ProjectileManager(this.scene.scene, null, this.colorManager); // Pass null physics for now
+        console.log('ProjectileManager instantiated');
+
+        // Instantiate PhysicsWorld AFTER managers it depends on
+        this.physics = new PhysicsWorld(this.projectileManager); // Pass projectile manager
 
         // UIManager will be initialized in init()
     }
@@ -135,9 +149,15 @@ export class Game {
             await this.physics.init();
             console.log('Physics initialized');
 
+            // NOW that physics world exists, pass it to ProjectileManager
+            if (this.physics.physicsWorld && this.projectileManager) {
+                this.projectileManager.physicsWorld = this.physics.physicsWorld;
+                console.log('Passed physicsWorld reference to ProjectileManager');
+            }
+
             // Set up collision detection AFTER physics is initialized and projectile arrays exist
-            this.physics.setupCollisionDetection(this.projectiles, this.enemyProjectiles);
-            console.log('Physics collision detection setup complete');
+            // this.physics.setupCollisionDetection(this.projectiles, this.enemyProjectiles); // COMMENT OUT - Requires refactor for ProjectileManager/PhysicsWorld interaction
+            // console.log('Physics collision detection setup complete'); // COMMENT OUT
 
             // --- Initialize UIManager (Moved BEFORE PlayerManager) ---+
             try {
@@ -184,7 +204,9 @@ export class Game {
             }
 
             console.log('Initializing input');
+            console.log('[Game.init] Calling this.input.init()'); // ADD Log
             await this.input.init();
+            console.log('[Game.init] Input initialized (this.input.init() finished)'); // ADD Log
             console.log('Input initialized');
 
             // Load the map instead - ADDED
@@ -194,24 +216,34 @@ export class Game {
 
             // --- Create Local Player using PlayerManager ---+
             try {
+                console.log('[Game.init] Attempting playerManager.initLocalPlayer()...'); // ADD Log
                 this.player = this.playerManager.initLocalPlayer();
+                console.log(`[Game.init] Player instance created: ${!!this.player}`); // ADD Log
+
                 // Register the physics body AFTER it's created
                 if (this.player && this.player.body) {
+                    console.log('[Game.init] Attempting physics.registerRigidBody...'); // ADD Log
                     this.physics.registerRigidBody(this.player.mesh, this.player.body);
-                    console.log('Local player physics body registered.');
+                    console.log('[Game.init] Local player physics body registered.'); // UPDATE Log
                 } else {
+                    console.error('[Game.init] Player OR player.body is missing after initLocalPlayer!'); // ADD Log
                     throw new Error("Player or player body not created successfully by PlayerManager.");
                 }
             } catch (err) {
-                error("Failed to initialize local player via PlayerManager:", err);
+                error("[Game.init] FAILED to initialize local player via PlayerManager:", err); // UPDATE Log
                 alert("CRITICAL ERROR: Failed to create local player.");
-                return;
+                return; // Stop initialization if player creation fails
             }
 
             // Set the player for the scene to follow
+            console.log('[Game.init] Attempting scene.setPlayerToFollow...'); // ADD Log
             this.scene.setPlayerToFollow(this.player);
+            console.log('[Game.init] scene.setPlayerToFollow finished.'); // ADD Log
 
             // Set up input handlers
+            console.log('[Game.init] Calling this.setupInputHandlers()'); // Log already exists
+            this.setupInputHandlers(); // Ensure this is called
+            console.log('[Game.init] Input handlers setup attempted (this.setupInputHandlers() finished)'); // ADD Log
             console.log('Input polling initialized (processing in update loop)');
 
             // Start the game loop before attempting to connect
@@ -1009,9 +1041,12 @@ export class Game {
 
     // Modify setupInputHandlers to include network events
     setupInputHandlers() {
+        console.log('[Game setupInputHandlers] Method started.'); // ADD Log
         // Handle key down events
         this.input.onKeyDown((event) => {
             const key = event.key;
+            // ADD Log for key press
+            console.log(`[Game onKeyDown] Key pressed: ${key}`);
 
             // Jump handling
             if ((key === ' ' || key === 'Spacebar') && !event.repeat) {
@@ -1024,29 +1059,30 @@ export class Game {
                 }
             }
 
-            // Shooting with F key
+            // REMOVE Shooting with F key
+            /*
             if ((key === 'f' || key === 'F') && !event.repeat) {
+                console.log('[Game onKeyDown] F key detected, calling shootProjectile()'); // ADD Log
                 this.shootProjectile();
-                if (this.player) this.player.playAnimation('attack');
             }
+            */
         });
 
         // Handle mouse down events
         let lastMouseDownTime = 0; // Add a timestamp to prevent rapid double calls
         this.input.onMouseDown((event) => {
             const now = Date.now();
-            console.log(`[onMouseDown Listener] Fired. Button: ${event.button}, Time since last: ${now - lastMouseDownTime}ms`); // Use console.log
+            console.log(`[Game onMouseDown] Button: ${event.button}. Time since last: ${now - lastMouseDownTime}ms`); // UPDATE Log
 
             if (event.button === 0) { // Left mouse button
                 if (now - lastMouseDownTime < 100) { // Cooldown: Ignore if less than 100ms since last call
-                    console.log('[onMouseDown Listener] Cooldown active, ignoring call.'); // Use console.log
+                    console.log('[Game onMouseDown] Cooldown active, ignoring call.'); // Use console.log
                     return;
                 }
                 lastMouseDownTime = now;
 
-                console.log('Left mouse button pressed, shooting');
+                console.log('[Game onMouseDown] Left mouse button pressed, calling shootProjectile()'); // UPDATE Log
                 this.shootProjectile();
-                if (this.player) this.player.playAnimation('attack');
 
                 // In multiplayer, send shoot event to server
                 if (this.isMultiplayer && this.networkManager.connected && this.player) {
@@ -1118,7 +1154,7 @@ export class Game {
     }
 
     shootProjectile() {
-        console.log(`[shootProjectile] Function called. isDead: ${this.player?.isDead}, lastShootTime: ${this.lastShootTime}`);
+        console.log(`[Game.shootProjectile] Function called. Player exists: ${!!this.player}, isDead: ${this.player?.isDead}, lastShootTime: ${this.lastShootTime}`); // UPDATE Log
 
         // Check if player exists and is alive
         if (!this.player || this.player.isDead) {
@@ -1209,49 +1245,21 @@ export class Game {
             this.networkManager.sendProjectileSpawn(projectileData);
         }
 
-        // Create visual projectile
-        const projectile = {
-            ...projectileData,
-            mesh: null,
-            update: function (deltaTime) {
-                if (!this.active) return false;
-
-                // Update position using velocity
-                this.position.x += this.velocity.x * deltaTime;
-                this.position.y += this.velocity.y * deltaTime;
-                this.position.z += this.velocity.z * deltaTime;
-
-                // Update mesh position
-                if (this.mesh) {
-                    this.mesh.position.set(this.position.x, this.position.y, this.position.z);
-                }
-
-                // Update lifetime
-                this.lifeTime += deltaTime;
-
-                return true;
+        // Create projectile using the manager
+        if (this.projectileManager) {
+            console.log(`[Game.shootProjectile] Calling projectileManager.createProjectile with spawnPos:`,
+                spawnPos.x.toFixed(2), spawnPos.y.toFixed(2), spawnPos.z.toFixed(2),
+                `and direction:`,
+                shootDirection.x.toFixed(2), shootDirection.y.toFixed(2), shootDirection.z.toFixed(2)); // ADD Log
+            const projectileInstance = this.projectileManager.createProjectile(spawnPos, shootDirection, false, this.player);
+            if (projectileInstance) {
+                console.log(`[Game.shootProjectile] Projectile created by manager. Instance active: ${projectileInstance.active}, Mesh: ${!!projectileInstance.mesh}`); // UPDATE Log
+            } else {
+                console.error(`[Game.shootProjectile] ProjectileManager failed to create projectile!`);
             }
-        };
-
-        // Create visual representation
-        const geometry = new THREE.SphereGeometry(0.08, 16, 16);
-        const material = new THREE.MeshStandardMaterial({
-            color: this.player.playerColor || 0xff0000,
-            roughness: 0.3,
-            metalness: 0.7,
-            transparent: true,
-            opacity: 0.8,
-            emissive: this.player.playerColor || 0xff0000,
-            emissiveIntensity: 0.5  // Add glow effect for better visibility
-        });
-
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.position.copy(spawnPos);
-        this.scene.scene.add(mesh);
-        projectile.mesh = mesh;
-
-        // Add to projectiles array
-        this.projectiles.push(projectile);
+        } else {
+            console.error(`[Game.shootProjectile] ProjectileManager instance not found!`);
+        }
 
         // Add muzzle flash at the exact spawn position
         this.addMuzzleFlash(spawnPos, shootDirection);
@@ -1272,87 +1280,9 @@ export class Game {
     /**
      * Check for projectile collisions with remote players
      */
-    checkProjectileRemotePlayerCollisions() {
-        // Skip if no projectiles or no remote players
-        if (!this.projectiles.length || !Object.keys(this.remotePlayers).length) {
-            return;
-        }
-
-        // Process each projectile
-        for (let i = this.projectiles.length - 1; i >= 0; i--) {
-            const projectile = this.projectiles[i];
-            if (!projectile || !projectile.active || !projectile.mesh) continue;
-
-            const projPos = projectile.mesh.position;
-
-            // Check against each remote player
-            for (const id in this.remotePlayers) {
-                const remotePlayer = this.remotePlayers[id];
-
-                // Skip dead players
-                if (remotePlayer.isDead) continue;
-
-                // Get player position
-                const playerPos = remotePlayer.getPosition();
-                if (!playerPos) continue;
-
-                // Calculate distance between projectile and player's center
-                const dx = projPos.x - playerPos.x;
-                const dy = projPos.y - playerPos.y;
-                const dz = projPos.z - playerPos.z;
-
-                // Use tighter hit detection radius (0.5 units squared = ~0.7 unit radius)
-                // This roughly matches the player model's actual size
-                const hitRadiusSquared = 0.25; // Reduced from 2.25
-
-                // Additional height-based check to improve accuracy
-                const heightCheck = Math.abs(dy) < 1.5; // Only hit within reasonable height range
-
-                const distSquared = dx * dx + dz * dz; // Only check horizontal distance for main hit
-
-                if (distSquared < hitRadiusSquared && heightCheck) {
-                    // Hit detected! Handle damage
-                    console.log(`Projectile hit remote player ${id} at distance: ${Math.sqrt(distSquared).toFixed(2)}`);
-
-                    // Create hit effect
-                    this.createHitEffect(projPos);
-
-                    // Deactivate projectile
-                    projectile.active = false;
-
-                    // Remove projectile mesh
-                    if (projectile.mesh) {
-                        this.scene.scene.remove(projectile.mesh);
-                        if (projectile.mesh.geometry) projectile.mesh.geometry.dispose();
-                        if (projectile.mesh.material) {
-                            if (Array.isArray(projectile.mesh.material)) {
-                                projectile.mesh.material.forEach(m => m.dispose());
-                            } else {
-                                projectile.mesh.material.dispose();
-                            }
-                        }
-                    }
-
-                    // Set damage amount based on projectile type
-                    const damageAmount = projectile.damage || 20;
-
-                    // Send hit confirmation to server
-                    if (this.networkManager && this.networkManager.connected) {
-                        this.networkManager.sendHit({
-                            targetId: id,
-                            damage: damageAmount,
-                            projectileId: projectile.id,
-                            hitPosition: projPos
-                        });
-                    }
-
-                    // Remove projectile from array
-                    this.projectiles.splice(i, 1);
-                    break;
-                }
-            }
-        }
-    }
+    // checkProjectileRemotePlayerCollisions() { // <<< REMOVE ENTIRE METHOD
+    // ... existing collision logic removed ...
+    // }
 
     createHitEffect(position) {
         // Create a point light for hit effect
@@ -1593,7 +1523,7 @@ export class Game {
             }
 
             // Update projectiles
-            this.updateProjectiles(fixedDeltaTime);
+            this.projectileManager?.update(fixedDeltaTime);
 
             // Update enemies if needed
             this.updateEnemies(fixedDeltaTime);
@@ -1606,9 +1536,6 @@ export class Game {
                 this.uiManager.updateAimingReticule(this.player, this.scene.camera);
             }
             // --- End Update Reticle ---+
-
-            // Update collision detection
-            this.checkProjectileRemotePlayerCollisions();
 
             // Update scene - camera follows player, etc.
             if (this.scene) {

@@ -310,59 +310,82 @@ export class Player {
     }
 
     playAnimation(name) {
-        // Don't attempt to play animations until mesh and mixer are available
         if (!this.modelLoaded || !this.mixer || !this.mesh) {
-            // Instead of logging an error, silently return until model is ready
             return;
         }
 
-        // Try to find the animation with case-insensitive lookup
         let animName = name;
+        let action = this.animationActions[animName];
 
-        if (!this.animations[name] || !this.animationActions[name]) {
-            // Try lowercase version
+        // Case-insensitive lookup
+        if (!action) {
             const lowerName = name.toLowerCase();
-            if (this.animations[lowerName] && this.animationActions[lowerName]) {
+            if (this.animationActions[lowerName]) {
                 animName = lowerName;
+                action = this.animationActions[animName];
             } else {
-                // Log failure to find any variation
                 console.warn(`Animation "${name}" (or variations) not found. Cannot play. Available: ${Object.keys(this.animationActions).join(', ')}`);
-                // Only log once for better performance
                 if (name.toLowerCase() === 'idle' && !this._loggedMissingIdle) {
-                    console.warn(`Idle animation not found, animations may not be properly loaded. Available animations: ${Object.keys(this.animations).join(', ')}`);
+                    console.warn(`Idle animation not found. Available: ${Object.keys(this.animations).join(', ')}`);
                     this._loggedMissingIdle = true;
                 }
                 return;
             }
         }
 
-        // Prevent restart ONLY if the same animation is requested AND its action is currently running.
-        // (Except for one-shot animations like jump/attack which should always restart).
+        // Prevent restart ONLY if the same animation is requested AND it's currently running
+        // AND it's NOT a one-shot animation ('attack' or 'jump').
+        // Also specifically prevent restarting jump if it's already playing.
         if (
             this.currentAnimation === animName &&
             this.currentAction &&
             this.currentAction.isRunning() &&
-            animName !== 'jump' && animName !== 'attack'
+            (animName !== 'attack') // Allow attack to be triggered again
+            && (animName !== 'jump') // Prevent jump from restarting if already playing
         ) {
-            return; // Animation is already playing and looping correctly, do nothing.
+            // If jump is already playing, explicitly do nothing
+            if (animName === 'jump') return;
+            // Otherwise, allow other non-attack/non-jump animations to continue looping
+            // return; // Keep this commented out for now to ensure transitions happen
         }
 
-        // If we reach here, it means we need to start or transition to the requested animation.
-
         try {
-            // Fade out the previous action *unless* it's the same action we're about to play
-            // (handles cases where the action might exist but wasn't running).
-            if (this.currentAction && this.currentAction !== this.animationActions[animName]) {
-                this.currentAction.fadeOut(0.2);
+            // Fade out the previous action
+            if (this.currentAction && this.currentAction !== action) {
+                // Don't fade out if the new action is attack (let it interrupt)
+                if (animName !== 'attack') {
+                    this.currentAction.fadeOut(0.2);
+                } else {
+                    this.currentAction.stop(); // Stop immediately for attack
+                }
             }
 
-            // Get the new action
-            const action = this.animationActions[animName];
-
-            // Reset and play the new action
+            // --- Configure and Play New Action ---
             action.reset();
-            action.fadeIn(0.2);
+
+            // Set loop mode for one-shot animations
+            if (animName === 'attack' || animName === 'jump') {
+                action.setLoop(THREE.LoopOnce, 1);
+                action.clampWhenFinished = true; // Hold the last frame
+                console.log(`[playAnimation] Set ${animName} to LoopOnce.`);
+            } else {
+                // Ensure looping animations loop correctly
+                action.setLoop(THREE.LoopRepeat, Infinity);
+            }
+
+            // Fade in and play
+            action.fadeIn(animName === 'attack' ? 0.05 : 0.2); // Faster fade for attack
             action.play();
+
+            // --- Handle Attack Animation Finish ---
+            if (animName === 'attack') {
+                // Remove previous listener if any exists for this specific action
+                this.mixer.removeEventListener('finished', this._onAttackAnimationFinished);
+                // Add listener for THIS action instance
+                this._attackActionListener = (e) => this._onAttackAnimationFinished(e, action); // Pass the specific action
+                this.mixer.addEventListener('finished', this._attackActionListener);
+                console.log(`[playAnimation] Added 'finished' listener for this attack action.`);
+            }
 
             // Update current animation and action
             this.currentAnimation = animName;
@@ -372,20 +395,52 @@ export class Player {
         }
     }
 
+    // --- Listener function specifically for attack animation finish ---
+    _onAttackAnimationFinished(event, finishedAction) {
+        // Check if the finished action is the one we were listening for
+        if (event.action === finishedAction) {
+            const initialAttackingState = this.isAttacking; // Store if we *were* attacking
+
+            // Always remove the listener for *this* finished action
+            if (this.mixer && this._attackActionListener) {
+                this.mixer.removeEventListener('finished', this._attackActionListener);
+                console.log(`[Player ${this.playerId}] Removed \'finished\' listener for attack action: ${finishedAction.getClip().name}.`);
+                this._attackActionListener = null; // Clear the stored listener
+            }
+
+            // Only proceed if this listener call corresponds to the end of an attack state
+            if (initialAttackingState) {
+                console.log(`[Player ${this.playerId}] Attack animation finished (${event.action.getClip().name}). Resetting isAttacking.`);
+                this.isAttacking = false; // Tentatively reset the flag
+
+                // NOW, check if another attack was initiated *during* this one
+                // If isAttacking is *still* false (meaning attack() wasn\'t called again),
+                // then we transition back to idle/movement.
+                if (!this.isAttacking) {
+                    const nextAnimation = this.intendedAnimation && this.intendedAnimation !== 'idle'
+                        ? this.intendedAnimation
+                        : 'idle';
+                    console.log(`[Player ${this.playerId}] Attack truly finished. Transitioning to: ${nextAnimation}`);
+                    this.playAnimation(nextAnimation);
+                } else {
+                    // isAttacking must be true again, meaning attack() was called during this animation.
+                    // Do *not* transition here, let the new attack animation play out.
+                    console.log(`[Player ${this.playerId}] Attack finished, but another attack was queued (isAttacking=true). Allowing next attack to continue.`);
+                }
+            }
+        }
+    }
+
     update(deltaTime) {
         try {
             if (!this.body || !this.mesh) {
-                // Silent return if basic objects aren't available yet
                 return;
             }
-
-            // Check if Ammo is defined before proceeding
             if (typeof Ammo === 'undefined') {
                 error('Ammo is not defined in Player update');
                 return;
             }
 
-            // Define a consistent Y-offset for all player models
             const MODEL_Y_OFFSET = -1.0;
 
             // Update mesh position based on physics
@@ -394,17 +449,14 @@ export class Player {
                 if (ms) {
                     const transform = new Ammo.btTransform();
                     ms.getWorldTransform(transform);
-
-                    // Make sure transform is valid
                     if (transform) {
                         const p = transform.getOrigin();
-
-                        // Make sure p is valid and has x, y, z methods
-                        if (p && typeof p.x === 'function' && typeof p.y === 'function' && typeof p.z === 'function') {
-                            // Update mesh position with the offset for the model
+                        if (p && typeof p.x === 'function') {
                             this.mesh.position.set(p.x(), p.y() + MODEL_Y_OFFSET, p.z());
                         }
                     }
+                    // Clean up transform
+                    Ammo.destroy(transform);
                 }
             } catch (physicsError) {
                 throw new Error(`Physics transform error: ${physicsError.message || 'Unknown physics error'}`);
@@ -421,33 +473,17 @@ export class Player {
 
             // Make the player face the direction the camera is looking
             try {
-                // First verify that all required objects exist
-                if (!this.modelLoaded) return;
-                if (!this.camera) return; // Use injected camera
-
-                // Create a vector to store camera direction
+                if (!this.modelLoaded || !this.camera) return;
                 const cameraDirection = new THREE.Vector3();
-
-                // Get the world direction from the camera
                 this.camera.getWorldDirection(cameraDirection);
-
-                // Only proceed if we have a valid direction vector
-                if (isNaN(cameraDirection.x) || isNaN(cameraDirection.y) || isNaN(cameraDirection.z)) {
+                if (isNaN(cameraDirection.x)) {
                     error('Invalid camera direction:', cameraDirection);
                     return;
                 }
-
-                // Zero out the Y component to keep character upright (horizontal plane only)
                 cameraDirection.y = 0;
-
-                // Only normalize if the vector has non-zero length
                 if (cameraDirection.length() > 0) {
                     cameraDirection.normalize();
-
-                    // Calculate the angle to face the camera direction
                     const angle = Math.atan2(cameraDirection.x, cameraDirection.z);
-
-                    // Set rotation to match camera direction 
                     if (!isNaN(angle)) {
                         this.mesh.rotation.set(0, angle, 0);
                     }
@@ -456,35 +492,41 @@ export class Player {
                 throw new Error(`Rotation error: ${rotationError.message || 'Unknown rotation error'}`);
             }
 
-            // --- Ground Check Logging --- 
             this.checkGroundContact();
-            // --- End Ground Check ---
 
-            // --- NEW: Debounced Animation Logic --- 
+            // --- NEW: Debounced Animation Logic ---
             try {
                 if (this.modelLoaded && this.mixer) {
-                    let targetAnimation = 'idle'; // Default to idle
-                    const isMoving = this.intendedAnimation !== 'idle'; // Check if intent is movement
+                    let targetAnimation = 'idle';
+                    const isMoving = this.intendedAnimation !== 'idle';
 
                     // Check special states first
                     if (this.isDead) {
-                        // Death animation handled in die() method
-                        targetAnimation = this.currentAnimation; // Keep current animation if dead
+                        targetAnimation = this.currentAnimation; // Keep current if dead
                     } else if (this.isAttacking) {
-                        // Let attack() handle finishing the attack animation
-                        targetAnimation = this.currentAnimation; // Stay on current (likely 'attack')
-                    } else if (this.isJumping) {
-                        targetAnimation = 'jump';
+                        // If attacking, the 'attack' animation is playing (LoopOnce).
+                        // Let it finish. The 'finished' listener will handle the transition.
+                        targetAnimation = 'attack'; // Keep visually prioritizing attack while flag is true
                     } else if (isMoving) {
-                        // If movement is intended, use that animation
+                        // If not attacking/dead, and movement is intended, use that animation
                         targetAnimation = this.intendedAnimation;
                     } else {
-                        // No special state, no movement intent => force idle
+                        // Not attacking/dead, no movement intent => force idle
                         targetAnimation = 'idle';
                     }
 
-                    // Play the determined animation (playAnimation handles preventing restarts)
-                    this.playAnimation(targetAnimation);
+                    // Play the determined animation only if it's different from the current one
+                    // OR if the target is 'attack' (allowing attack to interrupt/start).
+                    // This prevents constantly restarting idle/movement animations.
+                    if (this.currentAnimation !== targetAnimation || targetAnimation === 'attack') {
+                        // Prevent interrupting jump animation mid-air
+                        if (!(targetAnimation !== 'jump' && this.currentAnimation === 'jump' && this.currentAction?.isRunning())) {
+                            // Don't restart attack if it's already the current animation (it will handle finishing itself)
+                            if (targetAnimation !== 'attack' || this.currentAnimation !== 'attack') {
+                                this.playAnimation(targetAnimation);
+                            }
+                        }
+                    }
                 }
             } catch (animationUpdateError) {
                 error(`Error updating animation based on intent: ${animationUpdateError.message || animationUpdateError}`);
@@ -492,7 +534,6 @@ export class Player {
             // --- END NEW Animation Logic ---
 
         } catch (err) {
-            // Ensure we're properly logging the error with details
             error('Error updating player:', err.message || err);
             console.error('Player update stack trace:', err.stack || 'No stack trace available');
         }
@@ -953,54 +994,52 @@ export class Player {
 
     // Added attack method for local player
     attack() {
-        if (this.isAttacking || this.isDead) return; // Don't attack if already attacking or dead
+        console.log(`[Player attack] ID: ${this.playerId}. Called. Current state: isAttacking=${this.isAttacking}, isDead=${this.isDead}`);
 
+        // Allow attacking even if the previous attack animation hasn't technically finished
+        // The finished listener will handle the state eventually.
+        // We only prevent attacking if dead.
+        if (this.isDead) return;
+
+        // If already attacking, let the current animation attempt to finish, but set flag again
+        // This allows rapid clicks to feel responsive but relies on the finished listener
+        // to eventually clear the state.
         console.log(`[Player ${this.playerId}] attack() called.`);
-        this.isAttacking = true;
-        this.playAnimation('attack'); // Play the attack animation
+        this.isAttacking = true; // Set flag immediately
 
-        // Reset attack state after a short duration (e.g., animation length)
-        // Adjust timing as needed (e.g., 800ms)
-        setTimeout(() => {
-            this.isAttacking = false;
-            console.log(`[Player ${this.playerId}] attack() finished.`);
-            // Optionally, ensure we transition back to idle/movement animation if needed
-            // The main update loop should handle this via setMovementIntent
-        }, 800);
+        // --- Play attack animation ---
+        // playAnimation now handles LoopOnce and the 'finished' listener setup
+        this.playAnimation('attack');
+
+        // REMOVED setTimeout for resetting isAttacking
     }
 
     // *** Add the missing jump method back ***
     jump() {
-        // Basic jump implementation: apply an upward force
         try {
-            // Check if we can jump (on ground) and not already jumping
-            if (this.canJump && !this.isJumping) {
-                // Apply vertical impulse
-                const impulse = new Ammo.btVector3(0, 7, 0); // Reduced force from 10 to 7
+            // Check if we can jump (on ground) and if the jump animation isn't already playing
+            if (this.canJump && !(this.currentAnimation === 'jump' && this.currentAction?.isRunning())) {
+                const impulse = new Ammo.btVector3(0, 7, 0);
                 this.body.applyCentralImpulse(impulse);
                 Ammo.destroy(impulse);
 
-                // Set jump state
-                this.isJumping = true;
-                this.canJump = false; // Can't jump again until grounded
+                this.isJumping = true; // Still needed for physics/ground check logic
+                this.canJump = false;
 
-                // Play jump animation
+                // Play jump animation (playAnimation handles LoopOnce)
                 this.playAnimation('jump');
 
                 console.log(`[Player ${this.playerId}] Jump initiated. isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
-
-                // Optional: Reset jump state after a delay (if animation doesn't handle it)
-                // The checkGroundContact method should handle resetting isJumping when grounded
-                // setTimeout(() => {
-                //     this.isJumping = false;
-                // }, 1000); // Adjust timing based on animation
             } else {
-                console.log(`[Player ${this.playerId}] Jump prevented. canJump: ${this.canJump}, isJumping: ${this.isJumping}`);
+                // Log why jump was prevented
+                let reason = "";
+                if (!this.canJump) reason += "Not on ground (canJump=false). ";
+                if (this.currentAnimation === 'jump' && this.currentAction?.isRunning()) reason += "Jump animation already playing.";
+                console.log(`[Player ${this.playerId}] Jump prevented. ${reason}`);
             }
         } catch (err) {
             error(`Error during jump:`, err);
-            // Make sure jump state is reset on error
-            this.isJumping = false;
+            this.isJumping = false; // Reset on error
         }
     }
     // *** End of added jump method ***
