@@ -1017,8 +1017,8 @@ export class Player {
     // *** Add the missing jump method back ***
     jump() {
         try {
-            // Check if we can jump (on ground) and if the jump animation isn't already playing
-            if (this.canJump && !(this.currentAnimation === 'jump' && this.currentAction?.isRunning())) {
+            // Check if we can jump (on ground)
+            if (this.canJump) {
                 const impulse = new Ammo.btVector3(0, 7, 0);
                 this.body.applyCentralImpulse(impulse);
                 Ammo.destroy(impulse);
@@ -1027,14 +1027,14 @@ export class Player {
                 this.canJump = false;
 
                 // Play jump animation (playAnimation handles LoopOnce)
+                // This might restart the animation if called rapidly, which is acceptable for responsiveness
                 this.playAnimation('jump');
 
                 console.log(`[Player ${this.playerId}] Jump initiated. isJumping: ${this.isJumping}, canJump: ${this.canJump}`);
             } else {
-                // Log why jump was prevented
+                // Log why jump was prevented - now only checks canJump
                 let reason = "";
                 if (!this.canJump) reason += "Not on ground (canJump=false). ";
-                if (this.currentAnimation === 'jump' && this.currentAction?.isRunning()) reason += "Jump animation already playing.";
                 console.log(`[Player ${this.playerId}] Jump prevented. ${reason}`);
             }
         } catch (err) {
